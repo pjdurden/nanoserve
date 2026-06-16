@@ -26,7 +26,7 @@ Pick the day's task from that week's list based on where you are. Weeks are agen
 
 ### Week 1 (Days 1-7): skeleton and a single block
 - Code: create repo and manifesto README; download Llama-3.2-1B; inspect safetensors and config; load weights into your own tensors (name mapping); implement RMSNorm; implement RoPE; implement SwiGLU MLP; assemble one transformer block; verify each piece against HF to about 1e-5.
-- Posts: "Day 1: building a vLLM from scratch in 100 days, here is why"; the weight-name-mapping rabbit hole; RoPE explained by implementing it; the first numerical-match screenshot.
+- Posts: "Day 1: building an AI inference engine from scratch in 100 days, here is why"; the weight-name-mapping rabbit hole; RoPE explained by implementing it; the first numerical-match screenshot.
 
 ## Phase 1: Correct generation
 

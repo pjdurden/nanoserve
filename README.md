@@ -2,11 +2,11 @@
 
 A from-scratch LLM inference engine you can read in an afternoon. Think nanoGPT, but for serving instead of training.
 
-Built in public over 100 days. The goal is a minimal, annotated nano-vLLM: load Llama-3.2-1B, serve an OpenAI-compatible HTTP endpoint, with a paged KV cache, continuous batching, and a hand-written Triton paged-attention kernel. Roughly 1.5k to 2k lines, every one of them readable.
+Built in public over 100 days. The goal is a minimal, annotated inference engine: load Llama-3.2-1B, serve an OpenAI-compatible HTTP endpoint, with a paged KV cache, continuous batching, and a hand-written Triton paged-attention kernel. Roughly 1.5k to 2k lines, every one of them readable.
 
 ## Why
 
-Most people learn inference by reading vLLM, which is 100k+ lines of production code. nanoserve is the opposite: the smallest thing that still does the real work, so the ideas (paged attention, continuous batching, iteration-level scheduling) are visible instead of buried.
+Production inference engines like vLLM and SGLang are 100k+ lines. The core ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work, so you can actually read them.
 
 ## What it will do (v1, by Day 100)
 

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="58" font-size="32" font-weight="700" fill="#1e1b4b">Paged KV cache</text>
+  <text x="50" y="90" font-size="20" fill="#64748b">virtual memory, but for attention. logical tokens map to physical blocks.</text>
+
+  <!-- logical view -->
+  <text x="80" y="160" font-size="18" font-weight="600" fill="#3730a3">Logical view (per sequence)</text>
+
+  <!-- sequence A logical blocks -->
+  <text x="80" y="205" font-size="15" fill="#475569">sequence A</text>
+  <rect x="190" y="180" width="150" height="44" rx="6" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="265" y="208" font-size="14" fill="#1e1b4b" text-anchor="middle">tok 0-15</text>
+  <rect x="350" y="180" width="150" height="44" rx="6" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="425" y="208" font-size="14" fill="#1e1b4b" text-anchor="middle">tok 16-31</text>
+  <rect x="510" y="180" width="150" height="44" rx="6" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="585" y="208" font-size="14" fill="#1e1b4b" text-anchor="middle">tok 32-47</text>
+
+  <!-- sequence B logical blocks -->
+  <text x="80" y="285" font-size="15" fill="#475569">sequence B</text>
+  <rect x="190" y="260" width="150" height="44" rx="6" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="265" y="288" font-size="14" fill="#064e3b" text-anchor="middle">tok 0-15</text>
+  <rect x="350" y="260" width="150" height="44" rx="6" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="425" y="288" font-size="14" fill="#064e3b" text-anchor="middle">tok 16-31</text>
+
+  <!-- block tables note -->
+  <text x="80" y="360" font-size="15" fill="#94a3b8">each sequence keeps a block table:  logical block index  to  physical block id</text>
+
+  <!-- physical pool -->
+  <text x="80" y="440" font-size="18" font-weight="600" fill="#b45309">Physical block pool (shared VRAM)</text>
+  <g font-size="14" text-anchor="middle">
+    <rect x="190" y="460" width="120" height="70" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <text x="250" y="490" fill="#7c2d12">block 0</text>
+    <text x="250" y="512" font-size="12" fill="#92400e">A: 0-15</text>
+
+    <rect x="325" y="460" width="120" height="70" rx="8" fill="#dcfce7" stroke="#047857" stroke-width="2"/>
+    <text x="385" y="490" fill="#064e3b">block 1</text>
+    <text x="385" y="512" font-size="12" fill="#065f46">B: 0-15</text>
+
+    <rect x="460" y="460" width="120" height="70" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <text x="520" y="490" fill="#7c2d12">block 2</text>
+    <text x="520" y="512" font-size="12" fill="#92400e">A: 16-31</text>
+
+    <rect x="595" y="460" width="120" height="70" rx="8" fill="#dcfce7" stroke="#047857" stroke-width="2"/>
+    <text x="655" y="490" fill="#064e3b">block 3</text>
+    <text x="655" y="512" font-size="12" fill="#065f46">B: 16-31</text>
+
+    <rect x="730" y="460" width="120" height="70" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <text x="790" y="490" fill="#7c2d12">block 4</text>
+    <text x="790" y="512" font-size="12" fill="#92400e">A: 32-47</text>
+
+    <rect x="865" y="460" width="120" height="70" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="925" y="490" fill="#64748b">block 5</text>
+    <text x="925" y="512" font-size="12" fill="#94a3b8">free</text>
+
+    <rect x="1000" y="460" width="120" height="70" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="1060" y="490" fill="#64748b">block 6</text>
+    <text x="1060" y="512" font-size="12" fill="#94a3b8">free</text>
+  </g>
+
+  <!-- mapping arrows (logical -> physical), non-contiguous on purpose -->
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow2)" opacity="0.85">
+    <path d="M265,224 L250,460"/>
+    <path d="M425,224 L520,460"/>
+    <path d="M585,224 L790,460"/>
+    <path d="M265,304 L385,460"/>
+    <path d="M425,304 L655,460"/>
+  </g>
+
+  <text x="80" y="610" font-size="15" fill="#475569">contiguous in the logical view, scattered in physical memory. no per-sequence slab, no fragmentation, no wasted VRAM.</text>
+  <text x="1150" y="650" font-size="14" fill="#94a3b8" text-anchor="end">nanoserve · an AI inference engine from scratch</text>
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="58" font-size="32" font-weight="700" fill="#1e1b4b">nanoserve</text>
+  <text x="50" y="90" font-size="20" fill="#64748b">the life of a request</text>
+
+  <!-- pipeline boxes, center y = 300 -->
+  <g>
+    <rect x="40" y="245" width="180" height="110" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+    <text x="130" y="285" font-size="18" font-weight="600" fill="#1e1b4b" text-anchor="middle">Client</text>
+    <text x="130" y="312" font-size="14" fill="#475569" text-anchor="middle">POST /v1/completions</text>
+    <text x="130" y="332" font-size="14" fill="#475569" text-anchor="middle">prompt + params</text>
+
+    <rect x="255" y="245" width="150" height="110" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+    <text x="330" y="290" font-size="18" font-weight="600" fill="#1e1b4b" text-anchor="middle">Server</text>
+    <text x="330" y="315" font-size="14" fill="#475569" text-anchor="middle">FastAPI</text>
+
+    <rect x="440" y="245" width="175" height="110" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+    <text x="527" y="285" font-size="18" font-weight="600" fill="#1e1b4b" text-anchor="middle">Scheduler</text>
+    <text x="527" y="310" font-size="14" fill="#475569" text-anchor="middle">waiting / running</text>
+    <text x="527" y="330" font-size="14" fill="#475569" text-anchor="middle">pick the batch</text>
+
+    <rect x="650" y="245" width="150" height="110" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+    <text x="725" y="290" font-size="18" font-weight="600" fill="#1e1b4b" text-anchor="middle">Engine</text>
+    <text x="725" y="315" font-size="14" fill="#475569" text-anchor="middle">step()</text>
+
+    <rect x="835" y="220" width="320" height="160" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <text x="995" y="258" font-size="18" font-weight="600" fill="#7c2d12" text-anchor="middle">Model forward</text>
+    <text x="995" y="284" font-size="14" fill="#92400e" text-anchor="middle">RMSNorm · RoPE · GQA · SwiGLU</text>
+    <text x="995" y="312" font-size="14" font-weight="600" fill="#b45309" text-anchor="middle">+ Triton paged attention</text>
+    <text x="995" y="350" font-size="13" fill="#92400e" text-anchor="middle">one pass for the whole batch</text>
+  </g>
+
+  <!-- arrows along the pipeline -->
+  <g stroke="#475569" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+    <line x1="220" y1="300" x2="250" y2="300"/>
+    <line x1="405" y1="300" x2="435" y2="300"/>
+    <line x1="615" y1="300" x2="645" y2="300"/>
+    <line x1="800" y1="300" x2="830" y2="300"/>
+  </g>
+
+  <!-- paged KV cache below the model, read/write -->
+  <rect x="835" y="430" width="320" height="70" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="995" y="463" font-size="17" font-weight="600" fill="#7c2d12" text-anchor="middle">Paged KV cache</text>
+  <text x="995" y="485" font-size="13" fill="#92400e" text-anchor="middle">block pool + per-sequence block table</text>
+  <g stroke="#b45309" stroke-width="2.5" fill="none" marker-end="url(#arrow)" marker-start="url(#arrow)">
+    <line x1="995" y1="380" x2="995" y2="430"/>
+  </g>
+  <text x="1010" y="410" font-size="12" fill="#b45309">read / write</text>
+
+  <!-- sampler on the return path -->
+  <rect x="430" y="540" width="240" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="550" y="573" font-size="17" font-weight="600" fill="#064e3b" text-anchor="middle">Sampler</text>
+  <text x="550" y="596" font-size="13" fill="#065f46" text-anchor="middle">greedy / temp / top-k / top-p</text>
+
+  <!-- return path: model -> sampler -> client -->
+  <g stroke="#475569" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+    <path d="M995,500 L995,580 L675,580"/>
+    <path d="M430,580 L130,580 L130,360"/>
+  </g>
+  <text x="690" y="650" font-size="14" fill="#475569">next token loops back into the engine; tokens stream to the client over SSE</text>
+
+  <text x="1150" y="650" font-size="14" fill="#94a3b8" text-anchor="end">nanoserve · an AI inference engine from scratch</text>
+</svg>
