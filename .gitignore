@@ -1,0 +1,30 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# envs
+.venv/
+venv/
+env/
+
+# model weights and caches
+weights/
+*.safetensors
+*.bin
+*.gguf
+.cache/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
