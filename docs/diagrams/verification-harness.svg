@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="58" font-size="32" font-weight="700" fill="#1e1b4b">How nanoserve checks itself</text>
+  <text x="50" y="90" font-size="20" fill="#64748b">one input, two engines, diff every internal tensor to 1e-5 before trusting it.</text>
+
+  <!-- shared input -->
+  <rect x="50" y="300" width="170" height="70" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="2"/>
+  <text x="135" y="332" font-size="16" font-weight="600" fill="#1e293b" text-anchor="middle">input_ids</text>
+  <text x="135" y="354" font-size="13" fill="#64748b" text-anchor="middle">[128000, 791, ...]</text>
+
+  <!-- split arrows -->
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M220,320 C290,320 300,200 360,200"/>
+    <path d="M220,350 C290,350 300,490 360,490"/>
+  </g>
+
+  <!-- TOP LANE: HuggingFace reference -->
+  <rect x="360" y="140" width="320" height="120" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="380" y="172" font-size="19" font-weight="700" fill="#1e1b4b">HuggingFace Llama-3.2-1B</text>
+  <text x="380" y="200" font-size="15" fill="#475569">the reference. fp32, on CPU.</text>
+  <text x="380" y="226" font-size="15" fill="#3730a3" font-weight="600">register_forward_hook on every module</text>
+  <text x="380" y="248" font-size="14" fill="#64748b">grabs the output of each internal layer.</text>
+
+  <!-- reference activations -->
+  <rect x="730" y="150" width="215" height="100" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="837" y="180" font-size="16" font-weight="700" fill="#1e1b4b" text-anchor="middle">reference activations</text>
+  <g font-size="13" fill="#3730a3" text-anchor="middle">
+    <text x="837" y="206">rmsnorm0 · attn0</text>
+    <text x="837" y="226">mlp0 · block0</text>
+  </g>
+  <text x="837" y="244" font-size="12" fill="#94a3b8" text-anchor="middle">each shape (1, 5, 2048)</text>
+
+  <!-- BOTTOM LANE: nanoserve -->
+  <rect x="360" y="430" width="320" height="120" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="380" y="462" font-size="19" font-weight="700" fill="#064e3b">nanoserve, hand-written</text>
+  <text x="380" y="490" font-size="15" fill="#475569">the piece built that day:</text>
+  <text x="380" y="516" font-size="15" fill="#047857" font-weight="600">RMSNorm · RoPE · SwiGLU · attention</text>
+  <text x="380" y="538" font-size="14" fill="#64748b">same weights, my own torch ops.</text>
+
+  <!-- my tensor -->
+  <rect x="730" y="440" width="215" height="100" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="837" y="478" font-size="16" font-weight="700" fill="#064e3b" text-anchor="middle">my tensor</text>
+  <text x="837" y="506" font-size="13" fill="#047857" text-anchor="middle">the same activation,</text>
+  <text x="837" y="526" font-size="13" fill="#047857" text-anchor="middle">computed from scratch</text>
+
+  <!-- arrows into the diff -->
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M680,200 L730,200"/>
+    <path d="M680,490 L730,490"/>
+    <path d="M945,200 C982,200 985,300 985,322"/>
+    <path d="M945,490 C982,490 985,390 985,358"/>
+  </g>
+
+  <!-- the diff -->
+  <rect x="985" y="300" width="195" height="80" rx="10" fill="#1e1b4b"/>
+  <text x="1082" y="333" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">torch.allclose(</text>
+  <text x="1082" y="357" font-size="16" font-weight="700" fill="#a5b4fc" text-anchor="middle">mine, ref, atol=1e-5)</text>
+
+  <!-- verdict, below the diff, clear of the green box -->
+  <text x="1082" y="416" font-size="15" font-weight="700" fill="#047857" text-anchor="middle">within 1e-5 → correct</text>
+  <text x="1082" y="440" font-size="13" fill="#64748b" text-anchor="middle">drift → RoPE / mask / dtype</text>
+
+  <!-- day-2 note -->
+  <text x="50" y="630" font-size="15" fill="#475569">Day 2 wired this loop up first, before any math. From here every layer is provable on the day it is written.</text>
+  <text x="1150" y="655" font-size="14" fill="#94a3b8" text-anchor="end">nanoserve · an AI inference engine from scratch</text>
+</svg>

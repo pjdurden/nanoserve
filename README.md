@@ -24,7 +24,7 @@ Speculative decoding, tensor parallelism, prefix caching, quantization. Those ar
 
 ## Status
 
-Day 0: scaffolding. See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan.
+Day 2: weights loader script, full model config, and the HF verification harness. See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
 
 ## Target hardware
 
