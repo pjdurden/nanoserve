@@ -24,7 +24,7 @@ Speculative decoding, tensor parallelism, prefix caching, quantization. Those ar
 
 ## Status
 
-Day 2: weights loader script, full model config, and the HF verification harness. See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
+Day 3: the weight loader. Reads the Llama-3.2-1B safetensors into nanoserve's own named, shape-checked tensors (handling tied embeddings and GQA shapes). See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
 
 ## Target hardware
 

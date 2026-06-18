@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="tiearrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#047857"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="56" font-size="32" font-weight="700" fill="#1e1b4b">Loading a model is mostly getting names right</text>
+  <text x="50" y="88" font-size="20" fill="#64748b">146 tensors on disk become 147 named tensors. the extra one is an alias, not a copy.</text>
+
+  <!-- column headers -->
+  <text x="70" y="128" font-size="17" font-weight="700" fill="#3730a3">HuggingFace safetensors</text>
+  <text x="70" y="150" font-size="13" fill="#94a3b8">146 tensors on disk</text>
+  <text x="730" y="128" font-size="17" font-weight="700" fill="#064e3b">nanoserve names</text>
+  <text x="730" y="150" font-size="13" fill="#94a3b8">147 named tensors</text>
+
+  <!-- mapping rows: each row is HF box -> nano box -->
+  <!-- row 1: embed -->
+  <rect x="60" y="166" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="191" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">model.embed_tokens.weight</text>
+  <rect x="720" y="166" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="191" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">embed_tokens.weight</text>
+
+  <!-- row 2: input_layernorm -->
+  <rect x="60" y="222" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="247" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">…layers.i.input_layernorm.weight</text>
+  <rect x="720" y="222" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="247" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">layers.i.attn_norm.weight</text>
+
+  <!-- row 3: q_proj -->
+  <rect x="60" y="278" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="303" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">…layers.i.self_attn.q_proj.weight</text>
+  <rect x="720" y="278" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="303" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">layers.i.attn.q_proj.weight</text>
+  <text x="1066" y="303" font-size="14" font-weight="700" fill="#475569" font-family="ui-monospace, Menlo, monospace">[2048, 2048]</text>
+
+  <!-- row 4: k_proj (GQA) -->
+  <rect x="60" y="334" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="359" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">…layers.i.self_attn.k_proj.weight</text>
+  <rect x="720" y="334" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="359" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">layers.i.attn.k_proj.weight</text>
+  <text x="1066" y="359" font-size="14" font-weight="700" fill="#b45309" font-family="ui-monospace, Menlo, monospace">[ 512, 2048]</text>
+
+  <!-- row 5: v_proj (GQA) -->
+  <rect x="60" y="390" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="415" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">…layers.i.self_attn.v_proj.weight</text>
+  <rect x="720" y="390" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="415" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">layers.i.attn.v_proj.weight</text>
+  <text x="1066" y="415" font-size="14" font-weight="700" fill="#b45309" font-family="ui-monospace, Menlo, monospace">[ 512, 2048]</text>
+
+  <!-- GQA callout bracket -->
+  <path d="M1180,338 L1188,338 L1188,426 L1180,426" fill="none" stroke="#b45309" stroke-width="1.5"/>
+  <text x="1176" y="386" font-size="12" font-weight="700" fill="#b45309" text-anchor="end">GQA: 8 KV heads</text>
+
+  <!-- row 6: mlp gate -->
+  <rect x="60" y="446" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="471" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">…layers.i.mlp.gate_proj.weight</text>
+  <rect x="720" y="446" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="471" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">layers.i.mlp.gate_proj.weight</text>
+
+  <!-- row 7: norm -->
+  <rect x="60" y="502" width="470" height="40" rx="7" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="76" y="527" font-size="15" fill="#1e1b4b" font-family="ui-monospace, Menlo, monospace">model.norm.weight</text>
+  <rect x="720" y="502" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="527" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">norm.weight</text>
+
+  <!-- row 8: lm_head, the tie -->
+  <rect x="60" y="558" width="470" height="40" rx="7" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="76" y="583" font-size="15" fill="#94a3b8" font-family="ui-monospace, Menlo, monospace">(no lm_head.weight on disk)</text>
+  <rect x="720" y="558" width="330" height="40" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="736" y="583" font-size="15" fill="#064e3b" font-family="ui-monospace, Menlo, monospace">lm_head.weight</text>
+
+  <!-- straight mapping arrows -->
+  <g stroke="#475569" stroke-width="1.8" fill="none" marker-end="url(#arrow)">
+    <path d="M530,186 L716,186"/>
+    <path d="M530,242 L716,242"/>
+    <path d="M530,298 L716,298"/>
+    <path d="M530,354 L716,354"/>
+    <path d="M530,410 L716,410"/>
+    <path d="M530,466 L716,466"/>
+    <path d="M530,522 L716,522"/>
+  </g>
+
+  <!-- the tie: lm_head aliases embed_tokens (shared storage, no copy) -->
+  <path d="M1050,186 C1130,186 1130,578 1058,578" fill="none" stroke="#047857" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#tiearrow)"/>
+  <text x="1142" y="378" font-size="13" font-weight="700" fill="#047857" text-anchor="middle" transform="rotate(90 1142 378)">tied: shares storage, no copy</text>
+
+  <!-- footer -->
+  <text x="50" y="640" font-size="15" fill="#475569">Validate at load: every key maps once, no tensor left over, every shape matches config. A head-count bug becomes a load error, not a wrong answer.</text>
+  <text x="1150" y="662" font-size="14" fill="#94a3b8" text-anchor="end">nanoserve · an AI inference engine from scratch</text>
+</svg>
