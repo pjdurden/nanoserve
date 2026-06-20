@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="gatearrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#b45309"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="56" font-size="32" font-weight="700" fill="#1e1b4b">SwiGLU: the gated MLP</text>
+  <text x="50" y="88" font-size="20" fill="#64748b">down( silu(gate(x)) * up(x) ) — two projections up, one gate, one projection back.</text>
+
+  <!-- input -->
+  <rect x="60" y="300" width="150" height="56" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="135" y="326" font-size="17" fill="#1e1b4b" text-anchor="middle" font-weight="600">x</text>
+  <text x="135" y="346" font-size="13" fill="#64748b" text-anchor="middle">[..., 2048]</text>
+
+  <!-- gate branch -->
+  <rect x="320" y="150" width="190" height="60" rx="9" fill="#fff7ed" stroke="#b45309" stroke-width="1.5"/>
+  <text x="415" y="176" font-size="16" fill="#7c2d12" text-anchor="middle" font-weight="600">gate_proj</text>
+  <text x="415" y="197" font-size="12" fill="#9a3412" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">[8192, 2048]</text>
+
+  <rect x="580" y="150" width="150" height="60" rx="9" fill="#fff7ed" stroke="#b45309" stroke-width="1.5"/>
+  <text x="655" y="178" font-size="16" fill="#7c2d12" text-anchor="middle" font-weight="600">SiLU</text>
+  <text x="655" y="198" font-size="12" fill="#9a3412" text-anchor="middle">the gate nonlinearity</text>
+
+  <!-- up branch -->
+  <rect x="320" y="445" width="190" height="60" rx="9" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <text x="415" y="471" font-size="16" fill="#064e3b" text-anchor="middle" font-weight="600">up_proj</text>
+  <text x="415" y="492" font-size="12" fill="#047857" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">[8192, 2048]</text>
+
+  <!-- multiply -->
+  <circle cx="820" cy="328" r="34" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="820" y="338" font-size="30" fill="#1e293b" text-anchor="middle" font-weight="700">×</text>
+  <text x="820" y="392" font-size="13" fill="#64748b" text-anchor="middle">elementwise</text>
+
+  <!-- down -->
+  <rect x="930" y="298" width="190" height="60" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="1025" y="324" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">down_proj</text>
+  <text x="1025" y="345" font-size="12" fill="#3730a3" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">[2048, 8192]</text>
+
+  <!-- arrows: x splits to gate and up -->
+  <path d="M210,316 C260,300 270,190 318,180" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M210,340 C260,356 270,470 318,475" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- gate -> silu -> multiply -->
+  <path d="M510,180 L576,180" fill="none" stroke="#b45309" stroke-width="2" marker-end="url(#gatearrow)"/>
+  <path d="M730,185 C780,210 800,265 812,296" fill="none" stroke="#b45309" stroke-width="2" marker-end="url(#gatearrow)"/>
+
+  <!-- up -> multiply -->
+  <path d="M510,475 C700,470 790,400 814,362" fill="none" stroke="#047857" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- multiply -> down -->
+  <path d="M854,328 L926,328" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- down -> out -->
+  <path d="M1120,328 L1160,328" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1150" y="360" font-size="13" fill="#64748b" text-anchor="end">[..., 2048]</text>
+
+  <!-- footnote -->
+  <text x="50" y="620" font-size="16" fill="#334155">The only trap: SiLU sits on the gate branch only, and the two branches multiply (not add).</text>
+  <text x="50" y="646" font-size="16" fill="#334155">Swap them and short prompts still look fine while the logits quietly drift off HuggingFace.</text>
+</svg>

@@ -24,7 +24,7 @@ Speculative decoding, tensor parallelism, prefix caching, quantization. Those ar
 
 ## Status
 
-Day 4: RMSNorm + RoPE. The normalizer and rotary position embedding (with the Llama-3.2 "llama3" frequency rescaling) are rebuilt in `layers.py` and match the HuggingFace reference to the bit. See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
+Day 5: SwiGLU MLP. The gated feed-forward (`down(silu(gate(x)) * up(x))`) is rebuilt in `layers.py` and matches the HuggingFace `LlamaMLP` to 1e-5. (Day 4: RMSNorm + RoPE, bit-exact against the reference.) See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
 
 ## Target hardware
 

@@ -10,6 +10,11 @@ Day 4 lands the two position/normalization pieces:
   rescaling. This is the piece people get subtly wrong, so it is built to mirror
   HuggingFace term-for-term and verified against `model.rotary_emb` to ~1e-6.
 
+Day 5 adds the block's other sublayer:
+
+- SwiGLU MLP: the gated feed-forward (`down(silu(gate(x)) * up(x))`), verified
+  against the HF `LlamaMLP` activation to ~1e-5.
+
 Everything here is a plain function or a small helper class, not an `nn.Module`.
 nanoserve never trains, so there is nothing to register; the layer modules in
 Weeks 1-2 just call these with weights pulled from the loader by name.
@@ -20,6 +25,7 @@ from __future__ import annotations
 import math
 
 import torch
+import torch.nn.functional as F
 
 from .config import ModelConfig
 
@@ -174,6 +180,48 @@ def apply_rotary(
     return q_embed, k_embed
 
 
-# TODO(week1): SwiGLU MLP (gate, up, down)
+# --- SwiGLU MLP -------------------------------------------------------------
+#
+# The block's second sublayer. A plain MLP would be `down(act(up(x)))` with one
+# projection up to the wide intermediate dim and one back. SwiGLU splits the
+# up-projection in two: a `gate` branch that is passed through SiLU, and an `up`
+# branch that is not, and it multiplies them elementwise before projecting down:
+#
+#     down( silu(gate(x)) * up(x) )
+#
+# The gate is a learned, input-dependent valve on the up branch (this is the
+# "gated linear unit" idea); SiLU is the smooth gate nonlinearity. The cost is a
+# third matrix, which is why Llama sizes the intermediate dim at ~2.7x hidden
+# (8192 for this 2048-hidden model) rather than the classic 4x.
+#
+# The one thing to get right: SiLU goes on the *gate* branch only, and the two
+# branches are multiplied, not added. Swap the branches or move the nonlinearity
+# and short prompts still look plausible while the logits quietly drift off HF.
+#
+# Llama's projections are bias-free, so each branch is a single matmul. Weights
+# arrive [out, in] (the torch/HF convention), exactly what `F.linear` wants, so
+# there is no transpose to fumble here.
+
+
+def swiglu(
+    x: torch.Tensor,
+    gate_weight: torch.Tensor,
+    up_weight: torch.Tensor,
+    down_weight: torch.Tensor,
+) -> torch.Tensor:
+    """Apply the SwiGLU MLP to the last dimension of `x`.
+
+    x:           [..., hidden] activations (the `mlp_norm` output in a block).
+    gate_weight: [intermediate, hidden] `mlp.gate_proj.weight` from the loader.
+    up_weight:   [intermediate, hidden] `mlp.up_proj.weight`.
+    down_weight: [hidden, intermediate] `mlp.down_proj.weight`.
+
+    Returns a tensor of the same shape as `x`. Matches HF `LlamaMLP.forward`.
+    """
+    gate = F.silu(F.linear(x, gate_weight))
+    up = F.linear(x, up_weight)
+    return F.linear(gate * up, down_weight)
+
+
 # TODO(week1): attention for a single block (GQA: repeat KV heads)
 # TODO(week2): wire blocks together in model.py

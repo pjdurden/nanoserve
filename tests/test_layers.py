@@ -21,6 +21,7 @@ from nanoserve.layers import (
     apply_rotary,
     rms_norm,
     rotate_half,
+    swiglu,
 )
 
 from reference import PROMPT_IDS, WEIGHTS_DIR, hf_model, requires_weights
@@ -109,6 +110,42 @@ def test_llama3_rescaling_touches_only_low_frequencies():
     assert torch.all(scaled <= plain + 1e-12)
 
 
+# --- SwiGLU: pure math ------------------------------------------------------
+
+
+def test_swiglu_matches_manual_definition():
+    """swiglu == down(silu(gate(x)) * up(x)), with bias-free [out, in] weights."""
+    torch.manual_seed(0)
+    hidden, inter = 8, 20
+    x = torch.randn(3, hidden)
+    gate_w = torch.randn(inter, hidden)
+    up_w = torch.randn(inter, hidden)
+    down_w = torch.randn(hidden, inter)
+
+    silu = lambda t: t * torch.sigmoid(t)  # noqa: E731
+    expected = (silu(x @ gate_w.T) * (x @ up_w.T)) @ down_w.T
+
+    assert torch.allclose(swiglu(x, gate_w, up_w, down_w), expected, atol=1e-6)
+
+
+def test_swiglu_gate_branch_is_not_symmetric():
+    """Guard against swapping gate/up: SiLU is on the gate branch only.
+
+    SiLU is nonlinear, so silu(gate)*up != silu(up)*gate in general. If a refactor
+    ever swaps the two branches, this random case will disagree and fail.
+    """
+    torch.manual_seed(1)
+    hidden, inter = 8, 20
+    x = torch.randn(3, hidden)
+    gate_w = torch.randn(inter, hidden)
+    up_w = torch.randn(inter, hidden)
+    down_w = torch.randn(hidden, inter)
+
+    straight = swiglu(x, gate_w, up_w, down_w)
+    swapped = swiglu(x, up_w, gate_w, down_w)  # gate/up exchanged
+    assert not torch.allclose(straight, swapped, atol=1e-4)
+
+
 # --- against the real Llama-3.2-1B ------------------------------------------
 
 
@@ -168,3 +205,41 @@ def test_rmsnorm_matches_hf_input_layernorm():
     w = weights["layers.0.attn_norm.weight"]
     mine = rms_norm(acts["embed"], w, eps=weights.config.rms_norm_eps)
     assert torch.allclose(mine, acts["ln0"], atol=1e-5)
+
+
+@requires_weights
+def test_swiglu_matches_hf_layer0_mlp():
+    """SwiGLU matches layer 0's `mlp` hook on its real input, to 1e-5.
+
+    Capture the `post_attention_layernorm` output (the MLP's true input) and the
+    `mlp` output, then reproduce the second from the first with our `swiglu` and
+    the loader's gate/up/down weights.
+    """
+    from nanoserve.loader import load_weights
+
+    hf = hf_model()
+    acts = {}
+
+    def grab(name):
+        def hook(_m, _inp, out):
+            acts[name] = (out[0] if isinstance(out, tuple) else out).detach()
+
+        return hook
+
+    h1 = hf.model.layers[0].post_attention_layernorm.register_forward_hook(grab("mlp_in"))
+    h2 = hf.model.layers[0].mlp.register_forward_hook(grab("mlp_out"))
+    try:
+        with torch.no_grad():
+            hf(torch.tensor([PROMPT_IDS]))
+    finally:
+        h1.remove()
+        h2.remove()
+
+    w = load_weights(WEIGHTS_DIR)
+    mine = swiglu(
+        acts["mlp_in"],
+        w["layers.0.mlp.gate_proj.weight"],
+        w["layers.0.mlp.up_proj.weight"],
+        w["layers.0.mlp.down_proj.weight"],
+    )
+    assert torch.allclose(mine, acts["mlp_out"], atol=1e-5)
