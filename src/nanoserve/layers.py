@@ -15,6 +15,12 @@ Day 5 adds the block's other sublayer:
 - SwiGLU MLP: the gated feed-forward (`down(silu(gate(x)) * up(x))`), verified
   against the HF `LlamaMLP` activation to ~1e-5.
 
+Day 6 adds the block's first sublayer:
+
+- GQA attention: the plain prefill math (Q/K/V projections, RoPE on q/k, the
+  KV-head repeat, a causal mask, softmax, output projection), verified against
+  the HF `self_attn` activation to ~1e-5. No KV cache yet; that is Week 2.
+
 Everything here is a plain function or a small helper class, not an `nn.Module`.
 nanoserve never trains, so there is nothing to register; the layer modules in
 Weeks 1-2 just call these with weights pulled from the loader by name.
@@ -223,5 +229,110 @@ def swiglu(
     return F.linear(gate * up, down_weight)
 
 
-# TODO(week1): attention for a single block (GQA: repeat KV heads)
+# --- GQA attention ----------------------------------------------------------
+#
+# The block's first sublayer, and the only one that mixes information *across*
+# tokens. Grouped-query attention (GQA) is the memory trick that makes the KV
+# cache affordable: instead of one key/value head per query head, Llama-3.2-1B
+# has 32 query heads but only 8 KV heads, and each KV head is shared by a group
+# of 4 query heads. Fewer KV heads means a 4x smaller KV cache to store and
+# stream per token, which is the whole reason this arc ends in a paged cache.
+#
+# This is the plain prefill math: the whole prompt at once, no cache yet. The
+# steps mirror HF `LlamaAttention.forward` term-for-term so the 1e-5 check is
+# easy to reason about:
+#   1. Project x to q (32 heads), k, v (8 heads each), and split into heads.
+#   2. Rotate q and k by RoPE (Day 4 plugs in right here).
+#   3. Repeat the 8 KV heads 4x so every query head has a key/value to attend to.
+#   4. scores = q . k^T / sqrt(head_dim), add a causal mask, softmax (in fp32).
+#   5. Weighted sum of v, concat the heads back, project out with o_proj.
+#
+# The three places this goes subtly wrong, in order of how often: the causal
+# mask (off-by-one or wrong triangle), the head reshape (view-then-transpose,
+# not a bare reshape that interleaves heads and positions), and the GQA repeat
+# (each KV head must map to a *contiguous* group of query heads, which is what
+# the expand-then-reshape below guarantees).
+
+
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """Repeat each KV head `n_rep` times to line up with the query heads.
+
+    x:     [batch, num_kv_heads, seq, head_dim].
+    n_rep: query heads per KV head (`config.num_kv_groups`, 4 here).
+
+    Returns [batch, num_kv_heads * n_rep, seq, head_dim], where KV head h becomes
+    output heads [h*n_rep : (h+1)*n_rep]. That contiguous grouping is the GQA
+    contract: query heads 0-3 share KV head 0, 4-7 share KV head 1, and so on.
+    Matches HF `repeat_kv` (expand a new axis, then fold it into the head axis),
+    which is a view, not a copy, so it costs no extra memory.
+    """
+    batch, num_kv_heads, seq, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    x = x[:, :, None, :, :].expand(batch, num_kv_heads, n_rep, seq, head_dim)
+    return x.reshape(batch, num_kv_heads * n_rep, seq, head_dim)
+
+
+def gqa_attention(
+    x: torch.Tensor,
+    q_weight: torch.Tensor,
+    k_weight: torch.Tensor,
+    v_weight: torch.Tensor,
+    o_weight: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    config: ModelConfig,
+) -> torch.Tensor:
+    """Single-block grouped-query attention over a full prompt (prefill, no cache).
+
+    x:           [batch, seq, hidden] activations (the `attn_norm` output).
+    q_weight:    [n_heads*head_dim, hidden] `attn.q_proj.weight` from the loader.
+    k_weight:    [n_kv*head_dim, hidden]    `attn.k_proj.weight`.
+    v_weight:    [n_kv*head_dim, hidden]    `attn.v_proj.weight`.
+    o_weight:    [hidden, n_heads*head_dim] `attn.o_proj.weight`.
+    cos, sin:    [batch, seq, head_dim] RoPE tables from `RotaryEmbedding.cos_sin`.
+    config:      supplies the head counts, head_dim, and GQA repeat factor.
+
+    Returns [batch, seq, hidden]. Matches HF `LlamaAttention.forward` output
+    (post o_proj, before the residual add) to ~1e-5.
+    """
+    batch, seq, _ = x.shape
+    n_q = config.num_attention_heads
+    n_kv = config.num_key_value_heads
+    d = config.head_dim
+
+    # Project, then split the flat projection into heads. The view-then-transpose
+    # order matters: reshape to [b, seq, heads, d] first so each head owns a
+    # contiguous slice, *then* move the head axis up to [b, heads, seq, d].
+    q = F.linear(x, q_weight).view(batch, seq, n_q, d).transpose(1, 2)
+    k = F.linear(x, k_weight).view(batch, seq, n_kv, d).transpose(1, 2)
+    v = F.linear(x, v_weight).view(batch, seq, n_kv, d).transpose(1, 2)
+
+    # RoPE rotates q and k by position before they ever meet (Day 4).
+    q, k = apply_rotary(q, k, cos, sin)
+
+    # Grow 8 KV heads to 32 so every query head has a partner.
+    k = repeat_kv(k, config.num_kv_groups)
+    v = repeat_kv(v, config.num_kv_groups)
+
+    # Scaled dot-product scores, then a causal mask so position i cannot see j>i.
+    # The mask is added before softmax; -inf entries become exactly zero weight.
+    # The diagonal is always unmasked, so no row is ever fully -inf (no NaN).
+    scaling = d**-0.5
+    scores = torch.matmul(q, k.transpose(2, 3)) * scaling
+    causal = torch.full((seq, seq), float("-inf"), dtype=scores.dtype, device=scores.device)
+    causal = torch.triu(causal, diagonal=1)
+    scores = scores + causal
+
+    # HF computes the softmax in fp32 even in a lower-precision model, then casts
+    # back; we mirror it so the bf16 path matches later. In fp32 it is a no-op.
+    weights = torch.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+
+    # Weighted sum of values, then undo the head split: [b, h, seq, d] ->
+    # [b, seq, h, d] -> [b, seq, hidden], the reverse of the projection reshape.
+    out = torch.matmul(weights, v)
+    out = out.transpose(1, 2).reshape(batch, seq, n_q * d)
+    return F.linear(out, o_weight)
+
+
 # TODO(week2): wire blocks together in model.py

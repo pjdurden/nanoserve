@@ -12,7 +12,7 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 
 ## Status
 
-**Day 5 of 100 (Week 1).** The forward-pass primitives are landing, each verified against the real Llama-3.2-1B.
+**Day 6 of 100 (Week 1).** The forward-pass primitives are landing, each verified against the real Llama-3.2-1B.
 
 | Stage | Verified against HuggingFace | Status |
 | --- | --- | --- |
@@ -20,8 +20,8 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 | RMSNorm | `input_layernorm` hook, to 1e-5 | done |
 | RoPE (inv_freq, cos/sin table, rotate-half apply) | `rotary_emb` + `apply_rotary_pos_emb`, 1e-6 to 1e-9 | done |
 | SwiGLU MLP | `mlp` hook, to 1e-5 | done |
-| GQA attention | `self_attn` hook | next (Day 6) |
-| Full forward pass + greedy decode | token-for-token | Week 2 |
+| GQA attention (32 query / 8 KV heads, causal prefill) | `self_attn` hook, to 1e-5 | done |
+| Full forward pass + greedy decode | token-for-token | next (Day 7: one full block) |
 | Sampling, paged KV cache, Triton kernel, scheduler, OpenAI server | | roadmap below |
 
 Daily build log: [docs/daily/](docs/daily/). Full 100-day plan: [docs/PLAN.md](docs/PLAN.md).
@@ -52,8 +52,8 @@ The whole project is built around one idea: a piece of an inference engine is on
 
 Tests come in two tiers:
 
-- **Pure-math tests** run anywhere (torch only): the RMSNorm formula, the rotate-half convention pinned to `transformers`' own `apply_rotary_pos_emb`, the SwiGLU definition, plus *trap tests* that deliberately swap branches and assert the answer changes, so a future refactor that flips them fails loudly.
-- **Reference tests** compare to the real model: RMSNorm against the `input_layernorm` hook, RoPE against the model's own rotary buffers, SwiGLU against the `mlp` hook, all to 1e-5 or tighter.
+- **Pure-math tests** run anywhere (torch only): the RMSNorm formula, the rotate-half convention pinned to `transformers`' own `apply_rotary_pos_emb`, the SwiGLU definition, an independent attention recompute, plus *trap tests* that deliberately swap branches, scramble KV-head grouping, or poke a future token and assert the answer changes (or, for the causal mask, does not), so a future refactor that breaks them fails loudly.
+- **Reference tests** compare to the real model: RMSNorm against the `input_layernorm` hook, RoPE against the model's own rotary buffers, SwiGLU against the `mlp` hook, GQA attention against the `self_attn` hook, all to 1e-5 or tighter.
 
 The test that matters is not "do the names match." It is "did the right bytes land under the right name." That is the only thing that catches a swapped q and k.
 

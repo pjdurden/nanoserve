@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="56" font-size="32" font-weight="700" fill="#1e1b4b">GQA: 32 query heads share 8 KV heads</text>
+  <text x="50" y="88" font-size="20" fill="#64748b">Each KV head serves a group of 4 query heads. 4x fewer keys/values to cache and stream per token.</text>
+
+  <!-- ===== left: one group in detail ===== -->
+  <text x="50" y="150" font-size="18" font-weight="600" fill="#3730a3">One group of 8 (the other 7 are identical)</text>
+
+  <!-- four query heads -->
+  <rect x="60"  y="190" width="120" height="56" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="120" y="224" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">Q head 0</text>
+  <rect x="60"  y="262" width="120" height="56" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="120" y="296" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">Q head 1</text>
+  <rect x="60"  y="334" width="120" height="56" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="120" y="368" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">Q head 2</text>
+  <rect x="60"  y="406" width="120" height="56" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="120" y="440" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">Q head 3</text>
+
+  <!-- shared KV head -->
+  <rect x="360" y="262" width="180" height="128" rx="12" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="450" y="312" font-size="18" fill="#7c2d12" text-anchor="middle" font-weight="700">KV head 0</text>
+  <text x="450" y="338" font-size="14" fill="#9a3412" text-anchor="middle">one shared K, V</text>
+  <text x="450" y="360" font-size="14" fill="#9a3412" text-anchor="middle">repeat_kv x4</text>
+
+  <!-- arrows query -> shared kv -->
+  <path d="M180,218 L356,300" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M180,290 L356,312" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M180,362 L356,340" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M180,434 L356,352" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <text x="450" y="438" font-size="14" fill="#64748b" text-anchor="middle">32 query / 8 KV = 4 per group</text>
+
+  <!-- ===== right: memory comparison ===== -->
+  <text x="680" y="150" font-size="18" font-weight="600" fill="#3730a3">What it buys you: KV cache size</text>
+
+  <!-- MHA bar -->
+  <text x="680" y="210" font-size="15" fill="#334155" font-weight="600">MHA: 32 KV heads</text>
+  <rect x="680" y="222" width="460" height="40" rx="6" fill="#fecaca" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="910" y="248" font-size="15" fill="#7f1d1d" text-anchor="middle">32 x (K,V) cached per token</text>
+
+  <!-- GQA bar -->
+  <text x="680" y="305" font-size="15" fill="#334155" font-weight="600">GQA: 8 KV heads</text>
+  <rect x="680" y="317" width="115" height="40" rx="6" fill="#bbf7d0" stroke="#15803d" stroke-width="1.5"/>
+  <text x="737" y="343" font-size="14" fill="#14532d" text-anchor="middle">8 x (K,V)</text>
+  <text x="812" y="343" font-size="15" fill="#15803d" font-weight="700">4x smaller</text>
+
+  <!-- the math line -->
+  <rect x="680" y="400" width="460" height="150" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="700" y="432" font-size="15" fill="#334155" font-weight="600">The prefill math (per block)</text>
+  <text x="700" y="460" font-size="14" fill="#475569" font-family="ui-monospace, monospace">q,k,v = proj(x); rope(q,k)</text>
+  <text x="700" y="482" font-size="14" fill="#475569" font-family="ui-monospace, monospace">k,v = repeat_kv(k,v, 4)</text>
+  <text x="700" y="504" font-size="14" fill="#475569" font-family="ui-monospace, monospace">s = q.kT / sqrt(d) + causal_mask</text>
+  <text x="700" y="526" font-size="14" fill="#475569" font-family="ui-monospace, monospace">out = o_proj( softmax(s) . v )</text>
+
+  <!-- footer note -->
+  <text x="50" y="620" font-size="15" fill="#64748b">The three traps: the causal mask triangle, the view-then-transpose head split, and the contiguous GQA grouping.</text>
+  <text x="50" y="646" font-size="15" fill="#64748b">Verified within 1e-5 of the Hugging Face self_attn output on Llama-3.2-1B.</text>
+</svg>
