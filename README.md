@@ -2,6 +2,10 @@
 
 **A from-scratch LLM inference engine you can read in an afternoon.** Think nanoGPT, but for serving instead of training.
 
+<p align="center">
+  <img src="docs/diagrams/architecture-overview.svg" alt="nanoserve architecture: the life of a request" width="840">
+</p>
+
 Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work: roughly 1.5k to 2k annotated lines, built and posted in public over 100 days.
 
 The rule of the build is **correctness before speed**. Every numerical piece is checked against the HuggingFace reference to 1e-5 before anything is optimized. The first thing built was not a model, it was the test harness that proves the model right.
@@ -55,19 +59,7 @@ The test that matters is not "do the names match." It is "did the right bytes la
 
 ## Architecture
 
-A request comes in over HTTP, the scheduler decides which requests run this step, the model does one forward pass for the whole batch reading and writing a paged KV cache, a sampler picks the next token per sequence, and finished or streamed tokens go back out. That loop is the engine.
-
-```mermaid
-flowchart LR
-    C[Client<br/>POST /v1/completions] --> S[Server<br/>FastAPI]
-    S --> SCH[Scheduler<br/>waiting / running queues]
-    SCH --> E[Engine.step]
-    E --> M[Model forward<br/>RMSNorm, RoPE, GQA, SwiGLU<br/>+ Triton paged attention]
-    M <--> KV[(Paged KV cache)]
-    M --> SAMP[Sampler<br/>greedy / temp / top-k / top-p]
-    SAMP -->|next token per sequence| E
-    SAMP -->|stream tokens, SSE| C
-```
+A request comes in over HTTP, the scheduler decides which requests run this step, the model does one forward pass for the whole batch reading and writing a paged KV cache, a sampler picks the next token per sequence, and finished or streamed tokens go back out. That loop is the engine. The diagram at the top of this README traces it end to end.
 
 Full write-up with diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -77,6 +69,11 @@ Everything else is standard transformer code. These two are why an inference eng
 
 1. **Paged KV cache.** A naive cache reserves one contiguous slab per sequence sized for the maximum length, so most VRAM sits empty. A paged cache splits KV memory into fixed-size physical blocks in a shared pool and gives each sequence a block table mapping logical positions to physical blocks. Same trick as virtual memory in an OS.
 2. **Continuous batching.** Static batching waits for a whole batch to finish before starting the next, so one long request stalls everyone behind it. Continuous batching schedules at the granularity of a single decode step: every step it admits newly arrived requests and retires finished ones, keeping the GPU full.
+
+<p align="center">
+  <img src="docs/diagrams/paged-kv-cache.svg" alt="paged KV cache" width="420">
+  <img src="docs/diagrams/continuous-batching.svg" alt="continuous batching" width="420">
+</p>
 
 ## Roadmap
 
