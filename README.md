@@ -1,36 +1,90 @@
 # nanoserve
 
-A from-scratch LLM inference engine you can read in an afternoon. Think nanoGPT, but for serving instead of training.
+**A from-scratch LLM inference engine you can read in an afternoon.** Think nanoGPT, but for serving instead of training.
 
-Built in public over 100 days. The goal is a minimal, annotated inference engine: load Llama-3.2-1B, serve an OpenAI-compatible HTTP endpoint, with a paged KV cache, continuous batching, and a hand-written Triton paged-attention kernel. Roughly 1.5k to 2k lines, every one of them readable.
+Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work: roughly 1.5k to 2k annotated lines, built and posted in public over 100 days.
 
-## Why
-
-Production inference engines like vLLM and SGLang are 100k+ lines. The core ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work, so you can actually read them.
-
-## What it will do (v1, by Day 100)
-
-- Load Llama-3.2-1B weights from safetensors into hand-written layers (RMSNorm, RoPE, GQA attention, SwiGLU).
-- Generate text that matches HuggingFace token-for-token under greedy decoding.
-- Sample with temperature, top-k, and top-p.
-- Manage KV memory with a paged cache and a block allocator.
-- Run a custom Triton paged-attention kernel.
-- Batch many concurrent requests with continuous (iteration-level) batching and preemption.
-- Serve an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
-
-## What it will not do (v1)
-
-Speculative decoding, tensor parallelism, prefix caching, quantization. Those are the v2 roadmap, on purpose. v1 stops at a correct, batched, served engine.
+The rule of the build is **correctness before speed**. Every numerical piece is checked against the HuggingFace reference to 1e-5 before anything is optimized. The first thing built was not a model, it was the test harness that proves the model right.
 
 ## Status
 
-Day 5: SwiGLU MLP. The gated feed-forward (`down(silu(gate(x)) * up(x))`) is rebuilt in `layers.py` and matches the HuggingFace `LlamaMLP` to 1e-5. (Day 4: RMSNorm + RoPE, bit-exact against the reference.) See [docs/PLAN.md](docs/PLAN.md) for the full 100-day weekly plan and [docs/daily/](docs/daily/) for the build log.
+**Day 5 of 100 (Week 1).** The forward-pass primitives are landing, each verified against the real Llama-3.2-1B.
 
-## Target hardware
+| Stage | Verified against HuggingFace | Status |
+| --- | --- | --- |
+| Weight loading (safetensors name mapping) | tensor inventory + shapes | done |
+| RMSNorm | `input_layernorm` hook, to 1e-5 | done |
+| RoPE (inv_freq, cos/sin table, rotate-half apply) | `rotary_emb` + `apply_rotary_pos_emb`, 1e-6 to 1e-9 | done |
+| SwiGLU MLP | `mlp` hook, to 1e-5 | done |
+| GQA attention | `self_attn` hook | next (Day 6) |
+| Full forward pass + greedy decode | token-for-token | Week 2 |
+| Sampling, paged KV cache, Triton kernel, scheduler, OpenAI server | | roadmap below |
 
-One small GPU (a single 4090 or A10 is plenty for a 1B model). Logic is developed against the HuggingFace reference; performance numbers are taken on the GPU.
+Daily build log: [docs/daily/](docs/daily/). Full 100-day plan: [docs/PLAN.md](docs/PLAN.md).
 
-## Layout
+## Quickstart
+
+The pure-math correctness tests run with no GPU and no model weights:
+
+```bash
+git clone https://github.com/pjdurden/nanoserve
+cd nanoserve
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+To run the **full** verification against the real Llama-3.2-1B, download the weights first (it is a gated repo: accept the license on the model page, then authenticate). The HuggingFace-comparison tests skip cleanly until the weights are present, then run automatically:
+
+```bash
+huggingface-cli login        # or: export HF_TOKEN=...
+python scripts/download_weights.py   # lands in ./weights (gitignored)
+pytest                               # HF-comparison tests now run too
+```
+
+## How it is verified
+
+The whole project is built around one idea: a piece of an inference engine is only done when it matches a known-correct reference, bit for bit. The harness in [tests/reference.py](tests/reference.py) loads Llama-3.2-1B once (fp32, CPU) and captures intermediate activations with forward hooks, so every component can assert its own tensor against the matching HuggingFace activation.
+
+Tests come in two tiers:
+
+- **Pure-math tests** run anywhere (torch only): the RMSNorm formula, the rotate-half convention pinned to `transformers`' own `apply_rotary_pos_emb`, the SwiGLU definition, plus *trap tests* that deliberately swap branches and assert the answer changes, so a future refactor that flips them fails loudly.
+- **Reference tests** compare to the real model: RMSNorm against the `input_layernorm` hook, RoPE against the model's own rotary buffers, SwiGLU against the `mlp` hook, all to 1e-5 or tighter.
+
+The test that matters is not "do the names match." It is "did the right bytes land under the right name." That is the only thing that catches a swapped q and k.
+
+## Architecture
+
+A request comes in over HTTP, the scheduler decides which requests run this step, the model does one forward pass for the whole batch reading and writing a paged KV cache, a sampler picks the next token per sequence, and finished or streamed tokens go back out. That loop is the engine.
+
+```mermaid
+flowchart LR
+    C[Client<br/>POST /v1/completions] --> S[Server<br/>FastAPI]
+    S --> SCH[Scheduler<br/>waiting / running queues]
+    SCH --> E[Engine.step]
+    E --> M[Model forward<br/>RMSNorm, RoPE, GQA, SwiGLU<br/>+ Triton paged attention]
+    M <--> KV[(Paged KV cache)]
+    M --> SAMP[Sampler<br/>greedy / temp / top-k / top-p]
+    SAMP -->|next token per sequence| E
+    SAMP -->|stream tokens, SSE| C
+```
+
+Full write-up with diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### The two ideas that make it an engine
+
+Everything else is standard transformer code. These two are why an inference engine is its own thing.
+
+1. **Paged KV cache.** A naive cache reserves one contiguous slab per sequence sized for the maximum length, so most VRAM sits empty. A paged cache splits KV memory into fixed-size physical blocks in a shared pool and gives each sequence a block table mapping logical positions to physical blocks. Same trick as virtual memory in an OS.
+2. **Continuous batching.** Static batching waits for a whole batch to finish before starting the next, so one long request stalls everyone behind it. Continuous batching schedules at the granularity of a single decode step: every step it admits newly arrived requests and retires finished ones, keeping the GPU full.
+
+## Roadmap
+
+**v1 (by Day 100):** load Llama-3.2-1B from safetensors into hand-written layers; generate text that matches HuggingFace token-for-token under greedy decoding; temperature / top-k / top-p sampling; a paged KV cache with a block allocator; a hand-written Triton paged-attention kernel; continuous batching with preemption; an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
+
+**Out of scope for v1 (the v2 teaser):** speculative decoding, tensor parallelism, prefix caching, quantization. v1 stops at a correct, batched, served engine.
+
+## Repo layout
 
 ```
 src/nanoserve/
@@ -45,6 +99,10 @@ src/nanoserve/
   engine.py        ties model + cache + scheduler together
   server.py        FastAPI, OpenAI-compatible endpoint
 ```
+
+## Target hardware
+
+One small GPU (a single 4090 or A10 is plenty for a 1B model). Logic is developed against the HuggingFace reference on CPU; performance numbers are taken on the GPU.
 
 ## License
 
