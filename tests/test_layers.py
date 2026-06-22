@@ -24,6 +24,7 @@ from nanoserve.layers import (
     rms_norm,
     rotate_half,
     swiglu,
+    transformer_block,
 )
 
 from reference import PROMPT_IDS, WEIGHTS_DIR, hf_model, requires_weights
@@ -251,6 +252,90 @@ def test_gqa_attention_is_causal():
     assert not torch.allclose(out[:, -1], out2[:, -1], atol=1e-4)
 
 
+# --- transformer block: pure math -------------------------------------------
+
+
+def _tiny_block_weights(cfg: ModelConfig):
+    """A full set of in-block weights for the tiny GQA config, keyed by in-block name."""
+    n_q, n_kv, d, h, inter = (
+        cfg.num_attention_heads,
+        cfg.num_key_value_heads,
+        cfg.head_dim,
+        cfg.hidden_size,
+        cfg.intermediate_size,
+    )
+    return {
+        "attn_norm.weight": torch.randn(h),
+        "attn.q_proj.weight": torch.randn(n_q * d, h),
+        "attn.k_proj.weight": torch.randn(n_kv * d, h),
+        "attn.v_proj.weight": torch.randn(n_kv * d, h),
+        "attn.o_proj.weight": torch.randn(h, n_q * d),
+        "mlp_norm.weight": torch.randn(h),
+        "mlp.gate_proj.weight": torch.randn(inter, h),
+        "mlp.up_proj.weight": torch.randn(inter, h),
+        "mlp.down_proj.weight": torch.randn(h, inter),
+    }
+
+
+def test_transformer_block_is_two_residual_adds():
+    """Zeroing both sublayers' output projections makes the block the identity.
+
+    `o_proj` and `down_proj` are the last matmul of the attention and MLP
+    sublayers, so zeroing them sends each sublayer's contribution to exactly 0.
+    A correctly wired block then returns `x` unchanged (x + 0 + 0). If either
+    residual added back the *normalized* input instead of the raw input, or
+    dropped the skip entirely, the output would no longer equal x.
+    """
+    torch.manual_seed(0)
+    cfg = ModelConfig(
+        hidden_size=32,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=4,
+        intermediate_size=48,
+    )
+    b, seq = 1, 5
+    x = torch.randn(b, seq, cfg.hidden_size)
+    w = _tiny_block_weights(cfg)
+    w["attn.o_proj.weight"] = torch.zeros_like(w["attn.o_proj.weight"])
+    w["mlp.down_proj.weight"] = torch.zeros_like(w["mlp.down_proj.weight"])
+    cos, sin = _identity_rope(b, seq, cfg.head_dim)
+
+    out = transformer_block(x, w, cos, sin, cfg)
+    assert torch.allclose(out, x, atol=1e-6)
+
+
+def test_transformer_block_uses_a_separate_norm_per_sublayer():
+    """The two sublayers must read attn_norm and mlp_norm independently.
+
+    Build a block, then perturb only `mlp_norm.weight`. The attention sublayer
+    must not change, but because attention feeds the MLP's input the final output
+    must. (Reusing one norm for both passes would still run.) We isolate this by
+    zeroing o_proj so the attention residual is pinned to x: the only path
+    mlp_norm can affect is the MLP branch, so the output moving proves mlp_norm
+    is actually consulted there.
+    """
+    torch.manual_seed(2)
+    cfg = ModelConfig(
+        hidden_size=32,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=4,
+        intermediate_size=48,
+    )
+    b, seq = 1, 5
+    x = torch.randn(b, seq, cfg.hidden_size)
+    w = _tiny_block_weights(cfg)
+    w["attn.o_proj.weight"] = torch.zeros_like(w["attn.o_proj.weight"])
+    cos, sin = _identity_rope(b, seq, cfg.head_dim)
+
+    base = transformer_block(x, w, cos, sin, cfg)
+    w2 = dict(w)
+    w2["mlp_norm.weight"] = w["mlp_norm.weight"] + 1.0
+    bumped = transformer_block(x, w2, cos, sin, cfg)
+    assert not torch.allclose(base, bumped, atol=1e-4)
+
+
 # --- against the real Llama-3.2-1B ------------------------------------------
 
 
@@ -397,3 +482,44 @@ def test_gqa_attention_matches_hf_layer0_self_attn():
         cfg,
     )
     assert torch.allclose(mine, acts["attn_out"], atol=1e-5)
+
+
+@requires_weights
+def test_transformer_block_matches_hf_layer0():
+    """The whole block matches HF `model.layers[0]` on its real input, to 1e-5.
+
+    Layer 0's input is the token embeddings (the embed_tokens output), and its
+    output (out[0]) is the post-MLP-residual hidden state handed to layer 1. We
+    capture both, build the RoPE tables for the prompt positions with our own
+    RotaryEmbedding, and reproduce the second tensor from the first with
+    `transformer_block` and the loader's full set of layer-0 weights. This is the
+    Week 1 done line: all four pieces assembled, end to end, against the real model.
+    """
+    from nanoserve.loader import load_weights
+
+    cfg = ModelConfig.from_json(WEIGHTS_DIR)
+    hf = hf_model()
+    acts = {}
+
+    def grab(name):
+        def hook(_m, _inp, out):
+            acts[name] = (out[0] if isinstance(out, tuple) else out).detach()
+
+        return hook
+
+    h1 = hf.model.embed_tokens.register_forward_hook(grab("block_in"))
+    h2 = hf.model.layers[0].register_forward_hook(grab("block_out"))
+    try:
+        with torch.no_grad():
+            hf(torch.tensor([PROMPT_IDS]))
+    finally:
+        h1.remove()
+        h2.remove()
+
+    rope = RotaryEmbedding(cfg)
+    position_ids = torch.arange(len(PROMPT_IDS))[None]  # [1, seq]
+    cos, sin = rope.cos_sin(position_ids)
+
+    w = load_weights(WEIGHTS_DIR)
+    mine = transformer_block(acts["block_in"], w.layer(0), cos, sin, cfg)
+    assert torch.allclose(mine, acts["block_out"], atol=1e-5)

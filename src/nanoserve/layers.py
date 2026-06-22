@@ -335,4 +335,79 @@ def gqa_attention(
     return F.linear(out, o_weight)
 
 
-# TODO(week2): wire blocks together in model.py
+# --- the transformer block --------------------------------------------------
+#
+# Day 7, the Week 1 done line. The four computed pieces above are all that a
+# Llama block contains; this is the wiring that turns them into one. A block has
+# two sublayers (attention, then the MLP), and the only structural decisions are
+# *where the norm goes* and *what the residual skips*.
+#
+# Llama is pre-norm: each sublayer normalizes its input, and the residual adds
+# the sublayer's output back to the *un-normalized* input. So the norm sits
+# inside the residual branch, not on the highway:
+#
+#     x = x + attention( attn_norm(x) )
+#     x = x + swiglu(    mlp_norm(x)  )
+#
+# Two things are easy to get subtly wrong and both still "run":
+#   1. The residual must add back the input to the sublayer, i.e. the value of
+#      `x` *before* the norm, never the normalized tensor. Add back the norm
+#      output instead and the residual highway no longer carries the raw signal.
+#   2. Each sublayer has its own norm with its own weights (attn_norm vs
+#      mlp_norm). Reusing one for both passes shapes fine and quietly drifts.
+#
+# There is no new math here, so there is no new 1e-5 risk from a formula; the
+# whole risk is in the dataflow. That is why the test feeds the real layer-0
+# input through this and checks the block output against HF `model.layers[0]`.
+
+
+def transformer_block(
+    x: torch.Tensor,
+    weights: dict[str, torch.Tensor],
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    config: ModelConfig,
+) -> torch.Tensor:
+    """One pre-norm Llama decoder block: attention sublayer, then MLP sublayer.
+
+    x:       [batch, seq, hidden] activations (the block's input; for block 0
+             this is the token embeddings).
+    weights: the block's tensors keyed by in-block name, exactly what
+             `Weights.layer(i)` returns: `attn_norm.weight`, `attn.q_proj.weight`
+             and the rest of `attn.*`, `mlp_norm.weight`, and `mlp.*`.
+    cos, sin: [batch, seq, head_dim] RoPE tables from `RotaryEmbedding.cos_sin`.
+    config:  supplies rms_norm_eps and the head geometry for attention.
+
+    Returns [batch, seq, hidden]. Matches HF `LlamaDecoderLayer.forward` output
+    (out[0], the hidden state) to ~1e-5.
+    """
+    eps = config.rms_norm_eps
+
+    # Attention sublayer: norm inside the branch, residual over the raw input.
+    residual = x
+    h = rms_norm(x, weights["attn_norm.weight"], eps)
+    h = gqa_attention(
+        h,
+        weights["attn.q_proj.weight"],
+        weights["attn.k_proj.weight"],
+        weights["attn.v_proj.weight"],
+        weights["attn.o_proj.weight"],
+        cos,
+        sin,
+        config,
+    )
+    x = residual + h
+
+    # MLP sublayer: its own norm (mlp_norm, not attn_norm), again inside the branch.
+    residual = x
+    h = rms_norm(x, weights["mlp_norm.weight"], eps)
+    h = swiglu(
+        h,
+        weights["mlp.gate_proj.weight"],
+        weights["mlp.up_proj.weight"],
+        weights["mlp.down_proj.weight"],
+    )
+    return residual + h
+
+
+# TODO(week2): stack blocks in model.py (embed -> blocks -> norm -> lm_head)

@@ -12,7 +12,7 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 
 ## Status
 
-**Day 6 of 100 (Week 1).** The forward-pass primitives are landing, each verified against the real Llama-3.2-1B.
+**Day 7 of 100 (Week 1 done).** Every forward-pass primitive is built and a full transformer block is assembled from them, each verified against the real Llama-3.2-1B.
 
 | Stage | Verified against HuggingFace | Status |
 | --- | --- | --- |
@@ -21,7 +21,8 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 | RoPE (inv_freq, cos/sin table, rotate-half apply) | `rotary_emb` + `apply_rotary_pos_emb`, 1e-6 to 1e-9 | done |
 | SwiGLU MLP | `mlp` hook, to 1e-5 | done |
 | GQA attention (32 query / 8 KV heads, causal prefill) | `self_attn` hook, to 1e-5 | done |
-| Full forward pass + greedy decode | token-for-token | next (Day 7: one full block) |
+| Full transformer block (pre-norm, two residuals) | `model.layers[0]` hook, to 1e-5 | done |
+| Full forward pass + greedy decode | token-for-token | next (Week 2: stack the blocks) |
 | Sampling, paged KV cache, Triton kernel, scheduler, OpenAI server | | roadmap below |
 
 Daily build log: [docs/daily/](docs/daily/). Full 100-day plan: [docs/PLAN.md](docs/PLAN.md).
