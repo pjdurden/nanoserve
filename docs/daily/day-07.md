@@ -58,8 +58,11 @@ form, all checked against the real model. Week 2 stacks sixteen of these and cha
 HF token for token.
 
 ## Diagram
-n/a (the existing per-piece diagrams cover the parts; the block is just their
-wiring). The Week 1 recap post will reuse the architecture-overview diagram.
+[transformer-block.svg](../diagrams/transformer-block.svg) — the block dataflow
+(input, attn_norm, attention, residual, mlp_norm, SwiGLU, residual, output) with
+the residual highway drawn as the skip around each sublayer, the whole block in
+four lines, and the two wiring traps (adding back the normalized tensor instead of
+raw x; pointing both sublayers at one norm).
 
 ## Tomorrow
 Week 2, Day 8: start the full forward pass in `model.py`, the embedding lookup and

@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#0d9488"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">A transformer block: two sublayers, two residuals</text>
+  <text x="50" y="84" font-size="18" fill="#64748b">Pre-norm Llama decoder block. Each sublayer normalizes its input; the residual adds the result back to raw x.</text>
+
+  <!-- ===== left: the block dataflow ===== -->
+
+  <!-- residual rails (the highway), drawn first so boxes sit on top -->
+  <path d="M360,170 L170,170 L170,356 L346,356" stroke="#0d9488" stroke-width="2" fill="none" marker-end="url(#arrowTeal)"/>
+  <path d="M360,384 L170,384 L170,545 L346,545" stroke="#0d9488" stroke-width="2" fill="none" marker-end="url(#arrowTeal)"/>
+  <text x="116" y="262" font-size="13" fill="#0d9488" font-weight="600" transform="rotate(-90 116 262)">residual (raw x)</text>
+  <text x="116" y="470" font-size="13" fill="#0d9488" font-weight="600" transform="rotate(-90 116 470)">residual (raw x)</text>
+
+  <!-- input -->
+  <rect x="250" y="120" width="220" height="42" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="360" y="146" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">input x  ·  [b, seq, 2048]</text>
+
+  <!-- attention sublayer -->
+  <path d="M360,162 L360,194" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="250" y="196" width="220" height="38" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="360" y="220" font-size="15" fill="#334155" text-anchor="middle" font-weight="600">attn_norm  ·  RMSNorm</text>
+  <path d="M360,234 L360,254" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="250" y="256" width="220" height="56" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="360" y="282" font-size="16" fill="#7c2d12" text-anchor="middle" font-weight="700">GQA attention</text>
+  <text x="360" y="301" font-size="13" fill="#9a3412" text-anchor="middle">32 q / 8 kv heads · RoPE · causal</text>
+  <path d="M360,312 L360,338" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <circle cx="360" cy="356" r="16" fill="#e0e7ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="360" y="362" font-size="20" fill="#1e1b4b" text-anchor="middle" font-weight="700">+</text>
+  <text x="392" y="361" font-size="13" fill="#0d9488" font-weight="600">add residual</text>
+
+  <!-- mlp sublayer -->
+  <path d="M360,372 L360,394" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="250" y="396" width="220" height="38" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="360" y="420" font-size="15" fill="#334155" text-anchor="middle" font-weight="600">mlp_norm  ·  RMSNorm</text>
+  <path d="M360,434 L360,454" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="250" y="456" width="220" height="56" rx="10" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
+  <text x="360" y="482" font-size="16" fill="#5b21b6" text-anchor="middle" font-weight="700">SwiGLU MLP</text>
+  <text x="360" y="501" font-size="13" fill="#6d28d9" text-anchor="middle">down( silu(gate) * up )</text>
+  <path d="M360,512 L360,527" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <circle cx="360" cy="545" r="16" fill="#e0e7ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="360" y="551" font-size="20" fill="#1e1b4b" text-anchor="middle" font-weight="700">+</text>
+  <text x="392" y="550" font-size="13" fill="#0d9488" font-weight="600">add residual</text>
+
+  <!-- output -->
+  <path d="M360,561 L360,581" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="250" y="583" width="220" height="42" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="360" y="609" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">output  ·  to next block</text>
+
+  <!-- ===== right: the four lines and the traps ===== -->
+  <text x="560" y="150" font-size="18" font-weight="600" fill="#3730a3">The whole block in four lines</text>
+  <rect x="560" y="168" width="600" height="148" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="582" y="204" font-size="16" fill="#475569" font-family="ui-monospace, monospace">residual = x</text>
+  <text x="582" y="231" font-size="16" fill="#475569" font-family="ui-monospace, monospace">x = residual + attention(attn_norm(x))</text>
+  <text x="582" y="266" font-size="16" fill="#475569" font-family="ui-monospace, monospace">residual = x</text>
+  <text x="582" y="293" font-size="16" fill="#475569" font-family="ui-monospace, monospace">x = residual + swiglu(mlp_norm(x))</text>
+
+  <text x="560" y="362" font-size="18" font-weight="600" fill="#3730a3">Two ways to wire it wrong (both still run)</text>
+  <rect x="560" y="380" width="600" height="68" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="580" y="408" font-size="15" fill="#7f1d1d" font-weight="700">1. Add back the normalized tensor, not raw x</text>
+  <text x="580" y="431" font-size="14" fill="#475569">the residual highway stops carrying the un-normalized signal</text>
+  <rect x="560" y="458" width="600" height="68" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="580" y="486" font-size="15" fill="#7f1d1d" font-weight="700">2. Point both sublayers at one norm</text>
+  <text x="580" y="509" font-size="14" fill="#475569">attn_norm and mlp_norm are different weights that share a shape</text>
+
+  <rect x="560" y="548" width="600" height="44" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="580" y="575" font-size="14" fill="#0f766e" font-weight="600">Stack this block 16x (between embedding and final norm) = the whole model.</text>
+
+  <!-- footer -->
+  <text x="50" y="652" font-size="15" fill="#64748b">No new math, only dataflow: verified within 1e-5 of the Hugging Face model.layers[0] output on Llama-3.2-1B.</text>
+</svg>
