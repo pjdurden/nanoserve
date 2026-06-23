@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#0d9488"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">The full forward pass: embed, sixteen blocks, norm, head</text>
+  <text x="50" y="84" font-size="18" fill="#64748b">The Week 1 block stacked 16x between an embedding and a final norm. One RoPE table, built once, feeds every block.</text>
+
+  <!-- ===== left column: the stack ===== -->
+
+  <!-- input_ids -->
+  <rect x="120" y="120" width="260" height="46" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="250" y="148" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="600">input_ids  ·  [b, seq]</text>
+
+  <path d="M250,166 L250,194" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- embed -->
+  <rect x="120" y="196" width="260" height="50" rx="9" fill="#ecfeff" stroke="#0e7490" stroke-width="1.5"/>
+  <text x="250" y="220" font-size="16" fill="#155e75" text-anchor="middle" font-weight="700">embed_tokens lookup</text>
+  <text x="250" y="238" font-size="13" fill="#0e7490" text-anchor="middle">[vocab, 2048] row gather -> [b, seq, 2048]</text>
+
+  <path d="M250,246 L250,274" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- the stacked blocks -->
+  <rect x="106" y="288" width="288" height="118" rx="12" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <rect x="116" y="298" width="288" height="118" rx="12" fill="#fffbeb" stroke="#b45309" stroke-width="1.4" opacity="0.7"/>
+  <rect x="126" y="308" width="288" height="118" rx="12" fill="#ffffff" stroke="#b45309" stroke-width="2"/>
+  <text x="270" y="342" font-size="18" fill="#7c2d12" text-anchor="middle" font-weight="700">decoder block  x16</text>
+  <text x="270" y="366" font-size="13" fill="#9a3412" text-anchor="middle">x = x + attn( attn_norm(x) )</text>
+  <text x="270" y="386" font-size="13" fill="#9a3412" text-anchor="middle">x = x + swiglu( mlp_norm(x) )</text>
+  <text x="270" y="408" font-size="12" fill="#b45309" text-anchor="middle" font-style="italic">verified end-to-end vs HF on Day 7</text>
+
+  <path d="M270,426 L270,454" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- final norm -->
+  <rect x="140" y="456" width="260" height="46" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="270" y="478" font-size="15" fill="#334155" text-anchor="middle" font-weight="700">final norm  ·  RMSNorm</text>
+  <text x="270" y="495" font-size="12" fill="#64748b" text-anchor="middle">easy to forget; off by a whole norm if dropped</text>
+
+  <path d="M270,502 L270,530" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- lm head -->
+  <rect x="140" y="532" width="260" height="50" rx="9" fill="#ecfeff" stroke="#0e7490" stroke-width="1.5"/>
+  <text x="270" y="556" font-size="16" fill="#155e75" text-anchor="middle" font-weight="700">lm_head  (tied to embed)</text>
+  <text x="270" y="574" font-size="13" fill="#0e7490" text-anchor="middle">norm(x) @ embed.T -> [b, seq, vocab]</text>
+
+  <path d="M270,582 L270,608" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="140" y="610" width="260" height="40" rx="9" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="270" y="635" font-size="15" fill="#1e1b4b" text-anchor="middle" font-weight="600">logits  ·  next token = argmax[:, -1]</text>
+
+  <!-- tie pointer: lm_head back to embed -->
+  <path d="M400,553 C470,553 470,221 384,221" stroke="#0d9488" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#arrowTeal)"/>
+  <text x="486" y="388" font-size="12.5" fill="#0d9488" font-weight="600" transform="rotate(-90 486 388)">same tensor (tied weights)</text>
+
+  <!-- ===== right: RoPE-once + verification ===== -->
+
+  <!-- rope table built once -->
+  <rect x="690" y="196" width="430" height="118" rx="12" fill="#faf5ff" stroke="#7e22ce" stroke-width="2"/>
+  <text x="710" y="228" font-size="18" fill="#6b21a8" font-weight="700">RoPE table, built once</text>
+  <text x="710" y="256" font-size="14" fill="#7e22ce">cos, sin = rotary.cos_sin(position_ids)</text>
+  <text x="710" y="282" font-size="13.5" fill="#7c3aed">Angles depend on position, not on layer, so the</text>
+  <text x="710" y="300" font-size="13.5" fill="#7c3aed">same table is handed to all 16 blocks.</text>
+  <path d="M688,300 C520,300 470,330 416,355" stroke="#7e22ce" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+
+  <!-- verification card -->
+  <rect x="690" y="360" width="430" height="230" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="710" y="394" font-size="18" fill="#166534" font-weight="700">Day 8 verification vs Llama-3.2-1B</text>
+  <text x="710" y="428" font-size="14.5" fill="#15803d">Prompt: "The test of a"</text>
+  <text x="710" y="456" font-size="14.5" fill="#15803d">max abs logit diff (16 layers, 128k vocab):</text>
+  <text x="710" y="478" font-size="20" fill="#14532d" font-weight="700">2.4e-5</text>
+  <text x="710" y="510" font-size="14.5" fill="#15803d">greedy next token matches HF exactly:</text>
+  <text x="710" y="532" font-size="17" fill="#14532d" font-weight="700">" good"   (id 1695)</text>
+  <text x="710" y="566" font-size="13" fill="#16a34a" font-style="italic">logits can drift at 1e-4; the token choice must not.</text>
+
+  <text x="50" y="660" font-size="13" fill="#94a3b8">nanoserve  ·  Day 8  ·  Week 2: full forward, chasing the reference token for token  ·  github.com/pjdurden/nanoserve</text>
+</svg>
