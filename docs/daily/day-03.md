@@ -1,3 +1,9 @@
+---
+title: "Day 03: the loader, and the name-mapping rabbit hole"
+parent: Daily log
+nav_order: 3
+---
+
 # Day 03: the loader, and the name-mapping rabbit hole
 
 Date: 2026-06-18 · Week 1 · Phase 0 Foundations

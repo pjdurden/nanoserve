@@ -1,5 +1,6 @@
 ---
-title: nanoserve
+title: Home
+nav_order: 1
 ---
 
 A from-scratch LLM inference engine you can read in an afternoon. Think nanoGPT, but for serving instead of training.

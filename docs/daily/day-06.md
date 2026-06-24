@@ -1,3 +1,9 @@
+---
+title: "Day 06: GQA attention, the one sublayer that mixes tokens"
+parent: Daily log
+nav_order: 6
+---
+
 # Day 06: GQA attention, the one sublayer that mixes tokens
 
 Date: 2026-06-21 · Week 1 · Phase 0 Foundations

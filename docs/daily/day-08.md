@@ -1,3 +1,9 @@
+---
+title: "Day 08: the full forward pass, matching HuggingFace to 2.4e-5"
+parent: Daily log
+nav_order: 8
+---
+
 # Day 08: the full forward pass, matching HuggingFace to 2.4e-5
 
 Date: 2026-06-23 · Week 2 · Phase 0 Foundations

@@ -1,3 +1,8 @@
+---
+title: Docs README
+nav_exclude: true
+---
+
 # nanoserve docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — what gets built and how the pieces fit, with diagrams.

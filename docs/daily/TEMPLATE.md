@@ -1,3 +1,9 @@
+---
+title: Daily template
+parent: Daily log
+nav_exclude: true
+---
+
 # Day NN: <one-line title>
 
 Date: YYYY-MM-DD · Week N · Phase <name>

@@ -1,3 +1,9 @@
+---
+title: "Day 07: one full transformer block, end to end vs HuggingFace"
+parent: Daily log
+nav_order: 7
+---
+
 # Day 07: one full transformer block, end to end vs HuggingFace
 
 Date: 2026-06-22 · Week 1 · Phase 0 Foundations

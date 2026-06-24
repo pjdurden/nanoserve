@@ -1,3 +1,9 @@
+---
+title: "Day 02: weights, config, and a verification harness"
+parent: Daily log
+nav_order: 2
+---
+
 # Day 02: weights, config, and a verification harness
 
 Date: 2026-06-17 · Week 1 · Phase 0 Foundations

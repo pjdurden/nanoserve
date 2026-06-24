@@ -1,3 +1,8 @@
+---
+title: The 100-day plan
+nav_order: 3
+---
+
 # nanoserve: the 100-day plan
 
 A from-scratch nano-vLLM, built and posted in public daily over 100 days.

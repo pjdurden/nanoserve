@@ -1,3 +1,9 @@
+---
+title: "Day 05: SwiGLU, the gated MLP every modern model uses"
+parent: Daily log
+nav_order: 5
+---
+
 # Day 05: SwiGLU, the gated MLP every modern model uses
 
 Date: 2026-06-20 · Week 1 · Phase 0 Foundations

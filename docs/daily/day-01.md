@@ -1,3 +1,9 @@
+---
+title: "Day 01: scaffolding and the plan"
+parent: Daily log
+nav_order: 1
+---
+
 # Day 01: scaffolding and the plan
 
 Date: 2026-06-16 · Week 1 · Phase 0 Foundations

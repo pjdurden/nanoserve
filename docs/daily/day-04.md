@@ -1,3 +1,9 @@
+---
+title: "Day 04: RMSNorm and RoPE, position as a rotation"
+parent: Daily log
+nav_order: 4
+---
+
 # Day 04: RMSNorm and RoPE, position as a rotation
 
 Date: 2026-06-19 · Week 1 · Phase 0 Foundations

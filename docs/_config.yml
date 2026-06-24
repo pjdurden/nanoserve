@@ -1,4 +1,37 @@
 title: nanoserve
 description: A from-scratch LLM inference engine you can read in an afternoon. Paged KV cache, continuous batching, a hand-written Triton kernel, in ~2k readable lines.
-theme: jekyll-theme-midnight
-show_downloads: false
+
+# Modern docs theme (Just the Docs), pulled as a remote theme on GitHub Pages.
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+
+# Project page lives at https://pjdurden.github.io/nanoserve/
+url: "https://pjdurden.github.io"
+baseurl: "/nanoserve"
+
+# Search box in the sidebar header.
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 2
+
+heading_anchors: true
+
+# Top-right links.
+aux_links:
+  "GitHub":
+    - "https://github.com/pjdurden/nanoserve"
+  "Build in public / @pdurdenj":
+    - "https://x.com/pdurdenj"
+aux_links_new_tab: true
+
+# Footer "edit this page on GitHub" wiring.
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/pjdurden/nanoserve"
+gh_edit_branch: "main"
+gh_edit_source: docs
+gh_edit_view_mode: "tree"
+
+color_scheme: light

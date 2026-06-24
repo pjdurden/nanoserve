@@ -1,3 +1,8 @@
+---
+title: Architecture
+nav_order: 2
+---
+
 # nanoserve architecture
 
 What gets built, how the pieces fit, and the order they arrive in. Diagrams render on GitHub (mermaid). The same diagrams exist as SVGs in [diagrams/](diagrams/) for export to LinkedIn (see [docs/README.md](README.md) for how to turn an SVG into a PNG).

@@ -1,3 +1,9 @@
+---
+title: "Day 09: greedy decode, the whole continuation matches HuggingFace"
+parent: Daily log
+nav_order: 9
+---
+
 # Day 09: greedy decode, the whole continuation matches HuggingFace
 
 Date: 2026-06-24 · Week 2 · Phase 0 Foundations
