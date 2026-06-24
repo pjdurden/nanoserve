@@ -92,6 +92,68 @@ def test_lm_head_is_tied_to_embedding():
     assert weights[LM_HEAD].data_ptr() == weights[EMBED].data_ptr()
 
 
+# --- pure: the greedy decode loop -------------------------------------------
+
+
+def test_greedy_generate_appends_max_new_tokens():
+    """With no eos, the loop grows the prompt by exactly `max_new_tokens`."""
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+    out = model.greedy_generate(ids, max_new_tokens=7)
+    assert out.shape == (1, 4 + 7)
+    # The prompt is preserved as the prefix; only the tail is new.
+    assert torch.equal(out[:, :4], ids)
+
+
+def test_greedy_generate_is_deterministic_and_matches_step_by_step():
+    """The loop is just `greedy_token` appended; run twice, get the same tokens.
+
+    Also pins that each generated token is the argmax `greedy_token` would pick
+    at that step, i.e. the loop adds nothing beyond append-and-recompute.
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+
+    a = model.greedy_generate(ids, max_new_tokens=5)
+    b = model.greedy_generate(ids, max_new_tokens=5)
+    assert torch.equal(a, b)
+
+    manual = ids
+    for _ in range(5):
+        manual = torch.cat([manual, model.greedy_token(manual)[:, None]], dim=1)
+    assert torch.equal(a, manual)
+
+
+def test_greedy_generate_stops_at_eos_and_keeps_it():
+    """Passing the first token it would emit as eos stops it after one token.
+
+    The emitted eos is kept in the output (length grows by exactly 1), matching
+    what HF `generate` returns, rather than being trimmed.
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+
+    first = model.greedy_token(ids).item()
+    out = model.greedy_generate(ids, max_new_tokens=10, eos_id=first)
+    assert out.shape == (1, 5)
+    assert out[0, -1].item() == first
+
+
+def test_greedy_generate_rejects_a_real_batch():
+    """One sequence only until Phase 3; a batch dim > 1 is an explicit error."""
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (2, 4))
+    try:
+        model.greedy_generate(ids, max_new_tokens=3)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for batch > 1")
+
+
 # --- against the real Llama-3.2-1B ------------------------------------------
 
 
@@ -130,4 +192,30 @@ def test_greedy_next_token_matches_hf():
     hf = hf_model()
     with torch.no_grad():
         ref = hf(ids).logits[:, -1].argmax(dim=-1)
+    assert torch.equal(mine, ref)
+
+
+@requires_weights
+def test_greedy_generate_matches_hf_multi_token():
+    """The whole greedy continuation matches HF token for token. Week 2 north star.
+
+    Day 8 proved one step; this is the loop. nanoserve's no-cache greedy decode
+    must produce the exact same multi-token continuation as HF `generate` with
+    sampling off. HF uses its own KV cache internally and nanoserve recomputes
+    the prefix every step, so this also confirms the two paths are numerically
+    close enough that the argmax never diverges across the whole run.
+
+    Note: this loads two fp32 copies of the 1B model. On a memory-tight box run it
+    alone, or verify via the save-free-reload path in the day-09 log (run HF,
+    save its ids, free it, then load nanoserve), which peaks at one model.
+    """
+    cfg = ModelConfig.from_json(WEIGHTS_DIR)
+    model = LlamaModel(cfg, load_weights(WEIGHTS_DIR))
+    ids = torch.tensor([PROMPT_IDS])
+    n = 20
+
+    mine = model.greedy_generate(ids, max_new_tokens=n)
+    hf = hf_model()
+    with torch.no_grad():
+        ref = hf.generate(ids, max_new_tokens=n, do_sample=False, use_cache=True)
     assert torch.equal(mine, ref)

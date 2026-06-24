@@ -101,3 +101,46 @@ class LlamaModel:
         cache exists to make it fast.
         """
         return self.forward(input_ids)[:, -1].argmax(dim=-1)
+
+    @torch.no_grad()
+    def greedy_generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        eos_id: int | None = None,
+    ) -> torch.Tensor:
+        """Greedy decode: append the argmax, recompute, repeat. Returns prompt+gen.
+
+        input_ids:      [1, seq] the prompt. One sequence only; real batching of
+                        ragged, independently-stopping sequences is Phase 3, so
+                        this guards against a batch dim greater than 1 rather than
+                        pretending to handle it.
+        max_new_tokens: how many tokens to generate at most.
+        eos_id:         if given, stop after emitting this token (it is kept in the
+                        output, matching what HF `generate` returns).
+
+        Returns [1, seq + generated], the prompt with the continuation appended.
+
+        This is the whole of greedy decode, and it is deliberately the slow path:
+        there is no KV cache yet, so every step re-runs `forward` on the entire
+        growing prefix (O(n^2) over the run). Week 3 adds the contiguous cache
+        that turns each step into one new-token forward; Week 2 only needs the
+        tokens to come out identical to the reference, so the obvious loop wins.
+
+        `greedy_token` already does one step's argmax via a full forward, so this
+        is just that step, appended, in a loop. `position_ids` defaults inside
+        `forward` to `0..len-1`, which stays correct as the sequence grows because
+        the whole prefix is passed every time.
+        """
+        if input_ids.shape[0] != 1:
+            raise ValueError(
+                "greedy_generate decodes a single sequence; batch must be 1 "
+                "(ragged multi-sequence batching arrives in Phase 3)"
+            )
+        ids = input_ids
+        for _ in range(max_new_tokens):
+            nxt = self.greedy_token(ids)  # [1], the argmax over the last position
+            ids = torch.cat([ids, nxt[:, None]], dim=1)  # append, never in place
+            if eos_id is not None and nxt.item() == eos_id:
+                break
+        return ids
