@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">Sampling: one funnel, three knobs, then draw</text>
+  <text x="50" y="84" font-size="18" fill="#64748b">temperature reshapes, top-k and top-p mask the tail to -inf, softmax then multinomial draws. Greedy is just temperature 0.</text>
+
+  <!-- logits in -->
+  <rect x="60" y="300" width="150" height="74" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/>
+  <text x="135" y="333" font-size="16" fill="#1e1b4b" text-anchor="middle" font-weight="700">logits</text>
+  <text x="135" y="355" font-size="13" fill="#3730a3" text-anchor="middle">[vocab]</text>
+  <path d="M210,337 L262,337" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- temperature -->
+  <rect x="264" y="296" width="180" height="82" rx="12" fill="#fffbeb" stroke="#b45309" stroke-width="2"/>
+  <text x="354" y="326" font-size="17" fill="#7c2d12" text-anchor="middle" font-weight="700">temperature</text>
+  <text x="354" y="348" font-size="13" fill="#9a3412" text-anchor="middle">logits / T</text>
+  <text x="354" y="367" font-size="12" fill="#b45309" text-anchor="middle" font-style="italic">&lt;1 sharpen, &gt;1 flatten</text>
+  <path d="M444,337 L496,337" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- top-k -->
+  <rect x="498" y="296" width="180" height="82" rx="12" fill="#ecfeff" stroke="#0e7490" stroke-width="2"/>
+  <text x="588" y="326" font-size="17" fill="#155e75" text-anchor="middle" font-weight="700">top-k</text>
+  <text x="588" y="348" font-size="13" fill="#0e7490" text-anchor="middle">keep k largest</text>
+  <text x="588" y="367" font-size="12" fill="#0e7490" text-anchor="middle" font-style="italic">hard cap, rest -inf</text>
+  <path d="M678,337 L730,337" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- top-p -->
+  <rect x="732" y="296" width="180" height="82" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="822" y="326" font-size="17" fill="#14532d" text-anchor="middle" font-weight="700">top-p</text>
+  <text x="822" y="348" font-size="13" fill="#166534" text-anchor="middle">smallest nucleus &#8805; p</text>
+  <text x="822" y="367" font-size="12" fill="#15803d" text-anchor="middle" font-style="italic">adapts, tail -inf</text>
+  <path d="M912,337 L964,337" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- softmax + draw -->
+  <rect x="966" y="296" width="174" height="82" rx="12" fill="#1e1b4b" stroke="#1e1b4b" stroke-width="2"/>
+  <text x="1053" y="326" font-size="16" fill="#ffffff" text-anchor="middle" font-weight="700">softmax</text>
+  <text x="1053" y="350" font-size="14" fill="#c7d2fe" text-anchor="middle">multinomial</text>
+  <text x="1053" y="368" font-size="12" fill="#a5b4fc" text-anchor="middle" font-style="italic">token id</text>
+
+  <!-- greedy bypass -->
+  <path d="M135,300 C135,180 1053,180 1053,290" stroke="#7f1d1d" stroke-width="1.6" fill="none" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+  <rect x="520" y="150" width="220" height="58" rx="10" fill="#fef2f2" stroke="#991b1b" stroke-width="1.5"/>
+  <text x="630" y="177" font-size="15" fill="#7f1d1d" text-anchor="middle" font-weight="700">temperature == 0</text>
+  <text x="630" y="196" font-size="13" fill="#991b1b" text-anchor="middle">argmax, no RNG (greedy)</text>
+
+  <!-- masking note -->
+  <rect x="264" y="452" width="648" height="120" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="588" y="484" font-size="16" fill="#0f172a" text-anchor="middle" font-weight="700">"masked" = logit set to -inf</text>
+  <text x="588" y="510" font-size="14" fill="#475569" text-anchor="middle">softmax(-inf) = 0, so multinomial can never draw it.</text>
+  <text x="588" y="534" font-size="14" fill="#475569" text-anchor="middle">Both filters keep at least one token, so the nucleus is never empty.</text>
+  <text x="588" y="558" font-size="13" fill="#64748b" text-anchor="middle" font-style="italic">masks pinned bit-exact to transformers' TopKLogitsWarper / TopPLogitsWarper</text>
+
+  <text x="50" y="640" font-size="14" fill="#94a3b8">nanoserve · Day 10 · src/nanoserve/sampling.py · order matches HuggingFace generate: temperature, top-k, top-p, draw</text>
+</svg>
