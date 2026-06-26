@@ -1,0 +1,192 @@
+"""Day 11 tests: the naive contiguous KV cache.
+
+The cache is an optimization, not a behavior change, so the whole point of these
+tests is that it changes *nothing* observable. Three tiers:
+
+  - pure cache mechanics (torch only): the store grows by exactly what you append
+    and hands back the full contiguous K/V each step.
+  - pure equivalence (random weights): cached greedy decode produces the exact
+    same tokens as the Week-2 recompute-everything path, and a prefill-then-decode
+    matches a single full forward over the same sequence. This is the correctness
+    contract: a cache that changes the output is a broken cache.
+  - against the real Llama-3.2-1B: cached greedy matches HF token for token, the
+    same north star Week 2 hit the slow way.
+"""
+
+from __future__ import annotations
+
+import torch
+
+from nanoserve.cache import NaiveKVCache
+from nanoserve.config import ModelConfig
+from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes, load_weights
+from nanoserve.model import LlamaModel
+
+from reference import PROMPT_IDS, WEIGHTS_DIR, hf_model, requires_weights
+
+
+def _tiny_config() -> ModelConfig:
+    """The same small-but-structurally-real config the model tests use."""
+    return ModelConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=48,
+        num_hidden_layers=2,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=4,
+    )
+
+
+def _random_weights(cfg: ModelConfig) -> Weights:
+    tensors = {name: torch.randn(*shape) for name, shape in expected_shapes(cfg).items()}
+    tensors[LM_HEAD] = tensors[EMBED]
+    return Weights(tensors, cfg)
+
+
+# --- pure: cache mechanics --------------------------------------------------
+
+
+def test_cache_starts_empty_and_grows_by_appended_length():
+    cache = NaiveKVCache(num_layers=2)
+    assert cache.seq_len == 0
+
+    # A 5-token prefill chunk for layer 0, then two 1-token decode steps.
+    k = torch.randn(1, 2, 5, 4)
+    v = torch.randn(1, 2, 5, 4)
+    fk, fv = cache.append(0, k, v)
+    assert fk.shape == (1, 2, 5, 4)
+    assert cache.seq_len == 5
+
+    k1 = torch.randn(1, 2, 1, 4)
+    v1 = torch.randn(1, 2, 1, 4)
+    fk, fv = cache.append(0, k1, v1)
+    assert fk.shape == (1, 2, 6, 4)
+    assert cache.seq_len == 6
+    # The returned K is the running concatenation, oldest token first.
+    assert torch.equal(fk[:, :, :5], k)
+    assert torch.equal(fk[:, :, 5:], k1)
+    assert torch.equal(fv[:, :, 5:], v1)
+
+
+def test_cache_layers_are_independent():
+    """Appending to layer 0 must not touch layer 1's store."""
+    cache = NaiveKVCache(num_layers=2)
+    cache.append(0, torch.randn(1, 2, 3, 4), torch.randn(1, 2, 3, 4))
+    assert cache.seq_len == 0 or cache.k[1] is None
+    # seq_len reads layer 0, which has 3; layer 1 is still empty.
+    assert cache.seq_len == 3
+    assert cache.k[1] is None
+
+
+# --- pure: the cache changes nothing ----------------------------------------
+
+
+def test_cached_prefill_matches_uncached_forward():
+    """forward with a cache writes K/V but returns the same logits as without one.
+
+    A prefill over the whole prompt with an empty cache is the uncached forward
+    plus a side effect (the cache fills). The logits must be identical (the
+    rectangular mask at past=0 is exactly the square causal mask), so this pins
+    that adding the cache plumbing did not perturb the Week-2 math.
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 6))
+
+    plain = model.forward(ids)
+    cache = NaiveKVCache(cfg.num_hidden_layers)
+    cached = model.forward(ids, cache=cache)
+
+    assert torch.allclose(plain, cached, atol=1e-6)
+    assert cache.seq_len == 6
+
+
+def test_prefill_then_decode_matches_full_forward():
+    """One decode step through the cache equals a full forward over prompt+token.
+
+    Prefill the prompt, append one more token, and run a single-token forward at
+    its position through the cache. The last-position logits must match what a
+    from-scratch forward over the whole 7-token sequence produces: the cache
+    assembles the identical K/V matrix, just incrementally.
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 6))
+    nxt = torch.randint(0, cfg.vocab_size, (1, 1))
+
+    cache = NaiveKVCache(cfg.num_hidden_layers)
+    model.forward(ids, cache=cache)  # prefill, fills cache to len 6
+    pos = torch.tensor([[6]])
+    step = model.forward(nxt, position_ids=pos, cache=cache)  # [1, 1, vocab]
+
+    full = model.forward(torch.cat([ids, nxt], dim=1))  # [1, 7, vocab]
+    assert torch.allclose(step[:, -1], full[:, -1], atol=1e-5)
+    assert cache.seq_len == 7
+
+
+def test_cached_greedy_matches_naive_greedy_token_for_token():
+    """The correctness contract: cached decode == Week-2 recompute decode, exactly.
+
+    Same weights, same prompt, same greedy choice at every step, just with the
+    O(n) cache instead of the O(n^2) recompute. The tokens must be torch.equal;
+    any divergence is a cache bug (wrong position, wrong mask, stale K/V).
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+
+    naive = model.greedy_generate(ids, max_new_tokens=8)
+    cached = model.greedy_generate_cached(ids, max_new_tokens=8)
+    assert torch.equal(naive, cached)
+
+
+def test_cached_greedy_appends_and_stops_at_eos():
+    """The cached loop honors the same max_new_tokens and eos contract as Week 2."""
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+
+    out = model.greedy_generate_cached(ids, max_new_tokens=7)
+    assert out.shape == (1, 4 + 7)
+    assert torch.equal(out[:, :4], ids)
+
+    first = model.greedy_generate_cached(ids, max_new_tokens=1)[0, -1].item()
+    stopped = model.greedy_generate_cached(ids, max_new_tokens=10, eos_id=first)
+    assert stopped.shape == (1, 5)
+    assert stopped[0, -1].item() == first
+
+
+def test_cached_greedy_rejects_a_real_batch():
+    """One sequence only until Phase 3, same guard as the naive path."""
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (2, 4))
+    try:
+        model.greedy_generate_cached(ids, max_new_tokens=3)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for batch > 1")
+
+
+# --- against the real Llama-3.2-1B ------------------------------------------
+
+
+@requires_weights
+def test_cached_greedy_matches_hf_multi_token():
+    """Cached greedy decode matches HF token for token on the fixed prompt.
+
+    Week 2 hit this north star by recomputing the whole prefix every step; Day 11
+    hits the same tokens with a KV cache, which is how HF itself runs. So this is
+    a three-way agreement: nanoserve-cached == nanoserve-naive == HF.
+    """
+    cfg = ModelConfig.from_json(WEIGHTS_DIR)
+    model = LlamaModel(cfg, load_weights(WEIGHTS_DIR))
+    ids = torch.tensor([PROMPT_IDS])
+    n = 20
+
+    mine = model.greedy_generate_cached(ids, max_new_tokens=n)
+    hf = hf_model()
+    with torch.no_grad():
+        ref = hf.generate(ids, max_new_tokens=n, do_sample=False, use_cache=True)
+    assert torch.equal(mine, ref)

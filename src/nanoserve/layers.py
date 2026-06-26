@@ -282,16 +282,26 @@ def gqa_attention(
     cos: torch.Tensor,
     sin: torch.Tensor,
     config: ModelConfig,
+    cache=None,
+    layer_idx: int | None = None,
 ) -> torch.Tensor:
-    """Single-block grouped-query attention over a full prompt (prefill, no cache).
+    """Single-block grouped-query attention, prefill or one cached decode step.
 
-    x:           [batch, seq, hidden] activations (the `attn_norm` output).
+    x:           [batch, seq, hidden] activations (the `attn_norm` output). `seq`
+                 is the prompt length on a prefill and 1 on a cached decode step.
     q_weight:    [n_heads*head_dim, hidden] `attn.q_proj.weight` from the loader.
     k_weight:    [n_kv*head_dim, hidden]    `attn.k_proj.weight`.
     v_weight:    [n_kv*head_dim, hidden]    `attn.v_proj.weight`.
     o_weight:    [hidden, n_heads*head_dim] `attn.o_proj.weight`.
     cos, sin:    [batch, seq, head_dim] RoPE tables from `RotaryEmbedding.cos_sin`.
     config:      supplies the head counts, head_dim, and GQA repeat factor.
+    cache:       optional `NaiveKVCache`. When given, this block's freshly-rotated
+                 K/V are appended to `cache[layer_idx]` and the query is scored
+                 against the *full* cached history, not just the current `x`. When
+                 `None`, behaviour is the Week-2 prefill: K/V live only for this
+                 call. Either way the math is identical; the cache only changes
+                 whether the past is recomputed or remembered.
+    layer_idx:   which layer's K/V slot to use in `cache` (ignored if no cache).
 
     Returns [batch, seq, hidden]. Matches HF `LlamaAttention.forward` output
     (post o_proj, before the residual add) to ~1e-5.
@@ -308,20 +318,34 @@ def gqa_attention(
     k = F.linear(x, k_weight).view(batch, seq, n_kv, d).transpose(1, 2)
     v = F.linear(x, v_weight).view(batch, seq, n_kv, d).transpose(1, 2)
 
-    # RoPE rotates q and k by position before they ever meet (Day 4).
+    # RoPE rotates q and k by position before they ever meet (Day 4). On a decode
+    # step `cos`/`sin` carry the single new position, so the appended K is rotated
+    # for where it actually sits in the sequence.
     q, k = apply_rotary(q, k, cos, sin)
+
+    # The cache stores the *compact* 8-head K/V (pre-repeat) and hands back the
+    # whole history. Append before the GQA repeat so the repeat stays a read-time
+    # view and the cache never holds the 32-head blow-up.
+    if cache is not None:
+        k, v = cache.append(layer_idx, k, v)
 
     # Grow 8 KV heads to 32 so every query head has a partner.
     k = repeat_kv(k, config.num_kv_groups)
     v = repeat_kv(v, config.num_kv_groups)
 
-    # Scaled dot-product scores, then a causal mask so position i cannot see j>i.
-    # The mask is added before softmax; -inf entries become exactly zero weight.
-    # The diagonal is always unmasked, so no row is ever fully -inf (no NaN).
+    # Scaled dot-product scores. With a cache the `seq` new queries score against
+    # all `kv_len` cached keys, so the mask is rectangular: query i (absolute
+    # position `past + i`, where `past = kv_len - seq`) may see keys 0..past+i and
+    # no further. `triu(..., diagonal=past+1)` is exactly that band. With no cache
+    # past is 0 and this is the square causal triangle from Week 2, unchanged. A
+    # single decode query (seq=1, past=kv_len-1) gets an all-zero mask row: it
+    # sees the whole history, which is what we want.
     scaling = d**-0.5
     scores = torch.matmul(q, k.transpose(2, 3)) * scaling
-    causal = torch.full((seq, seq), float("-inf"), dtype=scores.dtype, device=scores.device)
-    causal = torch.triu(causal, diagonal=1)
+    kv_len = k.shape[2]
+    past = kv_len - seq
+    causal = torch.full((seq, kv_len), float("-inf"), dtype=scores.dtype, device=scores.device)
+    causal = torch.triu(causal, diagonal=past + 1)
     scores = scores + causal
 
     # HF computes the softmax in fp32 even in a lower-precision model, then casts
@@ -367,6 +391,8 @@ def transformer_block(
     cos: torch.Tensor,
     sin: torch.Tensor,
     config: ModelConfig,
+    cache=None,
+    layer_idx: int | None = None,
 ) -> torch.Tensor:
     """One pre-norm Llama decoder block: attention sublayer, then MLP sublayer.
 
@@ -377,6 +403,9 @@ def transformer_block(
              and the rest of `attn.*`, `mlp_norm.weight`, and `mlp.*`.
     cos, sin: [batch, seq, head_dim] RoPE tables from `RotaryEmbedding.cos_sin`.
     config:  supplies rms_norm_eps and the head geometry for attention.
+    cache, layer_idx: optional KV cache and this block's slot, passed straight
+             through to attention. Only attention touches the cache; the MLP and
+             norms are per-token and stateless.
 
     Returns [batch, seq, hidden]. Matches HF `LlamaDecoderLayer.forward` output
     (out[0], the hidden state) to ~1e-5.
@@ -395,6 +424,8 @@ def transformer_block(
         cos,
         sin,
         config,
+        cache=cache,
+        layer_idx=layer_idx,
     )
     x = residual + h
 

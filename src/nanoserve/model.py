@@ -32,6 +32,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from .cache import NaiveKVCache
 from .config import ModelConfig
 from .layers import RotaryEmbedding, rms_norm, transformer_block
 from .loader import EMBED, LM_HEAD, Weights
@@ -58,18 +59,26 @@ class LlamaModel:
         self,
         input_ids: torch.Tensor,
         position_ids: torch.Tensor | None = None,
+        cache=None,
     ) -> torch.Tensor:
-        """Run the full prefill forward pass and return logits over the vocab.
+        """Run a forward pass and return logits over the vocab.
 
-        input_ids:    [batch, seq] token ids (long).
-        position_ids: [batch, seq] positions; defaults to 0..seq-1, which is the
-                      right thing for a contiguous prompt. Passed through to RoPE
-                      so the scattered positions of a later decode step will work
-                      unchanged.
+        input_ids:    [batch, seq] token ids (long). `seq` is the prompt length on
+                      a prefill and 1 on a cached decode step.
+        position_ids: [batch, seq] positions; defaults to 0..seq-1, which is right
+                      for a contiguous prompt from scratch. A cached decode step
+                      must pass the new token's absolute position explicitly
+                      (e.g. [[6]] for the 7th token), because `input_ids` no longer
+                      carries the prefix the position would otherwise be inferred
+                      from.
+        cache:        optional `NaiveKVCache`. When given, each block appends its
+                      K/V and attends over the whole history, so `input_ids` need
+                      only be the new token(s). When `None`, this is the Week-2
+                      recompute path: pass the entire prefix every call.
 
         Returns logits [batch, seq, vocab_size]. The next-token distribution is
         `logits[:, -1]`; the full sequence of logits is returned (not just the
-        last position) so this can be compared to HF `model(input_ids).logits`
+        last position) so a prefill can be compared to HF `model(input_ids).logits`
         token for token. Matches HF `LlamaForCausalLM` logits to ~1e-4.
         """
         if position_ids is None:
@@ -82,9 +91,13 @@ class LlamaModel:
         cos, sin = self.rotary.cos_sin(position_ids)
 
         # The stack. Each block is the Day-7 pre-norm decoder layer, verified on
-        # its own; here they just compose, block i's output feeding block i+1.
+        # its own; here they just compose, block i's output feeding block i+1. The
+        # cache (when present) is threaded by layer index so each block reads and
+        # writes only its own K/V slot.
         for i in range(self.config.num_hidden_layers):
-            x = transformer_block(x, self.weights.layer(i), cos, sin, self.config)
+            x = transformer_block(
+                x, self.weights.layer(i), cos, sin, self.config, cache=cache, layer_idx=i
+            )
 
         # Final RMSNorm before the head (the one that is easy to forget), then the
         # tied output projection: logits = norm(x) @ embed_tokens.T.
@@ -141,6 +154,62 @@ class LlamaModel:
         for _ in range(max_new_tokens):
             nxt = self.greedy_token(ids)  # [1], the argmax over the last position
             ids = torch.cat([ids, nxt[:, None]], dim=1)  # append, never in place
+            if eos_id is not None and nxt.item() == eos_id:
+                break
+        return ids
+
+    @torch.no_grad()
+    def greedy_generate_cached(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        eos_id: int | None = None,
+    ) -> torch.Tensor:
+        """Greedy decode with a KV cache: prefill once, then one token per step.
+
+        Same signature, same single-sequence guard, and same greedy choices as
+        `greedy_generate`, but O(n) instead of O(n^2): the prefix is encoded into
+        the cache exactly once and every decode step forwards only the single new
+        token. The output is token-for-token identical to the naive path (the
+        cache is an optimization, not a behaviour change); `test_cache.py` pins
+        that equality.
+
+        The shape of a step:
+          1. Prefill: forward the whole prompt through an empty cache. This fills
+             K/V for every layer and yields the first next-token from the last
+             prompt position.
+          2. Decode: forward just that new token at its absolute position, which
+             appends one column of K/V per layer and scores it against the whole
+             cached history. Repeat.
+
+        input_ids:      [1, seq] prompt (one sequence; Phase 3 does real batching).
+        max_new_tokens: cap on generated tokens.
+        eos_id:         if given, stop after emitting it (kept in the output).
+
+        Returns [1, seq + generated], the prompt with the continuation appended.
+        """
+        if input_ids.shape[0] != 1:
+            raise ValueError(
+                "greedy_generate_cached decodes a single sequence; batch must be 1 "
+                "(ragged multi-sequence batching arrives in Phase 3)"
+            )
+        cache = NaiveKVCache(self.config.num_hidden_layers)
+
+        # Prefill: positions 0..seq-1 default inside forward; the cache fills and
+        # the last position gives the first token to emit.
+        logits = self.forward(input_ids, cache=cache)
+        nxt = logits[:, -1].argmax(dim=-1)  # [1]
+        ids = torch.cat([input_ids, nxt[:, None]], dim=1)
+        if eos_id is not None and nxt.item() == eos_id:
+            return ids
+
+        # Decode: one new token at a time, each at its own absolute position
+        # (which is exactly the cache length just before we append it).
+        for _ in range(max_new_tokens - 1):
+            pos = torch.tensor([[cache.seq_len]], device=ids.device)
+            logits = self.forward(nxt[:, None], position_ids=pos, cache=cache)
+            nxt = logits[:, -1].argmax(dim=-1)
+            ids = torch.cat([ids, nxt[:, None]], dim=1)
             if eos_id is not None and nxt.item() == eos_id:
                 break
         return ids
