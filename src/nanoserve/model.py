@@ -36,6 +36,7 @@ from .cache import NaiveKVCache
 from .config import ModelConfig
 from .layers import RotaryEmbedding, rms_norm, transformer_block
 from .loader import EMBED, LM_HEAD, Weights
+from .sampling import sample
 
 
 class LlamaModel:
@@ -212,4 +213,103 @@ class LlamaModel:
             ids = torch.cat([ids, nxt[:, None]], dim=1)
             if eos_id is not None and nxt.item() == eos_id:
                 break
+        return ids
+
+    @torch.no_grad()
+    def generate_stream(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        *,
+        temperature: float = 1.0,
+        top_k: int = 0,
+        top_p: float = 1.0,
+        eos_id: int | None = None,
+        seed: int | None = None,
+    ):
+        """Yield generated token ids one at a time: cached decode + sampling.
+
+        This is the Day-11 cache (Day 10's `sample` is the only addition: the last
+        position's logits are *drawn* from instead of arg-maxed. The two compose
+        cleanly because the cache only changes how the logits are computed, not
+        what is done with them. Greedy is `temperature == 0`, which `sample`
+        short-circuits to the argmax, so this one loop covers both decode modes.
+
+        Yields the next token id (a Python int) as soon as it is produced, so a
+        caller can stream tokens to a terminal or an SSE response without waiting
+        for the whole sequence. `generate` below just drains this into a tensor.
+
+        input_ids:      [1, seq] prompt (one sequence; Phase 3 does real batching).
+        max_new_tokens: cap on yielded tokens.
+        temperature:    0 is greedy; <1 sharpens, >1 flattens. Passed to `sample`.
+        top_k, top_p:   the candidate filters, passed straight to `sample`.
+        eos_id:         if given, this token is yielded and then the stream ends.
+        seed:           if given, threads a seeded `torch.Generator` through the
+                        draw so the run is reproducible; greedy ignores it.
+
+        The loop shape mirrors `greedy_generate_cached`: prefill the whole prompt
+        into the cache once, then forward exactly one token per step, each at its
+        own absolute position (`cache.seq_len` just before the append).
+        """
+        if input_ids.shape[0] != 1:
+            raise ValueError(
+                "generate decodes a single sequence; batch must be 1 "
+                "(ragged multi-sequence batching arrives in Phase 3)"
+            )
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device=input_ids.device).manual_seed(seed)
+
+        cache = NaiveKVCache(self.config.num_hidden_layers)
+        logits = self.forward(input_ids, cache=cache)  # prefill, fills the cache
+
+        for step in range(max_new_tokens):
+            nxt = sample(
+                logits[0, -1],
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                generator=generator,
+            )
+            yield nxt
+            if eos_id is not None and nxt == eos_id:
+                return
+            if step == max_new_tokens - 1:
+                return  # last token already yielded; skip the unused forward
+            pos = torch.tensor([[cache.seq_len]], device=input_ids.device)
+            tok = torch.tensor([[nxt]], device=input_ids.device, dtype=input_ids.dtype)
+            logits = self.forward(tok, position_ids=pos, cache=cache)
+
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        *,
+        temperature: float = 1.0,
+        top_k: int = 0,
+        top_p: float = 1.0,
+        eos_id: int | None = None,
+        seed: int | None = None,
+    ) -> torch.Tensor:
+        """Cached sampling decode, collected into one tensor: prompt + generated.
+
+        The non-streaming form of `generate_stream`: same arguments, same cache,
+        same sampling, but it drains the generator and returns [1, seq + made].
+        `temperature == 0` makes this exactly `greedy_generate_cached`; the tests
+        pin that equivalence so greedy stays the zero-temperature corner of the one
+        sampling path rather than a second code path that can drift.
+        """
+        ids = input_ids
+        for nxt in self.generate_stream(
+            input_ids,
+            max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            eos_id=eos_id,
+            seed=seed,
+        ):
+            tok = torch.tensor([[nxt]], device=ids.device, dtype=ids.dtype)
+            ids = torch.cat([ids, tok], dim=1)
         return ids
