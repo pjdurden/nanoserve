@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="54" font-size="32" font-weight="700" fill="#1e1b4b">The block allocator: a fixed pool, alloc and free</text>
+  <text x="50" y="86" font-size="19" fill="#64748b">physical memory carved into fixed blocks. a sequence takes ceil(len / block_size) of them, sitting anywhere in the pool.</text>
+
+  <!-- ===================== left: the physical pool ===================== -->
+  <text x="60" y="148" font-size="20" font-weight="600" fill="#3730a3">Physical pool: 8 blocks x 16 tokens</text>
+
+  <!-- row of 8 physical blocks -->
+  <!-- block 0: A -->
+  <rect x="60"  y="170" width="120" height="74" rx="8" fill="#e0e7ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="120" y="200" font-size="15" font-weight="700" fill="#3730a3" text-anchor="middle">block 0</text>
+  <text x="120" y="224" font-size="14" fill="#4338ca" text-anchor="middle">seq A</text>
+  <!-- block 1: B -->
+  <rect x="190" y="170" width="120" height="74" rx="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/>
+  <text x="250" y="200" font-size="15" font-weight="700" fill="#0f766e" text-anchor="middle">block 1</text>
+  <text x="250" y="224" font-size="14" fill="#0d9488" text-anchor="middle">seq B</text>
+  <!-- block 2: A -->
+  <rect x="320" y="170" width="120" height="74" rx="8" fill="#e0e7ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="380" y="200" font-size="15" font-weight="700" fill="#3730a3" text-anchor="middle">block 2</text>
+  <text x="380" y="224" font-size="14" fill="#4338ca" text-anchor="middle">seq A</text>
+  <!-- block 3: B -->
+  <rect x="450" y="170" width="120" height="74" rx="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/>
+  <text x="510" y="200" font-size="15" font-weight="700" fill="#0f766e" text-anchor="middle">block 3</text>
+  <text x="510" y="224" font-size="14" fill="#0d9488" text-anchor="middle">seq B</text>
+  <!-- block 4: free -->
+  <rect x="60"  y="256" width="120" height="74" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="120" y="286" font-size="15" font-weight="700" fill="#475569" text-anchor="middle">block 4</text>
+  <text x="120" y="310" font-size="14" fill="#94a3b8" text-anchor="middle">free</text>
+  <!-- block 5: A -->
+  <rect x="190" y="256" width="120" height="74" rx="8" fill="#e0e7ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="250" y="286" font-size="15" font-weight="700" fill="#3730a3" text-anchor="middle">block 5</text>
+  <text x="250" y="310" font-size="14" fill="#4338ca" text-anchor="middle">seq A</text>
+  <!-- block 6: free -->
+  <rect x="320" y="256" width="120" height="74" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="380" y="286" font-size="15" font-weight="700" fill="#475569" text-anchor="middle">block 6</text>
+  <text x="380" y="310" font-size="14" fill="#94a3b8" text-anchor="middle">free</text>
+  <!-- block 7: free -->
+  <rect x="450" y="256" width="120" height="74" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="510" y="286" font-size="15" font-weight="700" fill="#475569" text-anchor="middle">block 7</text>
+  <text x="510" y="310" font-size="14" fill="#94a3b8" text-anchor="middle">free</text>
+
+  <!-- sequence A logical -> scattered physical -->
+  <text x="60" y="380" font-size="16" font-weight="600" fill="#4338ca">sequence A: 40 tokens = ceil(40 / 16) = 3 blocks</text>
+  <text x="60" y="404" font-size="15" fill="#475569">logical [0..39]  ->  physical blocks 0, 2, 5  (scattered, on purpose)</text>
+  <text x="60" y="436" font-size="16" font-weight="600" fill="#0f766e">sequence B: 20 tokens = 2 blocks  ->  physical blocks 1, 3</text>
+
+  <text x="60" y="484" font-size="15" fill="#64748b">The Week-3 contiguous cache reserved one growing buffer per sequence,</text>
+  <text x="60" y="506" font-size="15" fill="#64748b">sized to its worst case. Blocks let a sequence scatter across whatever</text>
+  <text x="60" y="528" font-size="15" fill="#64748b">is free, so the pool stays packed under many sequences at once.</text>
+
+  <!-- ===================== right: the bookkeeping ===================== -->
+  <line x1="640" y1="130" x2="640" y2="560" stroke="#e2e8f0" stroke-width="2"/>
+
+  <text x="690" y="148" font-size="20" font-weight="600" fill="#3730a3">Two halves of one invariant</text>
+
+  <rect x="690" y="170" width="200" height="120" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="710" y="198" font-size="16" font-weight="700" fill="#1e293b">free list (a stack)</text>
+  <text x="710" y="228" font-size="16" fill="#475569">[ 7, 6, 4 ]</text>
+  <text x="710" y="258" font-size="13" fill="#94a3b8">allocate() pops the top</text>
+  <text x="710" y="278" font-size="13" fill="#94a3b8">free() pushes it back</text>
+
+  <rect x="920" y="170" width="220" height="120" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="940" y="198" font-size="16" font-weight="700" fill="#1e293b">allocated set</text>
+  <text x="940" y="228" font-size="16" fill="#475569">{ 0, 1, 2, 3, 5 }</text>
+  <text x="940" y="258" font-size="13" fill="#94a3b8">free(id) rejects anything</text>
+  <text x="940" y="278" font-size="13" fill="#94a3b8">not in here (double free)</text>
+
+  <text x="690" y="330" font-size="14" fill="#475569">every block is in exactly one of these two, always</text>
+
+  <!-- operations -->
+  <text x="690" y="380" font-size="18" font-weight="600" fill="#3730a3">The four moves</text>
+  <text x="690" y="410" font-size="15" fill="#1e293b"><tspan font-weight="700" fill="#4338ca">allocate()</tspan>      pop one free block</text>
+  <text x="690" y="436" font-size="15" fill="#1e293b"><tspan font-weight="700" fill="#4338ca">allocate_for(n)</tspan>  ceil(n/bs) blocks, all-or-nothing</text>
+  <text x="690" y="462" font-size="15" fill="#1e293b"><tspan font-weight="700" fill="#4338ca">free(id)</tspan>        push back, reject strangers</text>
+  <text x="690" y="488" font-size="15" fill="#1e293b"><tspan font-weight="700" fill="#4338ca">free_all(ids)</tspan>    return a whole sequence</text>
+
+  <!-- exhaustion -->
+  <rect x="690" y="510" width="450" height="48" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+  <text x="710" y="533" font-size="15" fill="#b91c1c">empty pool, a new request  ->  <tspan font-weight="700">KVCacheExhausted</tspan></text>
+  <text x="710" y="551" font-size="13" fill="#ef4444">the engine's KV out-of-memory signal</text>
+
+  <text x="60" y="612" font-size="15" fill="#94a3b8">nanoserve, day 14 / week 4. pure integer bookkeeping, no tensors yet: week 5 hangs the real K/V storage off these block ids.</text>
+  <text x="60" y="640" font-size="15" fill="#94a3b8">github.com/pjdurden/nanoserve</text>
+</svg>

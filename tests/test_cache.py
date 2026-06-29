@@ -15,9 +15,10 @@ tests is that it changes *nothing* observable. Three tiers:
 
 from __future__ import annotations
 
+import pytest
 import torch
 
-from nanoserve.cache import NaiveKVCache
+from nanoserve.cache import BlockAllocator, KVCacheExhausted, NaiveKVCache
 from nanoserve.config import ModelConfig
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes, load_weights
 from nanoserve.model import LlamaModel
@@ -190,3 +191,107 @@ def test_cached_greedy_matches_hf_multi_token():
     with torch.no_grad():
         ref = hf.generate(ids, max_new_tokens=n, do_sample=False, use_cache=True)
     assert torch.equal(mine, ref)
+
+
+# --- Day 14: the block allocator -------------------------------------------
+#
+# The allocator is pure bookkeeping over a fixed pool of physical block ids; no
+# tensors yet (Week 5 will hang real K/V storage off these ids). So these tests
+# are torch-free and pin the OS-paging contract: hand out distinct blocks, refuse
+# when the pool is dry, take them back on free, and never lose or duplicate a
+# block. A block double-counted is corrupted attention later, so the invariants
+# are strict on purpose.
+
+
+def test_fresh_allocator_has_every_block_free():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    assert alloc.num_blocks == 4
+    assert alloc.block_size == 16
+    assert alloc.num_free == 4
+
+
+def test_allocate_hands_out_distinct_blocks_and_shrinks_the_pool():
+    alloc = BlockAllocator(num_blocks=3, block_size=16)
+    ids = [alloc.allocate() for _ in range(3)]
+    assert sorted(ids) == [0, 1, 2]  # distinct ids, all in range
+    assert len(set(ids)) == 3
+    assert alloc.num_free == 0
+
+
+def test_allocate_on_an_empty_pool_raises_exhausted():
+    alloc = BlockAllocator(num_blocks=1, block_size=16)
+    alloc.allocate()
+    with pytest.raises(KVCacheExhausted):
+        alloc.allocate()
+
+
+def test_free_returns_a_block_to_the_pool_and_it_is_reusable():
+    alloc = BlockAllocator(num_blocks=2, block_size=16)
+    a = alloc.allocate()
+    alloc.allocate()
+    assert alloc.num_free == 0
+    alloc.free(a)
+    assert alloc.num_free == 1
+    # the freed block is allocatable again
+    assert alloc.allocate() == a
+    assert alloc.num_free == 0
+
+
+def test_blocks_for_length_is_ceiling_division():
+    alloc = BlockAllocator(num_blocks=8, block_size=16)
+    assert alloc.blocks_for_length(0) == 0
+    assert alloc.blocks_for_length(1) == 1
+    assert alloc.blocks_for_length(16) == 1
+    assert alloc.blocks_for_length(17) == 2
+    assert alloc.blocks_for_length(32) == 2
+
+
+def test_allocate_for_a_length_reserves_the_right_block_count():
+    alloc = BlockAllocator(num_blocks=8, block_size=16)
+    blocks = alloc.allocate_for(40)  # ceil(40 / 16) = 3
+    assert len(blocks) == 3
+    assert len(set(blocks)) == 3
+    assert alloc.num_free == 5
+
+
+def test_allocate_for_zero_tokens_reserves_nothing():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    assert alloc.allocate_for(0) == []
+    assert alloc.num_free == 4
+
+
+def test_allocate_for_is_atomic_when_the_pool_cannot_satisfy_it():
+    """A request needing more blocks than are free must reserve none of them."""
+    alloc = BlockAllocator(num_blocks=2, block_size=16)
+    with pytest.raises(KVCacheExhausted):
+        alloc.allocate_for(40)  # needs 3, only 2 free
+    assert alloc.num_free == 2  # nothing was taken
+    # can_allocate agrees, and the pool is still fully usable afterwards
+    assert alloc.can_allocate(32)
+    assert not alloc.can_allocate(33)
+    assert len(alloc.allocate_for(32)) == 2
+
+
+def test_free_all_returns_a_whole_sequence_of_blocks():
+    alloc = BlockAllocator(num_blocks=8, block_size=16)
+    blocks = alloc.allocate_for(40)
+    alloc.free_all(blocks)
+    assert alloc.num_free == 8
+
+
+def test_freeing_a_block_that_is_not_allocated_is_rejected():
+    """Double free or freeing a stranger corrupts the pool, so it must raise."""
+    alloc = BlockAllocator(num_blocks=2, block_size=16)
+    a = alloc.allocate()
+    alloc.free(a)
+    with pytest.raises(ValueError):
+        alloc.free(a)  # double free
+    with pytest.raises(ValueError):
+        alloc.free(99)  # never belonged to this pool
+
+
+def test_construction_rejects_a_nonpositive_pool_or_block_size():
+    with pytest.raises(ValueError):
+        BlockAllocator(num_blocks=0, block_size=16)
+    with pytest.raises(ValueError):
+        BlockAllocator(num_blocks=4, block_size=0)
