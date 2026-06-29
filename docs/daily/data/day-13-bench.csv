@@ -1,0 +1,9 @@
+sweep,prompt_len,gen_len,cached_total_s,cached_ttft_s,cached_median_itl_s,cached_tok_per_s,naive_total_s,naive_tok_per_s,speedup
+gen_length,16,8,4.2709,2.1993,0.29636,1.873,17.1899,0.465,4.02
+gen_length,16,16,6.3526,2.042,0.28491,2.519,35.3886,0.452,5.57
+gen_length,16,32,11.3352,2.3913,0.28796,2.823,76.4067,0.419,6.74
+gen_length,16,64,20.6573,2.088,0.29424,3.098,,,
+prompt_length,16,16,7.0144,2.494,0.2985,2.281,,,
+prompt_length,64,16,7.3335,2.7748,0.30104,2.182,,,
+prompt_length,128,16,8.0199,3.4204,0.30401,1.995,,,
+prompt_length,256,16,9.455,4.7352,0.31274,1.692,,,

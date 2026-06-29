@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">One point becomes a curve: cached holds, naive sinks</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Same greedy decode, identical work, only the KV cache differs. Cached is O(n) so tokens/sec rises as prefill amortizes;</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">naive recompute is O(n&#178;) so it sinks, and the gap widens. Llama-3.2-1B on CPU.</text>
+
+  <!-- ================= LEFT CHART: tok/s vs generated tokens ================= -->
+  <text x="120" y="128" font-size="18" font-weight="700" fill="#0f172a">tokens/sec vs generated tokens (prompt = 16)</text>
+
+  <!-- axes -->
+  <line x1="120" y1="150" x2="120" y2="520" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="120" y1="520" x2="580" y2="520" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <!-- y gridlines + labels (0..3.5) -->
+  <line x1="120" y1="414.3" x2="580" y2="414.3" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="120" y1="308.6" x2="580" y2="308.6" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="120" y1="202.9" x2="580" y2="202.9" stroke="#eef2f7" stroke-width="1"/>
+  <text x="112" y="524" font-size="12" fill="#94a3b8" text-anchor="end">0</text>
+  <text x="112" y="418" font-size="12" fill="#94a3b8" text-anchor="end">1</text>
+  <text x="112" y="312" font-size="12" fill="#94a3b8" text-anchor="end">2</text>
+  <text x="112" y="207" font-size="12" fill="#94a3b8" text-anchor="end">3</text>
+  <text x="70" y="335" font-size="13" fill="#64748b" text-anchor="middle" transform="rotate(-90 70 335)">tokens / sec</text>
+
+  <!-- x labels -->
+  <text x="177.5" y="540" font-size="12" fill="#64748b" text-anchor="middle">8</text>
+  <text x="235" y="540" font-size="12" fill="#64748b" text-anchor="middle">16</text>
+  <text x="350" y="540" font-size="12" fill="#64748b" text-anchor="middle">32</text>
+  <text x="580" y="540" font-size="12" fill="#64748b" text-anchor="middle">64</text>
+  <text x="350" y="562" font-size="13" fill="#64748b" text-anchor="middle">generated tokens</text>
+
+  <!-- cached line (rises) -->
+  <polyline points="177.5,322.3 235,253.6 350,221.9 580,192.3" fill="none" stroke="#15803d" stroke-width="3"/>
+  <circle cx="177.5" cy="322.3" r="5" fill="#15803d"/>
+  <circle cx="235" cy="253.6" r="5" fill="#15803d"/>
+  <circle cx="350" cy="221.9" r="5" fill="#15803d"/>
+  <circle cx="580" cy="192.3" r="5" fill="#15803d"/>
+  <text x="588" y="190" font-size="14" font-weight="700" fill="#15803d">cached (3.10)</text>
+
+  <!-- naive line (sinks) -->
+  <polyline points="177.5,470.3 235,472.4 350,475.6" fill="none" stroke="#b91c1c" stroke-width="3"/>
+  <circle cx="177.5" cy="470.3" r="5" fill="#b91c1c"/>
+  <circle cx="235" cy="472.4" r="5" fill="#b91c1c"/>
+  <circle cx="350" cy="475.6" r="5" fill="#b91c1c"/>
+  <text x="360" y="492" font-size="14" font-weight="700" fill="#b91c1c">naive (0.42)</text>
+
+  <!-- speedup callouts on the widening gap -->
+  <text x="177.5" y="408" font-size="13" font-weight="700" fill="#3730a3" text-anchor="middle">4.0x</text>
+  <text x="235" y="372" font-size="13" font-weight="700" fill="#3730a3" text-anchor="middle">5.6x</text>
+  <text x="350" y="356" font-size="13" font-weight="700" fill="#3730a3" text-anchor="middle">6.7x</text>
+  <text x="350" y="610" font-size="12.5" fill="#94a3b8" text-anchor="middle" font-style="italic">Day 11's single 5.74x point sits right here, between gen 16 and 32.</text>
+
+  <!-- ================= RIGHT CHART: TTFT vs prompt length ================= -->
+  <text x="700" y="128" font-size="18" font-weight="700" fill="#0f172a">prefill cost (TTFT) vs prompt length (gen = 16)</text>
+
+  <!-- axes -->
+  <line x1="700" y1="150" x2="700" y2="520" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="700" y1="520" x2="1140" y2="520" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <!-- y gridlines + labels (0..5 seconds) -->
+  <line x1="700" y1="446" x2="1140" y2="446" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="700" y1="372" x2="1140" y2="372" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="700" y1="298" x2="1140" y2="298" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="700" y1="224" x2="1140" y2="224" stroke="#eef2f7" stroke-width="1"/>
+  <text x="692" y="524" font-size="12" fill="#94a3b8" text-anchor="end">0</text>
+  <text x="692" y="450" font-size="12" fill="#94a3b8" text-anchor="end">1</text>
+  <text x="692" y="376" font-size="12" fill="#94a3b8" text-anchor="end">2</text>
+  <text x="692" y="302" font-size="12" fill="#94a3b8" text-anchor="end">3</text>
+  <text x="692" y="228" font-size="12" fill="#94a3b8" text-anchor="end">4</text>
+  <text x="650" y="335" font-size="13" fill="#64748b" text-anchor="middle" transform="rotate(-90 650 335)">TTFT (seconds)</text>
+
+  <!-- bars -->
+  <rect x="730" y="335.7" width="60" height="184.3" rx="4" fill="#6366f1"/>
+  <rect x="830" y="315.0" width="60" height="205.0" rx="4" fill="#6366f1"/>
+  <rect x="930" y="266.9" width="60" height="253.1" rx="4" fill="#6366f1"/>
+  <rect x="1030" y="169.2" width="60" height="350.8" rx="4" fill="#4338ca"/>
+  <text x="760" y="328" font-size="12.5" font-weight="700" fill="#3730a3" text-anchor="middle">2.49</text>
+  <text x="860" y="308" font-size="12.5" font-weight="700" fill="#3730a3" text-anchor="middle">2.77</text>
+  <text x="960" y="260" font-size="12.5" font-weight="700" fill="#3730a3" text-anchor="middle">3.42</text>
+  <text x="1060" y="162" font-size="12.5" font-weight="700" fill="#3730a3" text-anchor="middle">4.74</text>
+
+  <!-- x labels -->
+  <text x="760" y="540" font-size="12" fill="#64748b" text-anchor="middle">16</text>
+  <text x="860" y="540" font-size="12" fill="#64748b" text-anchor="middle">64</text>
+  <text x="960" y="540" font-size="12" fill="#64748b" text-anchor="middle">128</text>
+  <text x="1060" y="540" font-size="12" fill="#64748b" text-anchor="middle">256</text>
+  <text x="920" y="562" font-size="13" fill="#64748b" text-anchor="middle">prompt tokens</text>
+
+  <text x="920" y="600" font-size="12.5" fill="#475569" text-anchor="middle">Prefill grows with the prompt, but steady-state decode stays flat:</text>
+  <text x="920" y="620" font-size="12.5" fill="#475569" text-anchor="middle">3.32 &#8594; 3.18 tok/s (ITL 298 &#8594; 313 ms). That flat buffer is the Week-4 problem.</text>
+
+  <text x="50" y="655" font-size="13.5" fill="#94a3b8">nanoserve &#183; Day 13 &#183; bench.py + src/nanoserve/benchmark.py &#183; greedy decode, Llama-3.2-1B on CPU &#183; O(n) cached vs O(n&#178;) naive</text>
+</svg>
