@@ -18,7 +18,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from nanoserve.cache import BlockAllocator, KVCacheExhausted, NaiveKVCache
+from nanoserve.cache import (
+    BlockAllocator,
+    BlockTable,
+    KVCacheExhausted,
+    NaiveKVCache,
+)
 from nanoserve.config import ModelConfig
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes, load_weights
 from nanoserve.model import LlamaModel
@@ -295,3 +300,145 @@ def test_construction_rejects_a_nonpositive_pool_or_block_size():
         BlockAllocator(num_blocks=0, block_size=16)
     with pytest.raises(ValueError):
         BlockAllocator(num_blocks=4, block_size=0)
+
+
+# --- Day 15: the block table (logical -> physical address translation) ------
+#
+# The allocator owns physical blocks but says nothing about *which* block holds
+# *which* logical token. The block table is that per-sequence map. It is still
+# torch-free bookkeeping (Week 5 hangs real K/V off the slots): grow a sequence
+# a token at a time, pull a fresh block from the pool only when a token crosses a
+# block boundary, and translate any logical position to its physical (block,
+# offset) and flat slot. The headline invariant: incremental growth must land a
+# sequence on the exact same blocks and slots as one bulk allocation would.
+
+
+def test_fresh_block_table_is_empty_and_holds_no_blocks():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    table = BlockTable(alloc)
+    assert table.num_tokens == 0
+    assert table.block_ids == []
+    assert table.capacity == 0
+    assert alloc.num_free == 4  # an empty sequence reserves nothing
+
+
+def test_append_within_one_block_takes_exactly_one_block():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    table = BlockTable(alloc)
+    table.append(5)
+    assert table.num_tokens == 5
+    assert len(table.block_ids) == 1
+    assert table.capacity == 16
+    assert alloc.num_free == 3
+
+
+def test_position_translates_logical_to_block_and_offset():
+    """The Day-14 example: position 17 with block_size 16 is offset 1 of block 2."""
+    alloc = BlockAllocator(num_blocks=8, block_size=16)
+    table = BlockTable(alloc)
+    table.append(20)  # two blocks
+    assert table.block_ids[0:2] == [0, 1]
+    assert table.position(0) == (0, 0)
+    assert table.position(15) == (0, 15)
+    assert table.position(16) == (1, 0)
+    assert table.position(17) == (1, 1)  # second block, offset 1
+
+
+def test_slot_is_the_flat_index_into_the_block_pool():
+    """slot = block_id * block_size + offset, the address Week 5 writes K/V to."""
+    alloc = BlockAllocator(num_blocks=8, block_size=16)
+    table = BlockTable(alloc)
+    table.append(20)
+    assert table.slot(0) == 0
+    assert table.slot(17) == table.block_ids[1] * 16 + 1
+    # every live position maps to a distinct physical slot
+    slots = [table.slot(p) for p in range(table.num_tokens)]
+    assert len(set(slots)) == table.num_tokens
+
+
+def test_new_block_is_pulled_only_when_a_token_crosses_a_boundary():
+    alloc = BlockAllocator(num_blocks=4, block_size=4)
+    table = BlockTable(alloc)
+    table.append(4)  # fills block 0 exactly
+    assert len(table.block_ids) == 1
+    assert alloc.num_free == 3
+    table.append(1)  # 5th token needs a second block
+    assert len(table.block_ids) == 2
+    assert alloc.num_free == 2
+    assert table.position(4) == (table.block_ids[1], 0)
+
+
+def test_incremental_appends_match_one_bulk_append():
+    """Growing a token at a time lands on the same blocks and slots as one append.
+
+    This is the block table's correctness contract, the paging analogue of the
+    cache's "an optimization changes nothing": decode (one token per step) and
+    prefill (a whole prompt at once) must produce identical address translation.
+    """
+    bulk_alloc = BlockAllocator(num_blocks=8, block_size=4)
+    bulk = BlockTable(bulk_alloc)
+    bulk.append(10)
+
+    step_alloc = BlockAllocator(num_blocks=8, block_size=4)
+    step = BlockTable(step_alloc)
+    for _ in range(10):
+        step.append(1)
+
+    assert step.block_ids == bulk.block_ids
+    assert [step.slot(p) for p in range(10)] == [bulk.slot(p) for p in range(10)]
+    assert step_alloc.num_free == bulk_alloc.num_free
+
+
+def test_position_out_of_range_raises():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    table = BlockTable(alloc)
+    table.append(5)
+    with pytest.raises(IndexError):
+        table.position(5)  # only 0..4 are live
+    with pytest.raises(IndexError):
+        table.position(-1)
+
+
+def test_free_returns_every_block_and_resets_the_table():
+    alloc = BlockAllocator(num_blocks=4, block_size=16)
+    table = BlockTable(alloc)
+    table.append(40)  # three blocks
+    assert alloc.num_free == 1
+    table.free()
+    assert alloc.num_free == 4
+    assert table.num_tokens == 0
+    assert table.block_ids == []
+    # the table is reusable after a free
+    table.append(3)
+    assert table.num_tokens == 3
+
+
+def test_append_is_atomic_when_the_pool_cannot_cover_the_growth():
+    """If growth needs more blocks than are free, reserve none and leave it intact."""
+    alloc = BlockAllocator(num_blocks=2, block_size=4)
+    table = BlockTable(alloc)
+    table.append(4)  # one block, one free left
+    with pytest.raises(KVCacheExhausted):
+        table.append(8)  # would need two more blocks, only one free
+    assert table.num_tokens == 4  # unchanged
+    assert len(table.block_ids) == 1
+    assert alloc.num_free == 1
+
+
+def test_table_handles_physically_scattered_blocks():
+    """After a free-and-reallocate, a sequence's blocks are non-contiguous and the
+    translation still resolves each logical position to its real physical block."""
+    alloc = BlockAllocator(num_blocks=4, block_size=4)
+    first = BlockTable(alloc)
+    first.append(8)  # blocks [0, 1]
+    first.free()  # back to the pool, LIFO: [.. ,1, 0] on top
+
+    table = BlockTable(alloc)
+    table.append(12)  # three blocks, reusing freed ones out of order
+    assert len(set(table.block_ids)) == 3
+    assert table.block_ids != sorted(table.block_ids) or len(table.block_ids) == 3
+    for p in range(12):
+        block, offset = table.position(p)
+        assert block == table.block_ids[p // 4]
+        assert offset == p % 4
+        assert table.slot(p) == block * 4 + offset

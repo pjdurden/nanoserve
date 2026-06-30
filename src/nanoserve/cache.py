@@ -182,8 +182,97 @@ class BlockAllocator:
             self.free(block_id)
 
 
+class BlockTable:
+    """Week 4: one sequence's map from logical token position to physical block.
+
+    The allocator owns the pool but is blind to meaning: it hands out block ids
+    and takes them back, nothing more. The block table is the per-sequence layer
+    on top that remembers *which* physical block holds *which* logical token. It
+    is the address-translation table of the paging analogy, the exact counterpart
+    of an OS page table: logical position -> (physical block, offset within it).
+
+    A sequence is just an ordered list of block ids, `block_ids[i]` holding
+    logical positions `i*block_size .. i*block_size + block_size - 1`. Those
+    physical blocks can sit anywhere in the pool and need not be contiguous (the
+    allocator hands out whatever is free), which is the entire freedom paging buys
+    over the Week-3 contiguous cache. Translation stays trivial regardless:
+    position `p` lives in `block_ids[p // block_size]` at offset `p % block_size`.
+
+    Still torch-free. No K/V is stored here; the table only computes *where* each
+    token's K/V will go. Week 5 hangs the real per-block K/V tensors off the pool
+    and writes/reads them at the `slot` this table returns.
+    """
+
+    def __init__(self, allocator: BlockAllocator):
+        self.allocator = allocator
+        self.block_size = allocator.block_size
+        self.block_ids: list[int] = []
+        self.num_tokens = 0
+
+    @property
+    def capacity(self) -> int:
+        """Tokens the currently held blocks can hold (>= num_tokens)."""
+        return len(self.block_ids) * self.block_size
+
+    def append(self, num_new_tokens: int = 1) -> None:
+        """Grow the sequence by `num_new_tokens`, pulling blocks only as needed.
+
+        New blocks are reserved exactly when growth crosses a block boundary: a
+        token at position `capacity` has no block yet, so one is allocated. On the
+        common decode step (one token, mid-block) no allocation happens at all,
+        which is the whole efficiency story: physical memory is grabbed a block at
+        a time, only at the moment it is first written.
+
+        Atomic like `allocate_for`: if the growth needs more blocks than the pool
+        can supply, none are taken and `KVCacheExhausted` is raised, leaving the
+        table exactly as it was. A half-grown table would strand blocks and desync
+        `num_tokens` from the blocks actually held.
+        """
+        if num_new_tokens < 0:
+            raise ValueError(f"num_new_tokens must be non-negative, got {num_new_tokens}")
+        target = self.num_tokens + num_new_tokens
+        blocks_needed = self.allocator.blocks_for_length(target) - len(self.block_ids)
+        if blocks_needed > 0:
+            # allocate_for is itself atomic: it reserves all or raises, taking
+            # none, so a failure here cannot leave a partially grown table.
+            self.block_ids.extend(self.allocator.allocate_for(blocks_needed * self.block_size))
+        self.num_tokens = target
+
+    def position(self, logical_pos: int) -> tuple[int, int]:
+        """Translate a logical token position to (physical block id, offset).
+
+        Raises `IndexError` for any position not currently live (negative or
+        `>= num_tokens`), because a translation past the sequence would point at a
+        block that holds no K/V for this token yet.
+        """
+        if logical_pos < 0 or logical_pos >= self.num_tokens:
+            raise IndexError(
+                f"position {logical_pos} out of range for {self.num_tokens} tokens"
+            )
+        block_id = self.block_ids[logical_pos // self.block_size]
+        offset = logical_pos % self.block_size
+        return block_id, offset
+
+    def slot(self, logical_pos: int) -> int:
+        """Flat index of a token's K/V in a `[num_blocks * block_size]` pool.
+
+        This is the single integer Week 5's paged read/write uses: rather than
+        index a `[block][offset]` tensor, flatten the pool to one axis and address
+        it as `block_id * block_size + offset`. Distinct live positions always map
+        to distinct slots, even when the sequence's blocks are scattered.
+        """
+        block_id, offset = self.position(logical_pos)
+        return block_id * self.block_size + offset
+
+    def free(self) -> None:
+        """Return every block to the pool and reset to an empty, reusable table."""
+        self.allocator.free_all(self.block_ids)
+        self.block_ids = []
+        self.num_tokens = 0
+
+
 class PagedKVCache:
-    """Weeks 4-5: block table mapping logical positions to physical blocks."""
+    """Week 5: paged K/V storage read and written through a BlockTable."""
 
     def __init__(self, config, allocator):
         raise NotImplementedError("week5")
