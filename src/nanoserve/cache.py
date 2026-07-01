@@ -272,7 +272,108 @@ class BlockTable:
 
 
 class PagedKVCache:
-    """Week 5: paged K/V storage read and written through a BlockTable."""
+    """Week 5: real K/V stored in a block pool, read/written through a BlockTable.
 
-    def __init__(self, config, allocator):
-        raise NotImplementedError("week5")
+    This is where the Day-14 allocator and Day-15 table finally hold tensors. It
+    is a drop-in for `NaiveKVCache` at the one interface attention uses: the same
+    `append(layer, k, v) -> (full_k, full_v)` and the same `seq_len`. Attention
+    does not change at all; only where the K/V physically live does.
+
+    The naive cache keeps one growing contiguous tensor per layer. The paged
+    cache keeps, per layer, a *fixed* flat pool of shape
+    `[num_blocks * block_size, num_kv_heads, head_dim]` and writes each token's
+    K/V at the flat `slot` the block table assigns. Those slots can be anywhere in
+    the pool, so a sequence's K/V may be physically scattered, which is the whole
+    point: physical placement is decoupled from logical position, so the pool
+    stays packed under many sequences (Weeks 8-9) instead of each sequence
+    reserving a worst-case contiguous buffer.
+
+    One block table, shared across all layers. Every layer stores the same tokens
+    at the same logical positions, so the logical->physical map is identical for
+    all of them; a physical block id therefore names a slot in *every* layer's
+    pool at once, exactly as it does in vLLM. The table is grown once per step, on
+    the first layer's append, and the other layers reuse the slots it computed.
+
+    Week 6 replaces the gather-and-reassemble read below with a Triton kernel that
+    attends directly over the scattered blocks; here the read rebuilds the
+    contiguous history so the output is verifiably identical to the naive path
+    first, before any kernel is trusted.
+    """
+
+    def __init__(self, config, allocator: BlockAllocator):
+        self.config = config
+        self.allocator = allocator
+        self.block_size = allocator.block_size
+        self.num_layers = config.num_hidden_layers
+        # One table for the sequence (all layers share the logical->physical map).
+        self.table = BlockTable(allocator)
+        # Per-layer flat K/V pools, allocated lazily on first append so their dtype
+        # and device match the data attention actually produces.
+        self.k_pool: list[torch.Tensor | None] = [None] * self.num_layers
+        self.v_pool: list[torch.Tensor | None] = [None] * self.num_layers
+        # Flat slots this step writes to, computed once on layer 0 and reused by
+        # the remaining layers (they store the same positions).
+        self._step_slots: torch.Tensor | None = None
+
+    @property
+    def seq_len(self) -> int:
+        """Tokens cached so far (the shared table's length; all layers agree)."""
+        return self.table.num_tokens
+
+    def _slots_for(self, positions: range, device) -> torch.Tensor:
+        """Flat pool indices for a range of logical positions."""
+        return torch.tensor(
+            [self.table.slot(p) for p in positions], dtype=torch.long, device=device
+        )
+
+    def append(
+        self, layer: int, k: torch.Tensor, v: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Store this step's K/V for `layer` and return the full running K/V.
+
+        k, v: [1, num_kv_heads, new_seq, head_dim]. `new_seq` is the prompt length
+              on prefill and 1 on a decode step. Batch is 1: one sequence per cache
+              until Phase 3 gives each sequence its own table.
+
+        On the first layer of a step the shared table grows by `new_seq` (pulling
+        physical blocks only when a token crosses a block boundary, raising
+        `KVCacheExhausted` atomically if the pool is dry), and the slots for the
+        new tokens are recorded. Every layer then scatters its `new_seq` K/V into
+        those slots in its own pool and gathers the whole history (positions
+        `0..seq_len-1`) back into a contiguous `[1, num_kv_heads, seq, head_dim]`,
+        oldest token first, exactly the tensor `NaiveKVCache.append` returns.
+        """
+        if k.shape[0] != 1:
+            raise ValueError(
+                "PagedKVCache handles one sequence; batch must be 1 "
+                "(per-sequence tables arrive in Phase 3)"
+            )
+        new_seq = k.shape[2]
+
+        if layer == 0:
+            start = self.table.num_tokens
+            self.table.append(new_seq)  # atomic; raises KVCacheExhausted if dry
+            self._step_slots = self._slots_for(range(start, start + new_seq), k.device)
+
+        if self.k_pool[layer] is None:
+            pool = (self.allocator.num_blocks * self.block_size,
+                    self.config.num_key_value_heads, self.config.head_dim)
+            self.k_pool[layer] = torch.zeros(pool, dtype=k.dtype, device=k.device)
+            self.v_pool[layer] = torch.zeros(pool, dtype=v.dtype, device=v.device)
+
+        # Write [1, n_kv, new_seq, d] -> [new_seq, n_kv, d] at this step's slots.
+        self.k_pool[layer][self._step_slots] = k[0].transpose(0, 1)
+        self.v_pool[layer][self._step_slots] = v[0].transpose(0, 1)
+
+        # Gather the full history back, oldest first, into [1, n_kv, seq, d].
+        hist = self._slots_for(range(self.table.num_tokens), k.device)
+        full_k = self.k_pool[layer][hist].transpose(0, 1)[None]
+        full_v = self.v_pool[layer][hist].transpose(0, 1)[None]
+        return full_k, full_v
+
+    def free(self) -> None:
+        """Return every block to the pool and reset to an empty, reusable cache."""
+        self.table.free()
+        self.k_pool = [None] * self.num_layers
+        self.v_pool = [None] * self.num_layers
+        self._step_slots = None

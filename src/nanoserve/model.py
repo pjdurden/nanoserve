@@ -32,7 +32,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from .cache import NaiveKVCache
+from .cache import BlockAllocator, NaiveKVCache, PagedKVCache
 from .config import ModelConfig
 from .layers import RotaryEmbedding, rms_norm, transformer_block
 from .loader import EMBED, LM_HEAD, Weights
@@ -195,7 +195,65 @@ class LlamaModel:
                 "(ragged multi-sequence batching arrives in Phase 3)"
             )
         cache = NaiveKVCache(self.config.num_hidden_layers)
+        return self._greedy_decode(input_ids, max_new_tokens, cache, eos_id)
 
+    @torch.no_grad()
+    def greedy_generate_paged(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        eos_id: int | None = None,
+        block_size: int = 16,
+    ) -> torch.Tensor:
+        """Greedy decode over a paged KV cache: same tokens, blocked storage.
+
+        Week 5's payoff. Identical to `greedy_generate_cached` in every observable
+        way (same single-sequence guard, same greedy choices, same output), but
+        the K/V lives in a fixed pool of physical blocks addressed through a block
+        table instead of one growing contiguous buffer. `test_cache.py` pins the
+        token-for-token equality; the cache is a memory-layout change, not a
+        behaviour change.
+
+        The block pool is sized to exactly this run: `prompt + max_new_tokens`
+        tokens at `block_size` per block. That is the single-sequence case; the
+        shared pool that lets many sequences pack into it, and the eviction that
+        happens when they cannot, is the Weeks 8-9 scheduler's job.
+
+        input_ids:      [1, seq] prompt (one sequence; Phase 3 does real batching).
+        max_new_tokens: cap on generated tokens.
+        eos_id:         if given, stop after emitting it (kept in the output).
+        block_size:     tokens per physical block.
+
+        Returns [1, seq + generated], the prompt with the continuation appended.
+        """
+        if input_ids.shape[0] != 1:
+            raise ValueError(
+                "greedy_generate_paged decodes a single sequence; batch must be 1 "
+                "(ragged multi-sequence batching arrives in Phase 3)"
+            )
+        total = input_ids.shape[1] + max_new_tokens
+        num_blocks = (total + block_size - 1) // block_size
+        allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
+        cache = PagedKVCache(self.config, allocator)
+        return self._greedy_decode(input_ids, max_new_tokens, cache, eos_id)
+
+    @torch.no_grad()
+    def _greedy_decode(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        cache,
+        eos_id: int | None,
+    ) -> torch.Tensor:
+        """The prefill-then-decode greedy loop, over any KV cache.
+
+        Shared by the naive-contiguous and paged decode paths: the cache is the
+        only thing that differs, and both expose the same `append`/`seq_len`, so
+        the loop is written once against that interface. Prefill the whole prompt
+        into the cache, then forward exactly one token per step at its own absolute
+        position (`cache.seq_len` just before the append). Callers do the
+        single-sequence guard and pick the cache.
+        """
         # Prefill: positions 0..seq-1 default inside forward; the cache fills and
         # the last position gives the first token to emit.
         logits = self.forward(input_ids, cache=cache)

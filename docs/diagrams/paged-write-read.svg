@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#047857"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="54" font-size="30" font-weight="700" fill="#1e1b4b">Paged KV cache: write and read</text>
+  <text x="50" y="86" font-size="19" fill="#64748b">attention sees one contiguous sequence; the pool underneath is scattered. block_size = 4.</text>
+
+  <!-- ============ WRITE (left) ============ -->
+  <text x="70" y="140" font-size="19" font-weight="700" fill="#3730a3">WRITE  append(layer, k, v)</text>
+
+  <rect x="70" y="160" width="210" height="60" rx="8" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="175" y="185" font-size="14" fill="#1e1b4b" text-anchor="middle">new token K/V</text>
+  <text x="175" y="206" font-size="13" fill="#475569" text-anchor="middle">[1, n_kv, 1, d]  at pos 4</text>
+
+  <text x="175" y="250" font-size="14" fill="#475569" text-anchor="middle">table.slot(4)</text>
+  <text x="175" y="270" font-size="13" fill="#94a3b8" text-anchor="middle">= block_ids[4//4]*4 + 4%4</text>
+  <text x="175" y="289" font-size="13" fill="#94a3b8" text-anchor="middle">= block 0 * 4 + 0 = slot 0</text>
+  <line x1="175" y1="220" x2="175" y2="300" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ============ READ (right) ============ -->
+  <text x="700" y="140" font-size="19" font-weight="700" fill="#047857">READ  gather 0..seq-1  -&gt;  attention</text>
+
+  <rect x="820" y="160" width="300" height="60" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="2"/>
+  <text x="970" y="185" font-size="14" fill="#064e3b" text-anchor="middle">contiguous K/V for attention</text>
+  <text x="970" y="206" font-size="13" fill="#047857" text-anchor="middle">[1, n_kv, seq, d]  oldest first</text>
+  <line x1="970" y1="300" x2="970" y2="220" stroke="#047857" stroke-width="2" marker-end="url(#arrowB)"/>
+  <text x="970" y="250" font-size="13" fill="#94a3b8" text-anchor="middle">pool[ [slot(0),slot(1),..] ]</text>
+  <text x="970" y="270" font-size="13" fill="#94a3b8" text-anchor="middle">.transpose -&gt; [1, n_kv, seq, d]</text>
+
+  <!-- ============ logical sequence ============ -->
+  <text x="70" y="360" font-size="16" font-weight="600" fill="#3730a3">Logical sequence (positions 0..6)</text>
+  <g font-size="13" text-anchor="middle">
+    <rect x="70"  y="375" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="93"  y="400" fill="#1e1b4b">0</text>
+    <rect x="120" y="375" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="143" y="400" fill="#1e1b4b">1</text>
+    <rect x="170" y="375" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="193" y="400" fill="#1e1b4b">2</text>
+    <rect x="220" y="375" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="243" y="400" fill="#1e1b4b">3</text>
+    <rect x="270" y="375" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="293" y="400" fill="#064e3b">4</text>
+    <rect x="320" y="375" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="343" y="400" fill="#064e3b">5</text>
+    <rect x="370" y="375" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="393" y="400" fill="#064e3b">6</text>
+  </g>
+  <text x="168" y="440" font-size="12" fill="#64748b" text-anchor="middle">-&gt; block 2</text>
+  <text x="343" y="440" font-size="12" fill="#64748b" text-anchor="middle">-&gt; block 0</text>
+
+  <!-- ============ block table ============ -->
+  <text x="600" y="360" font-size="16" font-weight="600" fill="#3730a3">block_ids = [2, 0]</text>
+  <text x="600" y="384" font-size="13" fill="#64748b">index 0 -&gt; physical block 2</text>
+  <text x="600" y="404" font-size="13" fill="#64748b">index 1 -&gt; physical block 0</text>
+  <text x="600" y="428" font-size="12" fill="#94a3b8">scattered because block 0 was reused</text>
+  <text x="600" y="444" font-size="12" fill="#94a3b8">after an earlier sequence freed it</text>
+
+  <!-- ============ physical pool ============ -->
+  <text x="70" y="500" font-size="16" font-weight="600" fill="#334155">Physical pool  [num_blocks * block_size, n_kv, d]  (one per layer)</text>
+  <g font-size="12" text-anchor="middle">
+    <!-- block 0 : holds positions 4,5,6 (green) + 1 free -->
+    <text x="150" y="525" font-size="12" fill="#475569">block 0</text>
+    <rect x="70"  y="535" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="93"  y="560" fill="#064e3b">p4</text>
+    <rect x="120" y="535" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="143" y="560" fill="#064e3b">p5</text>
+    <rect x="170" y="535" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="193" y="560" fill="#064e3b">p6</text>
+    <rect x="220" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/><text x="243" y="560" fill="#94a3b8">free</text>
+
+    <!-- block 1 : free -->
+    <text x="360" y="525" font-size="12" fill="#475569">block 1 (free)</text>
+    <rect x="290" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="340" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="390" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="440" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+
+    <!-- block 2 : holds positions 0,1,2,3 (indigo) -->
+    <text x="580" y="525" font-size="12" fill="#475569">block 2</text>
+    <rect x="510" y="535" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="533" y="560" fill="#1e1b4b">p0</text>
+    <rect x="560" y="535" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="583" y="560" fill="#1e1b4b">p1</text>
+    <rect x="610" y="535" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="633" y="560" fill="#1e1b4b">p2</text>
+    <rect x="660" y="535" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="683" y="560" fill="#1e1b4b">p3</text>
+
+    <!-- block 3 : free -->
+    <text x="800" y="525" font-size="12" fill="#475569">block 3 (free)</text>
+    <rect x="730" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="780" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="830" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="880" y="535" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+
+  <!-- write arrow: new token pos4 -> block 0 slot 0 -->
+  <path d="M175,300 C175,470 93,500 93,535" fill="none" stroke="#047857" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrowB)"/>
+  <!-- read arrow: pool -> contiguous -->
+  <path d="M683,535 C820,470 970,360 970,300" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+
+  <text x="70" y="632" font-size="14" fill="#64748b">One block table, shared by all layers (same logical-&gt;physical map). One flat pool per layer. Same slot, every layer.</text>
+  <text x="70" y="656" font-size="14" fill="#94a3b8">Verified: the gathered history is byte-for-byte the naive contiguous cache, so decode output is token-for-token identical.</text>
+</svg>

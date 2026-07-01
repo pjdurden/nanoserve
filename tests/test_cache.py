@@ -23,6 +23,7 @@ from nanoserve.cache import (
     BlockTable,
     KVCacheExhausted,
     NaiveKVCache,
+    PagedKVCache,
 )
 from nanoserve.config import ModelConfig
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes, load_weights
@@ -442,3 +443,151 @@ def test_table_handles_physically_scattered_blocks():
         assert block == table.block_ids[p // 4]
         assert offset == p % 4
         assert table.slot(p) == block * 4 + offset
+
+
+# --- Day 16: the paged KV cache (real K/V stored through the block table) ----
+#
+# Week 5 hangs real K/V tensors off the Day-14 pool and the Day-15 block table.
+# A PagedKVCache is a drop-in for NaiveKVCache at the attention interface: same
+# `append(layer, k, v) -> (full_k, full_v)`, same `seq_len`. The difference is
+# purely internal: instead of one growing contiguous tensor per layer, each
+# layer's K/V live in a fixed pool of physical blocks, and a single per-sequence
+# block table maps each logical position to its physical slot. All layers share
+# the one table (same sequence, same logical->physical map) but own separate
+# pools, exactly as real paged attention shares a block id across every layer.
+#
+# So the correctness contract is the same "an optimization changes nothing" as
+# the naive cache, one level deeper: the running K/V a paged cache hands back
+# must be byte-for-byte what the naive contiguous cache would, even though the
+# physical blocks backing it can be scattered anywhere in the pool.
+
+
+def _kv(new_seq: int, cfg: ModelConfig) -> tuple[torch.Tensor, torch.Tensor]:
+    """A random K/V chunk shaped as attention produces it: [1, n_kv, new_seq, d]."""
+    shape = (1, cfg.num_key_value_heads, new_seq, cfg.head_dim)
+    return torch.randn(*shape), torch.randn(*shape)
+
+
+def test_paged_cache_returns_the_same_running_kv_as_naive():
+    """The headline contract: paged storage hands back exactly the naive history.
+
+    Drive both caches with identical K/V, one prefill chunk then decode steps,
+    across every layer (which is what the model does). The full (K, V) a paged
+    append returns must be `torch.equal` to the naive one at every step and every
+    layer; if it is, attention sees an identical matrix and the logits cannot
+    differ. This pins the shared-table / per-layer-pool design end to end.
+    """
+    cfg = _tiny_config()  # 2 layers, 2 KV heads, head_dim 4
+    alloc = BlockAllocator(num_blocks=8, block_size=4)
+    paged = PagedKVCache(cfg, alloc)
+    naive = NaiveKVCache(cfg.num_hidden_layers)
+
+    torch.manual_seed(0)
+    for new_seq in (5, 1, 1, 1):  # prefill 5, then three decode steps
+        for layer in range(cfg.num_hidden_layers):
+            k, v = _kv(new_seq, cfg)
+            pk, pv = paged.append(layer, k, v)
+            nk, nv = naive.append(layer, k, v)
+            assert torch.equal(pk, nk)
+            assert torch.equal(pv, nv)
+    assert paged.seq_len == naive.seq_len == 8
+
+
+def test_paged_cache_pulls_blocks_only_as_the_sequence_crosses_boundaries():
+    """Physical blocks are grabbed a block at a time, at first write, once total.
+
+    Growth is driven by the shared table on the first layer of each step, so the
+    pool shrinks on block-boundary crossings and never once per layer.
+    """
+    cfg = _tiny_config()
+    alloc = BlockAllocator(num_blocks=8, block_size=4)
+    paged = PagedKVCache(cfg, alloc)
+
+    for layer in range(cfg.num_hidden_layers):  # prefill 4 tokens: exactly one block
+        paged.append(layer, *_kv(4, cfg))
+    assert alloc.num_free == 7  # one block, not one per layer
+
+    for layer in range(cfg.num_hidden_layers):  # 5th token crosses into a 2nd block
+        paged.append(layer, *_kv(1, cfg))
+    assert alloc.num_free == 6
+
+
+def test_paged_prefill_matches_naive_prefill_logits():
+    """A forward over the paged cache yields the same logits as the naive cache."""
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 6))
+
+    naive = NaiveKVCache(cfg.num_hidden_layers)
+    paged = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+    out_naive = model.forward(ids, cache=naive)
+    out_paged = model.forward(ids, cache=paged)
+
+    assert torch.allclose(out_naive, out_paged, atol=1e-6)
+    assert paged.seq_len == 6
+
+
+def test_paged_greedy_matches_cached_greedy_token_for_token():
+    """The full contract: paged greedy decode == naive-cached greedy, exactly.
+
+    Same weights, same prompt, same greedy choices, just a paged pool instead of
+    a contiguous buffer. Any divergence is a paging bug (wrong slot, stale block,
+    a layer reading another layer's pool).
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 4))
+
+    cached = model.greedy_generate_cached(ids, max_new_tokens=8)
+    paged = model.greedy_generate_paged(ids, max_new_tokens=8)
+    assert torch.equal(cached, paged)
+
+
+def test_paged_cache_frees_its_blocks_back_to_the_pool():
+    """A finished sequence returns every physical block, leaving the pool reusable."""
+    cfg = _tiny_config()
+    alloc = BlockAllocator(num_blocks=4, block_size=4)
+    paged = PagedKVCache(cfg, alloc)
+    for _ in range(6):  # six tokens over one layer -> two blocks
+        paged.append(0, *_kv(1, cfg))
+    assert alloc.num_free == 2
+
+    paged.free()
+    assert alloc.num_free == 4
+    assert paged.seq_len == 0
+
+
+def test_paged_cache_raises_when_the_pool_cannot_hold_the_sequence():
+    """Out of physical blocks is the KVCacheExhausted signal, same as the pool's."""
+    cfg = _tiny_config()
+    paged = PagedKVCache(cfg, BlockAllocator(num_blocks=1, block_size=4))
+    with pytest.raises(KVCacheExhausted):
+        paged.append(0, *_kv(5, cfg))  # 5 tokens need two blocks, pool has one
+
+
+def test_paged_cache_rejects_a_real_batch():
+    """One sequence per cache until Phase 3, same guard as the generate paths."""
+    cfg = _tiny_config()
+    paged = PagedKVCache(cfg, BlockAllocator(num_blocks=4, block_size=4))
+    shape = (2, cfg.num_key_value_heads, 1, cfg.head_dim)
+    with pytest.raises(ValueError):
+        paged.append(0, torch.randn(*shape), torch.randn(*shape))
+
+
+@requires_weights
+def test_paged_greedy_matches_hf_multi_token():
+    """Paged greedy decode matches HF token for token: nanoserve-paged == HF.
+
+    The same north star Week 2 hit by recompute and Day 11 hit with the naive
+    cache, now through the real paged pool the Triton kernel will later read.
+    """
+    cfg = ModelConfig.from_json(WEIGHTS_DIR)
+    model = LlamaModel(cfg, load_weights(WEIGHTS_DIR))
+    ids = torch.tensor([PROMPT_IDS])
+    n = 20
+
+    mine = model.greedy_generate_paged(ids, max_new_tokens=n)
+    hf = hf_model()
+    with torch.no_grad():
+        ref = hf.generate(ids, max_new_tokens=n, do_sample=False, use_cache=True)
+    assert torch.equal(mine, ref)
