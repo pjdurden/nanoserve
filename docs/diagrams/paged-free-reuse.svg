@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#047857"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="54" font-size="30" font-weight="700" fill="#1e1b4b">Free-and-reuse: one pool, two sequences</text>
+  <text x="50" y="86" font-size="19" fill="#64748b">one paged pool, sized for a single sequence, serves two in a row via free-on-finish. block_size = 4.</text>
+
+  <!-- ============ the code path ============ -->
+  <rect x="70" y="120" width="1060" height="66" rx="8" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="90" y="148" font-size="15" fill="#1e1b4b" font-weight="600">generate(prompt, paged=True)  or  generate(prompt, allocator=shared_pool)</text>
+  <text x="90" y="172" font-size="14" fill="#475569">cache = PagedKVCache(pool)   try: prefill, then draw one token per step   finally: cache.free()  &lt;- blocks go back</text>
+
+  <!-- ============ 1. Sequence A runs ============ -->
+  <text x="70" y="248" font-size="17" font-weight="700" fill="#3730a3">1. Sequence A decodes</text>
+  <text x="70" y="270" font-size="13" fill="#64748b">10 tokens -&gt; 3 blocks, the whole pool</text>
+  <g font-size="12" text-anchor="middle">
+    <rect x="70"  y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="90"  y="313" fill="#1e1b4b">A</text>
+    <rect x="114" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="134" y="313" fill="#1e1b4b">A</text>
+    <rect x="158" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="178" y="313" fill="#1e1b4b">A</text>
+    <rect x="202" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="222" y="313" fill="#1e1b4b">A</text>
+    <rect x="252" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="272" y="313" fill="#1e1b4b">A</text>
+    <rect x="296" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="316" y="313" fill="#1e1b4b">A</text>
+    <rect x="340" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="360" y="313" fill="#1e1b4b">A</text>
+    <rect x="384" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="404" y="313" fill="#1e1b4b">A</text>
+    <rect x="434" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="454" y="313" fill="#1e1b4b">A</text>
+    <rect x="478" y="288" width="40" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="498" y="313" fill="#1e1b4b">A</text>
+    <rect x="522" y="288" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="566" y="288" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+  <text x="112" y="352" font-size="12" fill="#94a3b8" text-anchor="middle">block 0</text>
+  <text x="288" y="352" font-size="12" fill="#94a3b8" text-anchor="middle">block 1</text>
+  <text x="464" y="352" font-size="12" fill="#94a3b8" text-anchor="middle">block 2</text>
+  <text x="620" y="313" font-size="13" fill="#94a3b8">num_free = 0</text>
+
+  <!-- ============ 2. free() ============ -->
+  <text x="70" y="420" font-size="17" font-weight="700" fill="#047857">2. A finishes -&gt; finally: cache.free()</text>
+  <text x="70" y="442" font-size="13" fill="#64748b">every block returns to the pool; num_free back to full</text>
+  <g font-size="12" text-anchor="middle">
+    <rect x="70"  y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/><text x="90"  y="485" fill="#94a3b8">free</text>
+    <rect x="114" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="158" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="202" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="252" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="296" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="340" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="384" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="434" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="478" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="522" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="566" y="460" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+  <text x="620" y="485" font-size="13" fill="#94a3b8">num_free = 3</text>
+
+  <!-- ============ 3. Sequence B reuses ============ -->
+  <text x="70" y="562" font-size="17" font-weight="700" fill="#3730a3">3. Sequence B decodes over the same pool</text>
+  <text x="70" y="584" font-size="13" fill="#64748b">only succeeds because A freed; blocks reused, out of order is fine</text>
+  <g font-size="12" text-anchor="middle">
+    <rect x="70"  y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="90"  y="625" fill="#064e3b">B</text>
+    <rect x="114" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="134" y="625" fill="#064e3b">B</text>
+    <rect x="158" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="178" y="625" fill="#064e3b">B</text>
+    <rect x="202" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="222" y="625" fill="#064e3b">B</text>
+    <rect x="252" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="272" y="625" fill="#064e3b">B</text>
+    <rect x="296" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="316" y="625" fill="#064e3b">B</text>
+    <rect x="340" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="360" y="625" fill="#064e3b">B</text>
+    <rect x="384" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="404" y="625" fill="#064e3b">B</text>
+    <rect x="434" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="454" y="625" fill="#064e3b">B</text>
+    <rect x="478" y="600" width="40" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="498" y="625" fill="#064e3b">B</text>
+    <rect x="522" y="600" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="566" y="600" width="40" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+  <text x="620" y="625" font-size="13" fill="#94a3b8">num_free = 0</text>
+
+  <!-- right-hand notes -->
+  <text x="730" y="300" font-size="14" fill="#475569" font-weight="600">Same seed, same tokens</text>
+  <text x="730" y="322" font-size="13" fill="#64748b">paging is a memory-layout change,</text>
+  <text x="730" y="340" font-size="13" fill="#64748b">not a behavior change: naive and</text>
+  <text x="730" y="358" font-size="13" fill="#64748b">paged draw byte-for-byte the same.</text>
+
+  <text x="730" y="472" font-size="14" fill="#475569" font-weight="600">free() lives in a finally</text>
+  <text x="730" y="494" font-size="13" fill="#64748b">so a finished sequence never leaks a</text>
+  <text x="730" y="512" font-size="13" fill="#64748b">block, even if the caller abandons</text>
+  <text x="730" y="530" font-size="13" fill="#64748b">the stream half-drained.</text>
+
+  <text x="730" y="614" font-size="14" fill="#475569" font-weight="600">A pool sized for one</text>
+  <text x="730" y="636" font-size="13" fill="#64748b">serves both. This is the packing that</text>
+  <text x="730" y="654" font-size="13" fill="#64748b">many concurrent sequences need (Weeks 8-9).</text>
+</svg>

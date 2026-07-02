@@ -273,6 +273,39 @@ class LlamaModel:
                 break
         return ids
 
+    def _sampling_cache(
+        self,
+        prompt_len: int,
+        max_new_tokens: int,
+        paged: bool,
+        block_size: int,
+        allocator: BlockAllocator | None,
+    ):
+        """Pick the KV cache for a decode run: naive by default, paged on request.
+
+        The Day-12 sampling loop hard-wired a `NaiveKVCache`; Day 17 lets it run
+        over the paged pool instead, without touching the loop, by choosing the
+        cache here. Paging is requested two ways:
+
+          - `paged=True`: a self-managed pool sized to exactly this one run
+            (`prompt + max_new_tokens` tokens at `block_size` per block), the same
+            single-sequence sizing `greedy_generate_paged` uses.
+          - `allocator=<BlockAllocator>`: share an existing pool across sequences.
+            This is what makes free-and-reuse observable: hand the same allocator
+            to two runs and the second reuses the blocks the first freed on finish.
+
+        The naive path is left exactly as it was: one growing contiguous buffer,
+        nothing to free. A paged cache built here is freed by the caller when the
+        stream ends, so its blocks return to the pool for the next sequence.
+        """
+        if not paged and allocator is None:
+            return NaiveKVCache(self.config.num_hidden_layers)
+        if allocator is None:
+            total = prompt_len + max_new_tokens
+            num_blocks = (total + block_size - 1) // block_size
+            allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
+        return PagedKVCache(self.config, allocator)
+
     @torch.no_grad()
     def generate_stream(
         self,
@@ -284,6 +317,9 @@ class LlamaModel:
         top_p: float = 1.0,
         eos_id: int | None = None,
         seed: int | None = None,
+        paged: bool = False,
+        block_size: int = 16,
+        allocator: BlockAllocator | None = None,
     ):
         """Yield generated token ids one at a time: cached decode + sampling.
 
@@ -304,10 +340,21 @@ class LlamaModel:
         eos_id:         if given, this token is yielded and then the stream ends.
         seed:           if given, threads a seeded `torch.Generator` through the
                         draw so the run is reproducible; greedy ignores it.
+        paged:          run over the paged block pool instead of the naive
+                        contiguous cache. A memory-layout change only: the same
+                        seed draws the same tokens either way (Day 16 pinned the
+                        equality on the greedy path; Day 17 pins it here).
+        block_size:     tokens per physical block when `paged` (ignored otherwise).
+        allocator:      share an existing block pool across sequences instead of
+                        letting this run own one. Passing it implies `paged`; the
+                        run frees its blocks back to this pool on finish, so the
+                        next sequence over the same allocator reuses them.
 
         The loop shape mirrors `greedy_generate_cached`: prefill the whole prompt
         into the cache once, then forward exactly one token per step, each at its
-        own absolute position (`cache.seq_len` just before the append).
+        own absolute position (`cache.seq_len` just before the append). Whichever
+        cache backs it, a paged one is freed in the `finally` so a finished
+        sequence never leaks a block, even if the caller stops draining early.
         """
         if input_ids.shape[0] != 1:
             raise ValueError(
@@ -318,25 +365,35 @@ class LlamaModel:
         if seed is not None:
             generator = torch.Generator(device=input_ids.device).manual_seed(seed)
 
-        cache = NaiveKVCache(self.config.num_hidden_layers)
-        logits = self.forward(input_ids, cache=cache)  # prefill, fills the cache
+        cache = self._sampling_cache(
+            input_ids.shape[1], max_new_tokens, paged, block_size, allocator
+        )
+        try:
+            logits = self.forward(input_ids, cache=cache)  # prefill, fills the cache
 
-        for step in range(max_new_tokens):
-            nxt = sample(
-                logits[0, -1],
-                temperature=temperature,
-                top_k=top_k,
-                top_p=top_p,
-                generator=generator,
-            )
-            yield nxt
-            if eos_id is not None and nxt == eos_id:
-                return
-            if step == max_new_tokens - 1:
-                return  # last token already yielded; skip the unused forward
-            pos = torch.tensor([[cache.seq_len]], device=input_ids.device)
-            tok = torch.tensor([[nxt]], device=input_ids.device, dtype=input_ids.dtype)
-            logits = self.forward(tok, position_ids=pos, cache=cache)
+            for step in range(max_new_tokens):
+                nxt = sample(
+                    logits[0, -1],
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    generator=generator,
+                )
+                yield nxt
+                if eos_id is not None and nxt == eos_id:
+                    return
+                if step == max_new_tokens - 1:
+                    return  # last token already yielded; skip the unused forward
+                pos = torch.tensor([[cache.seq_len]], device=input_ids.device)
+                tok = torch.tensor([[nxt]], device=input_ids.device, dtype=input_ids.dtype)
+                logits = self.forward(tok, position_ids=pos, cache=cache)
+        finally:
+            # Free-on-finish: a paged run returns every block to its pool the
+            # moment it ends (normal stop, eos, or a caller that abandons the
+            # stream and triggers GeneratorExit here). The naive cache owns one
+            # contiguous buffer with nothing to hand back, so it is left alone.
+            if isinstance(cache, PagedKVCache):
+                cache.free()
 
     @torch.no_grad()
     def generate(
@@ -349,6 +406,9 @@ class LlamaModel:
         top_p: float = 1.0,
         eos_id: int | None = None,
         seed: int | None = None,
+        paged: bool = False,
+        block_size: int = 16,
+        allocator: BlockAllocator | None = None,
     ) -> torch.Tensor:
         """Cached sampling decode, collected into one tensor: prompt + generated.
 
@@ -356,7 +416,9 @@ class LlamaModel:
         same sampling, but it drains the generator and returns [1, seq + made].
         `temperature == 0` makes this exactly `greedy_generate_cached`; the tests
         pin that equivalence so greedy stays the zero-temperature corner of the one
-        sampling path rather than a second code path that can drift.
+        sampling path rather than a second code path that can drift. `paged`,
+        `block_size` and `allocator` pass straight through to `generate_stream`,
+        so the collected form runs over the paged pool (and frees on finish) too.
         """
         ids = input_ids
         for nxt in self.generate_stream(
@@ -367,6 +429,9 @@ class LlamaModel:
             top_p=top_p,
             eos_id=eos_id,
             seed=seed,
+            paged=paged,
+            block_size=block_size,
+            allocator=allocator,
         ):
             tok = torch.tensor([[nxt]], device=ids.device, dtype=ids.dtype)
             ids = torch.cat([ids, tok], dim=1)

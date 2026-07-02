@@ -128,7 +128,12 @@ def test_prefill_then_decode_matches_full_forward():
     step = model.forward(nxt, position_ids=pos, cache=cache)  # [1, 1, vocab]
 
     full = model.forward(torch.cat([ids, nxt], dim=1))  # [1, 7, vocab]
-    assert torch.allclose(step[:, -1], full[:, -1], atol=1e-5)
+    # atol 1e-4, not 1e-5: the cached step and the one-shot forward assemble the
+    # same K/V but accumulate the attention sum in a different order (incremental
+    # concat vs one contiguous matmul), so fp32 rounding differs by ~1e-5 on
+    # unseeded random weights. 1e-4 is the model's documented HF-agreement level
+    # and de-flakes a tolerance that was occasionally tripped by rounding alone.
+    assert torch.allclose(step[:, -1], full[:, -1], atol=1e-4)
     assert cache.seq_len == 7
 
 
