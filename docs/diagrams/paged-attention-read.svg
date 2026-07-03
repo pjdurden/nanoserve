@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#047857"/>
+    </marker>
+    <marker id="arrowI" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#3730a3"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="30" font-weight="700" fill="#1e1b4b">Paged attention: read scattered blocks, score the query</text>
+  <text x="50" y="84" font-size="18" fill="#64748b">the reference the Triton kernel is held to. slot_mapping is the whole interface between paging and attention.</text>
+
+  <!-- ============ slot_mapping (the interface, top-left) ============ -->
+  <text x="70" y="140" font-size="18" font-weight="700" fill="#3730a3">slot_mapping   position p  -&gt;  flat slot of its K/V</text>
+  <g font-size="12" text-anchor="middle">
+    <rect x="70"  y="156" width="52" height="38" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="96"  y="180" fill="#1e1b4b">8</text>
+    <rect x="126" y="156" width="52" height="38" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="152" y="180" fill="#1e1b4b">9</text>
+    <rect x="182" y="156" width="52" height="38" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="208" y="180" fill="#1e1b4b">10</text>
+    <rect x="238" y="156" width="52" height="38" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="264" y="180" fill="#1e1b4b">11</text>
+    <rect x="294" y="156" width="52" height="38" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="320" y="180" fill="#064e3b">0</text>
+    <rect x="350" y="156" width="52" height="38" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="376" y="180" fill="#064e3b">1</text>
+  </g>
+  <g font-size="11" text-anchor="middle" fill="#94a3b8">
+    <text x="96"  y="212">p0</text><text x="152" y="212">p1</text><text x="208" y="212">p2</text>
+    <text x="264" y="212">p3</text><text x="320" y="212">p4</text><text x="376" y="212">p5</text>
+  </g>
+  <text x="70" y="242" font-size="13" fill="#64748b">one [seq_total] integer array; attention needs nothing else about paging</text>
+
+  <!-- ============ physical pool (top-right) ============ -->
+  <text x="640" y="140" font-size="16" font-weight="600" fill="#334155">Physical pool  [num_slots, n_kv, d]  (this layer)</text>
+  <g font-size="12" text-anchor="middle">
+    <!-- block 2 : holds positions 0,1,2,3 (indigo) -->
+    <text x="712" y="166" font-size="12" fill="#475569">block 2</text>
+    <rect x="642" y="176" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="665" y="201" fill="#1e1b4b">p0</text>
+    <rect x="692" y="176" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="715" y="201" fill="#1e1b4b">p1</text>
+    <rect x="742" y="176" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="765" y="201" fill="#1e1b4b">p2</text>
+    <rect x="792" y="176" width="46" height="40" rx="5" fill="#eef2ff" stroke="#3730a3" stroke-width="1.5"/><text x="815" y="201" fill="#1e1b4b">p3</text>
+    <!-- block 3 : free -->
+    <text x="952" y="166" font-size="12" fill="#475569">block 3 (free)</text>
+    <rect x="882" y="176" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="932" y="176" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="982" y="176" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="1032" y="176" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <!-- block 0 : holds positions 4,5 (green) + 2 free -->
+    <text x="712" y="246" font-size="12" fill="#475569">block 0</text>
+    <rect x="642" y="256" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="665" y="281" fill="#064e3b">p4</text>
+    <rect x="692" y="256" width="46" height="40" rx="5" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/><text x="715" y="281" fill="#064e3b">p5</text>
+    <rect x="742" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/><text x="765" y="281" fill="#94a3b8">free</text>
+    <rect x="792" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/><text x="815" y="281" fill="#94a3b8">free</text>
+    <!-- block 1 : free -->
+    <text x="952" y="246" font-size="12" fill="#475569">block 1 (free)</text>
+    <rect x="882" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="932" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="982" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="1032" y="256" width="46" height="40" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  </g>
+  <text x="640" y="326" font-size="13" fill="#94a3b8">block_ids = [2, 0]: scattered, because block 0 was reused after an earlier free</text>
+
+  <!-- gather arrows: slot_mapping -> pool cells -->
+  <path d="M264,194 C420,240 540,205 640,200" fill="none" stroke="#3730a3" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowI)"/>
+  <path d="M320,194 C460,250 560,270 640,278" fill="none" stroke="#047857" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowB)"/>
+
+  <!-- ============ gathered history (dashed = kernel skips) ============ -->
+  <rect x="430" y="366" width="360" height="86" rx="10" fill="#fafafa" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7,5"/>
+  <text x="610" y="396" font-size="15" font-weight="600" fill="#334155" text-anchor="middle">gathered history  [1, n_kv, seq_total, d]</text>
+  <text x="610" y="419" font-size="13" fill="#64748b" text-anchor="middle">oldest token first, repeat_kv to n_q heads</text>
+  <text x="610" y="440" font-size="12.5" fill="#94a3b8" text-anchor="middle">the reference builds this; the Triton kernel will not</text>
+
+  <!-- pool -> gathered history -->
+  <path d="M718,296 C700,325 660,345 640,364" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+
+  <!-- ============ attention -> output ============ -->
+  <rect x="430" y="500" width="360" height="74" rx="10" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="610" y="530" font-size="15" font-weight="600" fill="#1e1b4b" text-anchor="middle">causal softmax  ( q . k&#7488; / sqrt(d) )  .  v</text>
+  <text x="610" y="553" font-size="12.5" fill="#475569" text-anchor="middle">fp32 softmax, query p sees keys 0..p only  -&gt;  out [1, n_q, seq_q, d]</text>
+  <line x1="610" y1="452" x2="610" y2="498" stroke="#3730a3" stroke-width="2" marker-end="url(#arrowI)"/>
+
+  <!-- ============ query input (bottom-left), clean short arrow into attention ============ -->
+  <rect x="70" y="500" width="300" height="74" rx="8" fill="#eef2ff" stroke="#3730a3" stroke-width="2"/>
+  <text x="220" y="530" font-size="15" font-weight="600" fill="#1e1b4b" text-anchor="middle">rotated query q</text>
+  <text x="220" y="553" font-size="13" fill="#475569" text-anchor="middle">[1, n_q, seq_q, d]  this step</text>
+  <line x1="370" y1="537" x2="428" y2="537" stroke="#3730a3" stroke-width="2" marker-end="url(#arrowI)"/>
+
+  <!-- bottom caption -->
+  <text x="70" y="624" font-size="14" fill="#64748b">Read is paged: each token is fetched through its slot. The math is the ordinary attention the model already runs,</text>
+  <text x="70" y="648" font-size="14" fill="#94a3b8">so the output is byte-for-byte a contiguous SDPA. The Triton kernel gets held to exactly this output, to about 1e-3.</text>
+</svg>
