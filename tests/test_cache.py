@@ -579,6 +579,52 @@ def test_paged_cache_rejects_a_real_batch():
         paged.append(0, torch.randn(*shape), torch.randn(*shape))
 
 
+# --- Day 19: the fused read wired into attention ---------------------------
+#
+# Day 16's paged read gathered the whole history back into a contiguous tensor
+# every step so attention could score it, throwing away the point of paging on
+# the read side. Day 19 wires the Day-18 reference into the path: `gqa_attention`
+# now hands a paged cache this step's Q/K/V and takes back the attention output
+# directly, reading through the block table without rebuilding the history. The
+# naive cache is untouched (it has no paged read), so the two backends split at
+# the one duck-typed branch. The observable behaviour cannot change (the fused
+# read is byte-identical to the gather), which every paged equality test above
+# still pins; this one pins the *plumbing*: the model's paged forward calls the
+# fused read once per layer and never the gather.
+
+
+def test_model_paged_forward_uses_the_fused_read_not_the_gather():
+    """A paged forward attends through the fused read, one call per layer, no gather.
+
+    Spy on both cache reads: forwarding over a paged cache must call the fused
+    `paged_attention` exactly once per layer (that is where attention now reads)
+    and never call `append` (the gather-and-reassemble read is off the paged
+    path). A naive cache, which has no `paged_attention`, still takes `append`.
+    """
+    cfg = _tiny_config()
+    model = LlamaModel(cfg, _random_weights(cfg))
+    ids = torch.randint(0, cfg.vocab_size, (1, 5))
+
+    cache = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+    calls = {"fused": 0, "append": 0}
+    real_fused, real_append = cache.paged_attention, cache.append
+
+    def spy_fused(*a, **k):
+        calls["fused"] += 1
+        return real_fused(*a, **k)
+
+    def spy_append(*a, **k):
+        calls["append"] += 1
+        return real_append(*a, **k)
+
+    cache.paged_attention = spy_fused
+    cache.append = spy_append
+
+    model.forward(ids, cache=cache)
+    assert calls["fused"] == cfg.num_hidden_layers  # one fused read per layer
+    assert calls["append"] == 0  # the gather read is gone from the paged path
+
+
 @requires_weights
 def test_paged_greedy_matches_hf_multi_token():
     """Paged greedy decode matches HF token for token: nanoserve-paged == HF.

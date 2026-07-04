@@ -292,3 +292,137 @@ def test_reference_over_paged_cache_matches_naive_history():
     )
     truth = _contiguous_attention(q, naive.k[layer], naive.v[layer], n_rep, d**-0.5)
     assert torch.equal(out, truth)
+
+
+# --- Day 19: the fused read wired into PagedKVCache -------------------------
+#
+# Day 18 built `paged_attention_reference` standing alone: hand it a query, the
+# flat pools, and a slot mapping and it computes attention over the scattered
+# blocks. Day 19 hands the cache the wheel. `PagedKVCache.paged_attention` is the
+# fused read: give it this step's rotated Q/K/V and it writes the K/V into its
+# block pool (exactly as `append` does) and then attends over the whole history
+# through the block table, returning the attention output directly. No contiguous
+# history is ever rebuilt for attention to score against, which is the entire
+# point of the kernel week: the gather-and-reassemble read of Day 16 is gone from
+# the paged path.
+#
+# The contract is again "paging changes nothing observable": the fused read must
+# return exactly what a plain SDPA over the naive contiguous history returns, and
+# it must leave the cache in exactly the state a bare `append` would (same slots
+# written, same seq_len, same pool bytes). Only what it *returns* differs: the
+# attention output instead of the running K/V.
+
+
+def test_fused_read_matches_naive_gather_across_prefill_and_decode():
+    """The headline: the fused paged read equals a contiguous SDPA, every step.
+
+    Drive a paged and a naive cache with identical K/V across a prefill and two
+    decode steps, over every layer, the way the model does. At each (step, layer)
+    a fresh query attends through the fused read, and the truth is a plain SDPA
+    over the K/V the naive cache hands back. `torch.equal`, not `allclose`: the
+    fused read scatters and gathers by exact index and runs the identical causal
+    fp32 softmax, so the numbers are the same, not merely close.
+    """
+    cfg = _tiny_config()
+    n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
+    n_rep = cfg.num_kv_groups
+
+    alloc = BlockAllocator(num_blocks=8, block_size=4)
+    paged = PagedKVCache(cfg, alloc)
+    naive = NaiveKVCache(cfg.num_hidden_layers)
+
+    torch.manual_seed(7)
+    for new_seq in (5, 1, 1):  # prefill 5, then two decode steps
+        for layer in range(cfg.num_hidden_layers):
+            k = torch.randn(1, n_kv, new_seq, d)
+            v = torch.randn(1, n_kv, new_seq, d)
+            q = torch.randn(1, n_q, new_seq, d)
+
+            fused = paged.paged_attention(layer, k, v, q, n_rep)
+            full_k, full_v = naive.append(layer, k, v)
+            truth = _contiguous_attention(q, full_k, full_v, n_rep, d**-0.5)
+
+            assert fused.shape == (1, n_q, new_seq, d)
+            assert torch.equal(fused, truth)
+
+
+def test_fused_read_stores_exactly_what_append_would():
+    """The fused read and `append` differ only in what they return, not what they store.
+
+    Run two identical caches side by side, one through `paged_attention`, one
+    through `append`, with the same K/V. Their block tables and per-layer pools
+    must end byte-for-byte identical: the fused read is `append`'s write plus a
+    paged attention read, so the stored state cannot diverge. Only the return
+    value differs (the attention output vs the running K/V).
+    """
+    cfg = _tiny_config()
+    n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
+    n_rep = cfg.num_kv_groups
+
+    fused_cache = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+    append_cache = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+
+    torch.manual_seed(8)
+    for new_seq in (4, 1, 1):
+        for layer in range(cfg.num_hidden_layers):
+            k = torch.randn(1, n_kv, new_seq, d)
+            v = torch.randn(1, n_kv, new_seq, d)
+            q = torch.randn(1, n_q, new_seq, d)
+            fused_cache.paged_attention(layer, k, v, q, n_rep)
+            append_cache.append(layer, k, v)
+
+    assert fused_cache.seq_len == append_cache.seq_len
+    assert fused_cache.table.block_ids == append_cache.table.block_ids
+    for layer in range(cfg.num_hidden_layers):
+        assert torch.equal(fused_cache.k_pool[layer], append_cache.k_pool[layer])
+        assert torch.equal(fused_cache.v_pool[layer], append_cache.v_pool[layer])
+
+
+def test_fused_read_over_physically_scattered_blocks():
+    """The fused read matches the contiguous truth even when blocks are scattered.
+
+    Pre-fragment the pool so the sequence lands on non-contiguous physical blocks,
+    then drive the fused read and a naive twin with identical K/V. The output still
+    equals the contiguous SDPA: paging moved where the K/V live, not what attention
+    computes, all the way through the cache method now, not just the bare reference.
+    """
+    cfg = _tiny_config()
+    n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
+    n_rep = cfg.num_kv_groups
+
+    alloc = BlockAllocator(num_blocks=8, block_size=4)
+    # Fragment: reserve and free two tables so the next allocation reuses blocks
+    # out of order (LIFO), scattering the sequence across the pool.
+    warm = BlockTable(alloc)
+    warm.append(8)
+    warm.free()
+    paged = PagedKVCache(cfg, alloc)
+    naive = NaiveKVCache(cfg.num_hidden_layers)
+
+    torch.manual_seed(9)
+    for new_seq in (6, 1, 1, 1):
+        for layer in range(cfg.num_hidden_layers):
+            k = torch.randn(1, n_kv, new_seq, d)
+            v = torch.randn(1, n_kv, new_seq, d)
+            q = torch.randn(1, n_q, new_seq, d)
+            fused = paged.paged_attention(layer, k, v, q, n_rep)
+            full_k, full_v = naive.append(layer, k, v)
+            truth = _contiguous_attention(q, full_k, full_v, n_rep, d**-0.5)
+            assert torch.equal(fused, truth)
+
+    assert paged.table.block_ids != sorted(paged.table.block_ids)  # genuinely scattered
+
+
+def test_fused_read_rejects_a_real_batch():
+    """One sequence per cache until Phase 3, same guard the append write enforces."""
+    cfg = _tiny_config()
+    n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
+    paged = PagedKVCache(cfg, BlockAllocator(num_blocks=4, block_size=4))
+    k = torch.randn(2, n_kv, 1, d)
+    v = torch.randn(2, n_kv, 1, d)
+    q = torch.randn(2, n_q, 1, d)
+    try:
+        paged.paged_attention(0, k, v, q, cfg.num_kv_groups)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for batch > 1")

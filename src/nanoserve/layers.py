@@ -323,10 +323,22 @@ def gqa_attention(
     # for where it actually sits in the sequence.
     q, k = apply_rotary(q, k, cos, sin)
 
-    # The cache stores the *compact* 8-head K/V (pre-repeat) and hands back the
-    # whole history. Append before the GQA repeat so the repeat stays a read-time
-    # view and the cache never holds the 32-head blow-up.
+    # The cache stores the *compact* 8-head K/V (pre-repeat); the GQA repeat stays
+    # a read-time view so the cache never holds the 32-head blow-up. A paged cache
+    # offers a *fused* read: hand it this step's rotated Q/K/V and it writes the K/V
+    # into its block pool and attends directly over the scattered blocks (the
+    # Day-18 reference), returning the attention output without ever rebuilding the
+    # contiguous history. That is the whole point of Week 6, so the paged path stops
+    # here and skips the local mask/softmax below. A naive cache has no paged read,
+    # so it falls through: hand back the full history and score it here, exactly as
+    # before. Duck-typed on the method name so layers.py stays decoupled from the
+    # cache classes, just as the `cache.append` call already is.
     if cache is not None:
+        paged_read = getattr(cache, "paged_attention", None)
+        if paged_read is not None:
+            attended = paged_read(layer_idx, k, v, q, config.num_kv_groups)
+            out = attended.transpose(1, 2).reshape(batch, seq, n_q * d)
+            return F.linear(out, o_weight)
         k, v = cache.append(layer_idx, k, v)
 
     # Grow 8 KV heads to 32 so every query head has a partner.

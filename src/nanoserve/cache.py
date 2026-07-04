@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import torch
 
+from .kernels.paged_attention import paged_attention_reference
+
 
 class NaiveKVCache:
     """Week 3: contiguous per-layer K/V store that grows by concatenation.
@@ -294,10 +296,13 @@ class PagedKVCache:
     pool at once, exactly as it does in vLLM. The table is grown once per step, on
     the first layer's append, and the other layers reuse the slots it computed.
 
-    Week 6 replaces the gather-and-reassemble read below with a Triton kernel that
-    attends directly over the scattered blocks; here the read rebuilds the
-    contiguous history so the output is verifiably identical to the naive path
-    first, before any kernel is trusted.
+    Two reads live here. `append` is the Day-16 gather: rebuild the contiguous
+    history so the output is verifiably identical to the naive path, the reference
+    the tests still compare against. `paged_attention` is the Week-6 fused read: it
+    attends directly over the scattered blocks through the Day-18 reference and
+    hands `gqa_attention` the attention output, never rebuilding the history. The
+    model runs on the fused read now; a Triton kernel later slots in behind the same
+    signature, held to `paged_attention_reference`.
     """
 
     def __init__(self, config, allocator: BlockAllocator):
@@ -326,10 +331,8 @@ class PagedKVCache:
             [self.table.slot(p) for p in positions], dtype=torch.long, device=device
         )
 
-    def append(
-        self, layer: int, k: torch.Tensor, v: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Store this step's K/V for `layer` and return the full running K/V.
+    def _write(self, layer: int, k: torch.Tensor, v: torch.Tensor) -> None:
+        """Store this step's K/V for `layer` into the block pool. No read.
 
         k, v: [1, num_kv_heads, new_seq, head_dim]. `new_seq` is the prompt length
               on prefill and 1 on a decode step. Batch is 1: one sequence per cache
@@ -337,11 +340,11 @@ class PagedKVCache:
 
         On the first layer of a step the shared table grows by `new_seq` (pulling
         physical blocks only when a token crosses a block boundary, raising
-        `KVCacheExhausted` atomically if the pool is dry), and the slots for the
-        new tokens are recorded. Every layer then scatters its `new_seq` K/V into
-        those slots in its own pool and gathers the whole history (positions
-        `0..seq_len-1`) back into a contiguous `[1, num_kv_heads, seq, head_dim]`,
-        oldest token first, exactly the tensor `NaiveKVCache.append` returns.
+        `KVCacheExhausted` atomically if the pool is dry), and the slots for the new
+        tokens are recorded. Every layer then scatters its `new_seq` K/V into those
+        slots in its own pool. This is the write half both reads share: `append`
+        gathers the contiguous history after it, `paged_attention` attends over the
+        scattered blocks after it. The cache ends in the identical state either way.
         """
         if k.shape[0] != 1:
             raise ValueError(
@@ -365,11 +368,59 @@ class PagedKVCache:
         self.k_pool[layer][self._step_slots] = k[0].transpose(0, 1)
         self.v_pool[layer][self._step_slots] = v[0].transpose(0, 1)
 
+    def append(
+        self, layer: int, k: torch.Tensor, v: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Store this step's K/V for `layer` and return the full running K/V.
+
+        The gather read: write the K/V (see `_write`), then reassemble the whole
+        history (positions `0..seq_len-1`) into a contiguous
+        `[1, num_kv_heads, seq, head_dim]`, oldest token first, exactly the tensor
+        `NaiveKVCache.append` returns. This is the Day-16 drop-in that let the paged
+        cache prove itself equal to the naive one before any kernel existed. Week 6
+        moves the model onto `paged_attention` below, which never rebuilds this
+        contiguous buffer; `append` stays as the reference read the tests compare to.
+        """
+        self._write(layer, k, v)
         # Gather the full history back, oldest first, into [1, n_kv, seq, d].
         hist = self._slots_for(range(self.table.num_tokens), k.device)
         full_k = self.k_pool[layer][hist].transpose(0, 1)[None]
         full_v = self.v_pool[layer][hist].transpose(0, 1)[None]
         return full_k, full_v
+
+    def paged_attention(
+        self,
+        layer: int,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        q: torch.Tensor,
+        n_rep: int,
+        scale: float | None = None,
+    ) -> torch.Tensor:
+        """The fused read: store this step's K/V and attend over the block table.
+
+        This is Week 6's payoff wired into the cache. Rather than hand attention the
+        contiguous history to score itself (`append`), the cache does the read: it
+        writes the K/V (see `_write`), then runs `paged_attention_reference` over its
+        own scattered pool, reading each past token through its slot and never
+        rebuilding the contiguous buffer. `gqa_attention` calls this and takes the
+        attention output straight back.
+
+        k, v: [1, num_kv_heads, new_seq, head_dim] this step's compact K/V.
+        q:    [1, num_attention_heads, new_seq, head_dim] this step's rotated query.
+        n_rep: GQA repeat factor (`config.num_kv_groups`).
+        scale: softmax scale; defaults to `head_dim ** -0.5`, matching `gqa_attention`.
+
+        Returns [1, num_attention_heads, new_seq, head_dim], the attention output
+        before o_proj, byte-identical to a contiguous SDPA over the same K/V. The
+        pool and table are left exactly as `append` would leave them; only the
+        return value differs.
+        """
+        self._write(layer, k, v)
+        slot_mapping = self._slots_for(range(self.table.num_tokens), q.device)
+        return paged_attention_reference(
+            q, self.k_pool[layer], self.v_pool[layer], slot_mapping, n_rep, scale
+        )
 
     def free(self) -> None:
         """Return every block to the pool and reset to an empty, reusable cache."""
