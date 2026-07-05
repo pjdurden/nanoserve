@@ -1,0 +1,6 @@
+history_len,gather_min_ms,gather_median_ms,fused_min_ms,fused_median_ms,speedup,faster
+16,0.1317,0.1378,0.136,0.1402,0.968,gather
+64,0.2001,0.2101,0.2009,0.2079,0.996,gather
+256,0.4542,0.5155,0.5484,1.4277,0.828,gather
+1024,6.0218,8.1655,7.9131,8.1869,0.761,gather
+4096,32.4292,32.8542,32.3144,32.93,1.004,fused

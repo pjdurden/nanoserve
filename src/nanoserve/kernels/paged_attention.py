@@ -103,4 +103,6 @@ def paged_attention_reference(
 
 
 # TODO(week6): triton.jit kernel for paged attention (held to the reference above)
-# TODO(week6): microbenchmark kernel vs the gather-and-reassemble torch path
+# Day 20 microbenchmarked the gather vs the fused read (readbench.py): both are
+# torch and O(history), so they tie; the CPU cost curve there is the target the
+# kernel has to beat, benchmarked with the same harness once it lands.
