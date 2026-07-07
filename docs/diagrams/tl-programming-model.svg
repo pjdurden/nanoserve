@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">The Triton programming model, on the CPU</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">The paged read, pool[slot_mapping], rewritten as a grid of programs. Each program owns a tile of positions and gathers</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">its K/V through masked tl.load / tl.store. The mask keeps the ragged last tile in bounds. seq_total=10, block=4, 3 programs.</text>
+
+  <!-- ================= COLUMN A: the launch grid (SPMD) ================= -->
+  <text x="50" y="150" font-size="17" font-weight="700" fill="#0f172a">1. launch grid</text>
+  <text x="50" y="170" font-size="13" fill="#64748b">cdiv(10,4) = 3 programs</text>
+
+  <rect x="50" y="188" width="150" height="52" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="125" y="210" font-size="15" font-weight="700" fill="#4338ca" text-anchor="middle">program 0</text>
+  <text x="125" y="230" font-size="13" fill="#334155" text-anchor="middle">rows 0..3</text>
+
+  <rect x="50" y="250" width="150" height="52" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="125" y="272" font-size="15" font-weight="700" fill="#4338ca" text-anchor="middle">program 1</text>
+  <text x="125" y="292" font-size="13" fill="#334155" text-anchor="middle">rows 4..7</text>
+
+  <rect x="50" y="312" width="150" height="52" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="125" y="334" font-size="15" font-weight="700" fill="#b45309" text-anchor="middle">program 2</text>
+  <text x="125" y="354" font-size="13" fill="#334155" text-anchor="middle">rows 8,9,[10],[11]</text>
+
+  <text x="50" y="392" font-size="13" fill="#94a3b8">same body, only</text>
+  <text x="50" y="410" font-size="13" fill="#94a3b8">program_id differs</text>
+
+  <!-- arrow A -> B (program 2 into its tile) -->
+  <path d="M204 338 L246 290" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= COLUMN B: one program's masked tile ================= -->
+  <text x="252" y="150" font-size="17" font-weight="700" fill="#0f172a">2. masked tile</text>
+  <text x="252" y="170" font-size="13" fill="#64748b">rows = pid*block + arange</text>
+
+  <rect x="252" y="188" width="140" height="40" rx="6" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="322" y="213" font-size="14" fill="#166534" text-anchor="middle">pos 8   mask T</text>
+  <rect x="252" y="236" width="140" height="40" rx="6" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="322" y="261" font-size="14" fill="#166534" text-anchor="middle">pos 9   mask T</text>
+  <rect x="252" y="284" width="140" height="40" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="5,4"/>
+  <text x="322" y="309" font-size="14" fill="#94a3b8" text-anchor="middle">pos 10  mask F</text>
+  <rect x="252" y="332" width="140" height="40" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="5,4"/>
+  <text x="322" y="357" font-size="14" fill="#94a3b8" text-anchor="middle">pos 11  mask F</text>
+
+  <text x="252" y="392" font-size="13" fill="#94a3b8">mask = rows &lt; 10</text>
+  <text x="252" y="410" font-size="13" fill="#94a3b8">F lanes read other=0, no fault</text>
+
+  <!-- slot arrows B -> C -->
+  <path d="M394 208 L448 224" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#arrowg)"/>
+  <path d="M394 256 L448 300" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#arrowg)"/>
+
+  <!-- ================= COLUMN C: the scattered pool ================= -->
+  <text x="458" y="150" font-size="17" font-weight="700" fill="#0f172a">3. tl.load pool</text>
+  <text x="458" y="170" font-size="13" fill="#64748b">slot = slot_mapping[pos]</text>
+
+  <g font-size="12" text-anchor="middle">
+    <rect x="458" y="188" width="150" height="26" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="206" fill="#94a3b8">slot 0</text>
+    <rect x="458" y="214" width="150" height="26" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="533" y="232" fill="#166534">slot for pos 8</text>
+    <rect x="458" y="240" width="150" height="26" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="258" fill="#94a3b8">slot 2</text>
+    <rect x="458" y="266" width="150" height="26" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="284" fill="#94a3b8">slot 3</text>
+    <rect x="458" y="292" width="150" height="26" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="533" y="310" fill="#166534">slot for pos 9</text>
+    <rect x="458" y="318" width="150" height="26" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="336" fill="#94a3b8">slot 5 ...</text>
+  </g>
+  <text x="458" y="392" font-size="13" fill="#94a3b8">flat K/V pool,</text>
+  <text x="458" y="410" font-size="13" fill="#94a3b8">blocks scattered</text>
+
+  <!-- arrow C -> D -->
+  <path d="M612 266 L664 266" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= COLUMN D: the assembled history ================= -->
+  <text x="674" y="150" font-size="17" font-weight="700" fill="#0f172a">4. tl.store out</text>
+  <text x="674" y="170" font-size="13" fill="#64748b">ordered history, oldest first</text>
+
+  <g font-size="12" text-anchor="middle">
+    <rect x="674" y="188" width="150" height="24" fill="#eef2ff" stroke="#c7d2fe"/><text x="749" y="205" fill="#4338ca">pos 0 K/V</text>
+    <rect x="674" y="212" width="150" height="24" fill="#eef2ff" stroke="#c7d2fe"/><text x="749" y="229" fill="#4338ca">pos 1 K/V</text>
+    <rect x="674" y="236" width="150" height="24" fill="#eef2ff" stroke="#c7d2fe"/><text x="749" y="253" fill="#4338ca">...</text>
+    <rect x="674" y="260" width="150" height="24" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="749" y="277" fill="#166534">pos 8 K/V</text>
+    <rect x="674" y="284" width="150" height="24" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="749" y="301" fill="#166534">pos 9 K/V</text>
+  </g>
+  <text x="674" y="392" font-size="13" fill="#94a3b8">[seq_total, n_kv, d],</text>
+  <text x="674" y="410" font-size="13" fill="#94a3b8">no masked row written</text>
+
+  <!-- arrow D -> E -->
+  <path d="M828 272 L876 272" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= softmax box ================= -->
+  <rect x="886" y="224" width="264" height="96" rx="10" fill="#1e1b4b"/>
+  <text x="1018" y="256" font-size="17" font-weight="700" fill="#ffffff" text-anchor="middle">paged_attention</text>
+  <text x="1018" y="278" font-size="17" font-weight="700" fill="#ffffff" text-anchor="middle">_reference</text>
+  <text x="1018" y="302" font-size="12.5" fill="#c7d2fe" text-anchor="middle">repeat_kv · causal · fp32 softmax</text>
+  <text x="1018" y="352" font-size="13" fill="#94a3b8" text-anchor="middle">the unchanged Day-18 math</text>
+
+  <!-- ================= bottom takeaway bar ================= -->
+  <rect x="50" y="466" width="1100" height="158" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="76" y="502" font-size="19" font-weight="700" fill="#1e1b4b">Why model it on the CPU first</text>
+  <text x="76" y="538" font-size="15" fill="#334155"><tspan font-weight="700">Correct:</tspan> paged_gather is byte-equal to pool[slot_mapping] for every block size, tail and all, and feeds the exact reference softmax.</text>
+  <text x="76" y="568" font-size="15" fill="#334155"><tspan font-weight="700">Understood:</tspan> program_id owns a tile, arange builds the offsets, the mask keeps the ragged tail from walking off the pool.</text>
+  <text x="76" y="598" font-size="15" fill="#334155"><tspan font-weight="700">Honest:</tspan> this is slow, a masked where-gather models the loop, not the speed. Next week the same loop becomes a triton.jit kernel on the GPU.</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#15803d"/>
+    </marker>
+  </defs>
+</svg>
