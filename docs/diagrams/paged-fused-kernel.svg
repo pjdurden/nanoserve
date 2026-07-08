@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">The fused paged-attention kernel, on the CPU</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">The read, the score, and the softmax folded into one streaming loop. One program owns a query position and walks the</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">history a tile at a time, folding each into an online softmax. The full history is never assembled. seq_total=10, block=4.</text>
+
+  <!-- ================= COLUMN A: one program (one query position) ================= -->
+  <text x="50" y="150" font-size="17" font-weight="700" fill="#0f172a">1. one program</text>
+  <text x="50" y="170" font-size="13" fill="#64748b">owns query position i</text>
+
+  <rect x="50" y="188" width="150" height="86" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="125" y="214" font-size="15" font-weight="700" fill="#4338ca" text-anchor="middle">query i</text>
+  <text x="125" y="238" font-size="13" fill="#334155" text-anchor="middle">sees keys</text>
+  <text x="125" y="258" font-size="13" fill="#334155" text-anchor="middle">0 .. past+i</text>
+
+  <text x="50" y="304" font-size="13" fill="#94a3b8">kv_len = past+i+1</text>
+  <text x="50" y="322" font-size="13" fill="#94a3b8">streams the tiles below</text>
+
+  <!-- arrow A -> B -->
+  <path d="M204 232 L246 232" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= COLUMN B: the streamed tiles ================= -->
+  <text x="252" y="150" font-size="17" font-weight="700" fill="#0f172a">2. stream tiles</text>
+  <text x="252" y="170" font-size="13" fill="#64748b">block of keys per step</text>
+
+  <rect x="252" y="188" width="140" height="34" rx="6" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="322" y="210" font-size="13" fill="#166534" text-anchor="middle">tile 0  pos 0..3</text>
+  <rect x="252" y="228" width="140" height="34" rx="6" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="322" y="250" font-size="13" fill="#166534" text-anchor="middle">tile 1  pos 4..7</text>
+  <rect x="252" y="268" width="140" height="34" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="322" y="290" font-size="13" fill="#b45309" text-anchor="middle">tile 2  pos 8,9,[10],[11]</text>
+
+  <text x="252" y="330" font-size="13" fill="#94a3b8">tail masked to -inf:</text>
+  <text x="252" y="348" font-size="13" fill="#94a3b8">out of bounds AND out</text>
+  <text x="252" y="366" font-size="13" fill="#94a3b8">of the softmax</text>
+
+  <!-- masked load arrows B -> C -->
+  <path d="M394 205 L448 224" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#arrowg)"/>
+  <path d="M394 285 L448 296" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#arrowg)"/>
+
+  <!-- ================= COLUMN C: the scattered pool, masked load ================= -->
+  <text x="458" y="150" font-size="17" font-weight="700" fill="#0f172a">3. masked load</text>
+  <text x="458" y="170" font-size="13" fill="#64748b">slot = slot_mapping[pos]</text>
+
+  <g font-size="12" text-anchor="middle">
+    <rect x="458" y="188" width="150" height="24" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="205" fill="#94a3b8">slot 0</text>
+    <rect x="458" y="212" width="150" height="24" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="533" y="229" fill="#166534">slot for pos 8</text>
+    <rect x="458" y="236" width="150" height="24" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="253" fill="#94a3b8">slot 2</text>
+    <rect x="458" y="260" width="150" height="24" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="277" fill="#94a3b8">slot 3</text>
+    <rect x="458" y="284" width="150" height="24" fill="#dcfce7" stroke="#15803d" stroke-width="2"/><text x="533" y="301" fill="#166534">slot for pos 9</text>
+    <rect x="458" y="308" width="150" height="24" fill="#f8fafc" stroke="#e2e8f0"/><text x="533" y="325" fill="#94a3b8">slot 5 ...</text>
+  </g>
+  <text x="458" y="356" font-size="13" fill="#94a3b8">flat K/V pool,</text>
+  <text x="458" y="374" font-size="13" fill="#94a3b8">blocks scattered</text>
+
+  <!-- arrow C -> D (each tile folds in) -->
+  <path d="M612 256 L664 256" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= COLUMN D: the online-softmax accumulators ================= -->
+  <text x="674" y="150" font-size="17" font-weight="700" fill="#0f172a">4. fold: online softmax</text>
+  <text x="674" y="170" font-size="13" fill="#64748b">constant size, never the whole row</text>
+
+  <rect x="674" y="188" width="330" height="40" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="690" y="213" font-size="14" fill="#3730a3"><tspan font-weight="700">m</tspan>   running max over keys seen</text>
+  <rect x="674" y="232" width="330" height="40" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="690" y="257" font-size="14" fill="#3730a3"><tspan font-weight="700">denom</tspan>   running normalizer</text>
+  <rect x="674" y="276" width="330" height="40" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="690" y="301" font-size="14" fill="#3730a3"><tspan font-weight="700">acc</tspan>   running weighted-V sum</text>
+
+  <text x="674" y="346" font-size="13" fill="#334155">each tile pushes m up, so rescale the old state by</text>
+  <text x="674" y="366" font-size="13.5" font-weight="700" fill="#b45309">alpha = exp(m_old - m_new)  then add the tile in</text>
+
+  <!-- loop-back arrow: next tile folds into the same accumulators -->
+  <path d="M839 316 C 839 344, 700 344, 700 320" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)" stroke-dasharray="5,4"/>
+
+  <!-- arrow D -> out -->
+  <path d="M1004 232 L1044 232" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ================= output box ================= -->
+  <rect x="1050" y="196" width="120" height="72" rx="10" fill="#1e1b4b"/>
+  <text x="1110" y="226" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">out =</text>
+  <text x="1110" y="248" font-size="14" fill="#c7d2fe" text-anchor="middle">acc / denom</text>
+
+  <!-- ================= bottom takeaway bar ================= -->
+  <rect x="50" y="466" width="1100" height="158" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="76" y="502" font-size="19" font-weight="700" fill="#1e1b4b">Why fuse the read into the softmax</text>
+  <text x="76" y="538" font-size="15" fill="#334155"><tspan font-weight="700">Streamed:</tspan> peak state is one tile plus the accumulators, the full [kv_len, n_kv, d] history is never assembled, which is the point of paging.</text>
+  <text x="76" y="568" font-size="15" fill="#334155"><tspan font-weight="700">Correct:</tspan> the online rescale makes streaming the softmax equal to one big softmax, matched to the Day-18 reference to a few ulps.</text>
+  <text x="76" y="598" font-size="15" fill="#334155"><tspan font-weight="700">Understood:</tspan> this is the exact loop the triton.jit kernel runs, pinned to the oracle on the CPU first. Next week it streams from HBM to SRAM.</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#15803d"/>
+    </marker>
+  </defs>
+</svg>

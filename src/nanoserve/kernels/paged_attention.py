@@ -28,6 +28,7 @@ from __future__ import annotations
 import torch
 
 from ..layers import repeat_kv
+from .tlsim import arange, cdiv, launch, load, store
 
 
 def paged_attention_reference(
@@ -102,7 +103,109 @@ def paged_attention_reference(
     return torch.matmul(weights, v)
 
 
-# TODO(week6): triton.jit kernel for paged attention (held to the reference above)
-# Day 20 microbenchmarked the gather vs the fused read (readbench.py): both are
-# torch and O(history), so they tie; the CPU cost curve there is the target the
-# kernel has to beat, benchmarked with the same harness once it lands.
+def paged_attention_kernel(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+    block: int = 32,
+) -> torch.Tensor:
+    """The fused paged attention, modeled on the CPU as a grid of tlsim programs.
+
+    Same inputs and same output as `paged_attention_reference`, but the read, the
+    score, and the softmax are folded into one streaming loop rather than a gather
+    followed by a contiguous softmax. This is the loop next week's `triton.jit`
+    kernel runs; here it is expressed on the Day-21 tlsim primitives so it can be
+    written and pinned to the oracle on a box with no GPU.
+
+    q, k_pool, v_pool, slot_mapping, n_rep, scale: exactly as in
+    `paged_attention_reference` (one sequence, batch 1). `slot_mapping[p]` is the
+    flat pool slot of logical position p, oldest first, over the whole history.
+    block:   how many keys one program folds in per step. A pure performance knob
+             (SRAM tile size on hardware); any value returns the same attention.
+
+    Returns [1, n_q, seq_q, d], matching the reference to a few ulps. It is not
+    bit-identical because the online softmax reassociates the exponent sums, the
+    same accuracy trade every flash-attention kernel makes.
+
+    The point paging exists for is honored here and not in the reference: the full
+    `[kv_len, n_kv, d]` history is never assembled. One program owns one query
+    position and walks the history a `block` of keys at a time, reading each tile
+    through the block table with a masked `load`, so peak state is a single tile
+    plus the per-head accumulators, not the whole past.
+    """
+    if q.shape[0] != 1:
+        raise ValueError(
+            "paged_attention_kernel handles one sequence; batch must be 1 "
+            "(per-sequence batching arrives in Phase 3)"
+        )
+    n_q = q.shape[1]
+    seq_q = q.shape[2]
+    d = q.shape[3]
+    if scale is None:
+        scale = d**-0.5
+
+    num_slots, n_kv, _ = k_pool.shape
+    channels = n_kv * d
+    seq_total = int(slot_mapping.shape[0])
+    past = seq_total - seq_q  # tokens already in the cache before this step's queries
+
+    # Flatten the pools to the 1-D buffers tlsim addresses; a token's K/V is
+    # `channels` contiguous elements at `slot * channels`.
+    slots = slot_mapping.to(torch.long)
+    k_flat = k_pool.reshape(num_slots * channels)
+    v_flat = v_pool.reshape(num_slots * channels)
+    q_rows = q[0].transpose(0, 1).to(torch.float32)  # [seq_q, n_q, d], query per position
+    head_kv = torch.arange(n_q, dtype=torch.long) // n_rep  # query head -> its KV head (GQA)
+    cols = arange(0, channels)  # the channel ramp inside one token
+    lane = arange(0, n_q * d)  # the output lanes of one query position
+
+    out_flat = torch.zeros(seq_q * n_q * d, dtype=q.dtype)
+
+    def kernel(prog, s_buf, k_buf, v_buf, dst) -> None:
+        # This program owns query position i (absolute position past+i). Causal:
+        # it may see keys 0..past+i, i.e. the first `kv_len` of the history.
+        i = prog.program_id(0)
+        qi = q_rows[i]  # [n_q, d]
+        kv_len = past + i + 1
+        # Online-softmax state, per query head: running max, denominator, and
+        # weighted-V sum. These are the registers/SRAM a flash kernel keeps; the
+        # history streams past them and is never held whole.
+        m = torch.full((n_q,), float("-inf"))
+        denom = torch.zeros(n_q)
+        acc = torch.zeros(n_q, d)
+        for b in range(cdiv(kv_len, block)):
+            rows = b * block + arange(0, block)  # the key positions in this tile
+            valid = rows < kv_len  # in-history and causally visible; guards the tail
+            row_slots = load(s_buf, rows, mask=valid, other=0)  # each key's physical slot
+            ptr = row_slots[:, None] * channels + cols[None, :]  # [block, channels]
+            k_tile = load(k_buf, ptr, mask=valid[:, None], other=0.0).reshape(block, n_kv, d)
+            v_tile = load(v_buf, ptr, mask=valid[:, None], other=0.0).reshape(block, n_kv, d)
+            # Grow the compact KV heads to the query-head count (GQA), then score.
+            k_exp = k_tile[:, head_kv, :].to(torch.float32)  # [block, n_q, d]
+            v_exp = v_tile[:, head_kv, :].to(torch.float32)
+            s = scale * torch.einsum("qd,jqd->qj", qi, k_exp)  # [n_q, block]
+            # Masked-off keys score -inf so their weight is exactly zero (a masked
+            # load returned zeros, which would otherwise score a spurious 0, not -inf).
+            s = torch.where(valid[None, :], s, torch.full_like(s, float("-inf")))
+            # Fold this tile into the accumulators: renormalize the running state to
+            # the new max, then add the tile's contribution. Never holds the whole row.
+            m_new = torch.maximum(m, s.max(dim=1).values)
+            alpha = torch.exp(m - m_new)  # rescale factor for the old state
+            p = torch.exp(s - m_new[:, None])  # [n_q, block] tile weights (unnormalized)
+            denom = denom * alpha + p.sum(dim=1)
+            acc = acc * alpha[:, None] + torch.einsum("qj,jqd->qd", p, v_exp)
+            m = m_new
+        out_i = (acc / denom[:, None]).to(q.dtype).reshape(-1)  # [n_q*d]
+        store(dst, i * (n_q * d) + lane, out_i)
+
+    launch(seq_q, kernel, slots, k_flat, v_flat, out_flat)
+    return out_flat.reshape(seq_q, n_q, d).transpose(0, 1)[None]  # [1, n_q, seq_q, d]
+
+
+# TODO(week6): translate `paged_attention_kernel` to a real `triton.jit` kernel and
+# run it gated on a GPU, held to the reference above and benchmarked against the
+# Day-20 curve with the same `readbench` harness. The loop is understood and pinned;
+# the GPU version is a transcription of it, streaming tiles from HBM into SRAM.
