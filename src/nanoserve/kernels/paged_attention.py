@@ -205,7 +205,9 @@ def paged_attention_kernel(
     return out_flat.reshape(seq_q, n_q, d).transpose(0, 1)[None]  # [1, n_q, seq_q, d]
 
 
-# TODO(week6): translate `paged_attention_kernel` to a real `triton.jit` kernel and
-# run it gated on a GPU, held to the reference above and benchmarked against the
-# Day-20 curve with the same `readbench` harness. The loop is understood and pinned;
-# the GPU version is a transcription of it, streaming tiles from HBM into SRAM.
+# Day 23 translated this loop into a real `triton.jit` kernel in
+# `.triton_paged_attention`, held to the reference above by tests gated on a GPU. Call
+# `triton_paged_attention.paged_attention` for the dispatching entry point: it launches
+# the kernel on CUDA and falls back to `paged_attention_kernel` here everywhere else.
+# TODO(week6): benchmark the kernel against the Day-20 curve with the `readbench`
+# harness, then wire the dispatcher into `gqa_attention`'s paged read.

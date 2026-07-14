@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">The real triton.jit paged-attention kernel</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">The same fused loop at two altitudes. The CPU model loops its heads in Python; the kernel makes the head a grid axis, pads</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">every block shape to a power of two and masks it back down, and streams its tiles from HBM into SRAM.</text>
+
+  <!-- ================= LEFT: the Day-22 CPU model ================= -->
+  <text x="50" y="152" font-size="17" font-weight="700" fill="#0f172a">Day 22: the tlsim model</text>
+  <text x="50" y="172" font-size="13" fill="#64748b">a Python for loop, on the CPU</text>
+
+  <rect x="50" y="190" width="440" height="230" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+
+  <rect x="74" y="214" width="170" height="60" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="159" y="238" font-size="14" font-weight="700" fill="#4338ca" text-anchor="middle">program i</text>
+  <text x="159" y="259" font-size="12" fill="#334155" text-anchor="middle">owns query position i</text>
+
+  <rect x="74" y="288" width="170" height="60" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="159" y="312" font-size="14" font-weight="700" fill="#b45309" text-anchor="middle">for h in heads:</text>
+  <text x="159" y="333" font-size="12" fill="#334155" text-anchor="middle">a loop is a loop</text>
+
+  <rect x="272" y="214" width="194" height="134" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="369" y="238" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">accumulators</text>
+  <text x="369" y="266" font-size="13" fill="#334155" text-anchor="middle">m     [n_q]</text>
+  <text x="369" y="288" font-size="13" fill="#334155" text-anchor="middle">denom [n_q]</text>
+  <text x="369" y="310" font-size="13" fill="#334155" text-anchor="middle">acc   [n_q, d]</text>
+  <text x="369" y="336" font-size="12" fill="#94a3b8" text-anchor="middle">a torch tensor, in RAM</text>
+
+  <text x="74" y="382" font-size="13" fill="#64748b">Correct, pinned to the Day-18 oracle,</text>
+  <text x="74" y="402" font-size="13" fill="#64748b">and slow. It stays the reference.</text>
+
+  <!-- transcription arrow -->
+  <path d="M500 300 L560 300" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <text x="530" y="288" font-size="12" fill="#64748b" text-anchor="middle">transcribe</text>
+
+  <!-- ================= RIGHT: the jitted kernel ================= -->
+  <text x="580" y="152" font-size="17" font-weight="700" fill="#0f172a">Day 23: the jitted kernel</text>
+  <text x="580" y="172" font-size="13" fill="#64748b">a 2-D grid, on the card</text>
+
+  <rect x="580" y="190" width="570" height="230" rx="10" fill="#f8fafc" stroke="#4338ca" stroke-width="2"/>
+
+  <text x="604" y="214" font-size="13" font-weight="700" fill="#0f172a">grid = (seq_q, n_q)</text>
+
+  <!-- grid of programs -->
+  <rect x="604" y="228" width="74" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="641" y="250" font-size="12" fill="#4338ca" text-anchor="middle">(0, 0)</text>
+  <rect x="686" y="228" width="74" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="723" y="250" font-size="12" fill="#4338ca" text-anchor="middle">(0, 1)</text>
+  <rect x="768" y="228" width="74" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="805" y="250" font-size="12" fill="#4338ca" text-anchor="middle">(1, 0)</text>
+  <rect x="850" y="228" width="74" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="887" y="250" font-size="12" fill="#4338ca" text-anchor="middle">(1, 1)</text>
+  <text x="950" y="250" font-size="13" fill="#94a3b8">all in parallel</text>
+
+  <text x="604" y="288" font-size="13" fill="#334155">program (i, h): one query, one head, one softmax, nothing shared</text>
+
+  <rect x="604" y="302" width="240" height="94" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="724" y="324" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">accumulators</text>
+  <text x="724" y="348" font-size="13" fill="#334155" text-anchor="middle">m, denom   scalars</text>
+  <text x="724" y="370" font-size="13" fill="#334155" text-anchor="middle">acc        [BLOCK_D]</text>
+  <text x="724" y="390" font-size="12" fill="#15803d" text-anchor="middle">small enough to be registers</text>
+
+  <rect x="866" y="302" width="260" height="94" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="996" y="324" font-size="13" font-weight="700" fill="#166534" text-anchor="middle">powers of two, then masked</text>
+  <text x="996" y="348" font-size="12" fill="#334155" text-anchor="middle">head_dim 48  to  BLOCK_D 64</text>
+  <text x="996" y="368" font-size="12" fill="#334155" text-anchor="middle">tile 13  to  BLOCK_N 16</text>
+  <text x="996" y="390" font-size="12" fill="#94a3b8" text-anchor="middle">tl.arange takes nothing else</text>
+
+  <!-- HBM -> SRAM strip -->
+  <rect x="580" y="436" width="570" height="52" rx="8" fill="#fff7ed" stroke="#d97706" stroke-width="2"/>
+  <text x="604" y="459" font-size="13" font-weight="700" fill="#b45309">K/V tiles stream HBM into SRAM</text>
+  <text x="604" y="478" font-size="12" fill="#64748b">read through the block table, scored, folded into the online softmax. one tile of state</text>
+
+  <!-- ================= BOTTOM BAND: the layering ================= -->
+  <text x="50" y="536" font-size="17" font-weight="700" fill="#0f172a">Why it is debuggable at all: push every bug out of the kernel</text>
+
+  <rect x="50" y="552" width="350" height="90" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="70" y="576" font-size="14" font-weight="700" fill="#4338ca">host Python computes every index</text>
+  <text x="70" y="598" font-size="12" fill="#334155">check_paged_inputs, launch_grid, next_power_of_2</text>
+  <text x="70" y="618" font-size="12" fill="#334155">the slot stride, past, the grid, the padded sizes</text>
+  <text x="70" y="636" font-size="12" fill="#15803d">13 pure tests, green on a box with no GPU</text>
+
+  <rect x="424" y="552" width="350" height="90" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="444" y="576" font-size="14" font-weight="700" fill="#b45309">the jitted body is a transcription</text>
+  <text x="444" y="598" font-size="12" fill="#334155">the loop was already correct before it was fast</text>
+  <text x="444" y="618" font-size="12" fill="#334155">held to paged_attention_reference, 1e-4</text>
+  <text x="444" y="636" font-size="12" fill="#64748b">5 tests gated on requires_triton_gpu</text>
+
+  <rect x="798" y="552" width="352" height="90" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+  <text x="818" y="576" font-size="14" font-weight="700" fill="#166534">the CPU model is the fallback</text>
+  <text x="818" y="598" font-size="12" fill="#334155">select_backend: triton on CUDA, tlsim elsewhere</text>
+  <text x="818" y="618" font-size="12" fill="#334155">a disagreement is reproduced there, in plain torch</text>
+  <text x="818" y="636" font-size="12" fill="#64748b">the model, not a fast path: correct and slow</text>
+</svg>

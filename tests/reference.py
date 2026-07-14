@@ -36,6 +36,25 @@ requires_weights = pytest.mark.skipif(
 )
 
 
+def triton_gpu_available() -> bool:
+    """True when a jitted kernel can actually be launched: Triton importable and a GPU.
+
+    Both halves are needed and neither implies the other. Triton ships with the
+    Linux GPU torch wheel, so a CPU-only wheel has no `triton` module at all; and a
+    box can have the package while `torch.cuda.is_available()` is false (no device,
+    or no driver). A kernel test needs both, so the gate asks for both.
+    """
+    from nanoserve.kernels.triton_paged_attention import has_triton
+
+    return has_triton() and torch.cuda.is_available()
+
+
+requires_triton_gpu = pytest.mark.skipif(
+    not triton_gpu_available(),
+    reason="the Triton paged-attention kernel needs a CUDA device and the triton package",
+)
+
+
 @functools.lru_cache(maxsize=1)
 def hf_model():
     """Load the HF reference model once (fp32, CPU, eval)."""
