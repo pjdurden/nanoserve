@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">Reading the slope off the curve</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Day 20 timed the paged read at each history length. This fits t = c &#183; L^p in log-log space, so the sweep reports one number:</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">the exponent p, the empirical big-O of the read. On CPU both paths land at p &#8776; 1.15, linear. The win is not in the slope.</text>
+
+  <!-- ================= LEFT CHART: read cost vs history (log-log) ================= -->
+  <text x="150" y="140" font-size="18" font-weight="700" fill="#0f172a">read cost per step (ms) vs history length (log-log)</text>
+
+  <!-- axes -->
+  <line x1="150" y1="160" x2="150" y2="500" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="150" y1="500" x2="760" y2="500" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <!-- y gridlines + labels (log10: 0.1, 1, 10, 100 ms) -->
+  <line x1="150" y1="390" x2="760" y2="390" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="150" y1="280" x2="760" y2="280" stroke="#eef2f7" stroke-width="1"/>
+  <line x1="150" y1="170" x2="760" y2="170" stroke="#eef2f7" stroke-width="1"/>
+  <text x="142" y="504" font-size="12" fill="#94a3b8" text-anchor="end">0.1</text>
+  <text x="142" y="394" font-size="12" fill="#94a3b8" text-anchor="end">1</text>
+  <text x="142" y="284" font-size="12" fill="#94a3b8" text-anchor="end">10</text>
+  <text x="142" y="174" font-size="12" fill="#94a3b8" text-anchor="end">100</text>
+  <text x="95" y="330" font-size="13" fill="#64748b" text-anchor="middle" transform="rotate(-90 95 330)">ms / step</text>
+
+  <!-- x labels (log2-even: 64,256,1024,4096) -->
+  <text x="150" y="520" font-size="12" fill="#64748b" text-anchor="middle">64</text>
+  <text x="353.3" y="520" font-size="12" fill="#64748b" text-anchor="middle">256</text>
+  <text x="556.7" y="520" font-size="12" fill="#64748b" text-anchor="middle">1024</text>
+  <text x="760" y="520" font-size="12" fill="#64748b" text-anchor="middle">4096</text>
+  <text x="455" y="542" font-size="13" fill="#64748b" text-anchor="middle">cached history (tokens)</text>
+
+  <!-- fitted line through the points (least-squares in log-log, slope p) -->
+  <polyline points="150,449 760,219" fill="none" stroke="#4338ca" stroke-width="2.5" stroke-dasharray="8,5"/>
+  <text x="628" y="252" font-size="14" font-weight="700" fill="#4338ca">fit: p = 1.17</text>
+
+  <!-- measured points (scattered around the fit, which is what makes it a fit) -->
+  <circle cx="150" cy="446" r="5.5" fill="#15803d"/>
+  <circle cx="353.3" cy="391" r="5.5" fill="#15803d"/>
+  <circle cx="556.7" cy="284.7" r="5.5" fill="#15803d"/>
+  <circle cx="760" cy="222.2" r="5.5" fill="#15803d"/>
+  <text x="150" y="435" font-size="11.5" font-weight="600" fill="#334155" text-anchor="middle">0.31</text>
+  <text x="353.3" y="380" font-size="11.5" font-weight="600" fill="#334155" text-anchor="middle">0.98</text>
+  <text x="556.7" y="274" font-size="11.5" font-weight="600" fill="#334155" text-anchor="middle">9.1</text>
+  <text x="760" y="211" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">33.5 ms</text>
+
+  <!-- slope triangle: rise / run = p -->
+  <line x1="353.3" y1="391" x2="556.7" y2="391" stroke="#b45309" stroke-width="2"/>
+  <line x1="556.7" y1="391" x2="556.7" y2="284.7" stroke="#b45309" stroke-width="2"/>
+  <text x="455" y="408" font-size="12" fill="#b45309" text-anchor="middle">run: L x4</text>
+  <text x="566" y="342" font-size="12" fill="#b45309">rise: t x4.7</text>
+  <text x="360" y="452" font-size="12.5" fill="#b45309" font-style="italic">slope = log(rise)/log(run) = the exponent</text>
+
+  <!-- ================= RIGHT PANEL: what the fit says ================= -->
+  <rect x="830" y="150" width="320" height="176" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="852" y="182" font-size="16" font-weight="700" fill="#1e1b4b">The slope is the exponent</text>
+  <text x="852" y="210" font-size="13.5" fill="#475569">log turns t = c &#183; L^p into a straight</text>
+  <text x="852" y="230" font-size="13.5" fill="#475569">line, so one least-squares slope</text>
+  <text x="852" y="250" font-size="13.5" fill="#475569">describes the whole curve.</text>
+  <text x="852" y="276" font-size="13.5" fill="#475569">p &#8776; 0 is flat, p &#8776; 1 is linear,</text>
+  <text x="852" y="296" font-size="13.5" fill="#475569">p &#8776; 2 is the O(L^2) blow-up.</text>
+  <text x="852" y="316" font-size="13" fill="#94a3b8">A table cannot tell you which.</text>
+
+  <rect x="830" y="344" width="320" height="150" rx="12" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="852" y="376" font-size="16" font-weight="700" fill="#1e1b4b">The constant hides the win</text>
+  <text x="852" y="404" font-size="13.5" fill="#3730a3">Gather and fused share p &#8776; 1.15:</text>
+  <text x="852" y="424" font-size="13.5" fill="#3730a3">both re-read the whole history, both</text>
+  <text x="852" y="444" font-size="13.5" fill="#3730a3">O(L). The fused win, when it comes,</text>
+  <text x="852" y="464" font-size="13.5" fill="#3730a3">is a smaller c, not a smaller p. The</text>
+  <text x="852" y="484" font-size="13.5" fill="#3730a3">flat line is a GPU bandwidth story.</text>
+
+  <text x="50" y="600" font-size="13" fill="#475569">The fit is ordinary least squares on (log L, log t). Slope is scale-free, so ms or s gives the same exponent; only ns/token carries a unit.</text>
+  <text x="50" y="622" font-size="13" fill="#475569">Guards reject a single point, one distinct length, or a zero best-of: log-log has no answer there, and a NaN would poison the regime.</text>
+
+  <text x="50" y="655" font-size="13.5" fill="#94a3b8">nanoserve &#183; Day 24 &#183; readbench.py + src/nanoserve/readbench.py &#183; log-log exponent of the paged read, Llama-3.2-1B on CPU</text>
+</svg>

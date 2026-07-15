@@ -42,7 +42,7 @@ from nanoserve.cache import BlockAllocator, PagedKVCache
 from nanoserve.config import ModelConfig
 from nanoserve.kernels.paged_attention import paged_attention_reference
 from nanoserve.layers import repeat_kv
-from nanoserve.readbench import compare_reads
+from nanoserve.readbench import compare_reads, fit_scaling
 
 
 def build_cache(config: ModelConfig, history: int, block_size: int) -> PagedKVCache:
@@ -101,6 +101,8 @@ def make_reads(cache: PagedKVCache, config: ModelConfig, history: int):
 def sweep(lens, repeats, warmup, block_size):
     config = ModelConfig()
     rows = []
+    gather_points = []  # (history, best-of seconds) for the scaling fit
+    fused_points = []
     for history in lens:
         cache = build_cache(config, history, block_size)
         gather_read, fused_read = make_reads(cache, config, history)
@@ -119,6 +121,8 @@ def sweep(lens, repeats, warmup, block_size):
             "faster": cmp.faster,
         }
         rows.append(row)
+        gather_points.append((history, cmp.gather.min_s))
+        fused_points.append((history, cmp.fused.min_s))
         print(
             f"  L={history:<6} gather {cmp.gather.min_s * 1e3:8.3f}ms  "
             f"fused {cmp.fused.min_s * 1e3:8.3f}ms  "
@@ -126,7 +130,30 @@ def sweep(lens, repeats, warmup, block_size):
             file=sys.stderr,
             flush=True,
         )
-    return rows
+    return rows, gather_points, fused_points
+
+
+def report_scaling(gather_points, fused_points) -> None:
+    """Fit and print how each read grows with the history, the Day-24 readout.
+
+    A slope needs two distinct lengths, so a single-length sweep prints nothing and
+    that is fine. The honest CPU result is two near-linear fits: both reads do an
+    O(history) index gather, so the exponent is ~1 for each and the fused win, when
+    there is one, hides in the per-token constant, not the slope. The flat line the
+    kernel is supposed to draw only appears once the read runs on a card; this is the
+    instrument waiting to read it off.
+    """
+    if len({length for length, _ in gather_points}) < 2:
+        return
+    print("\nscaling fit (t = c * L**p, log-log slope):", file=sys.stderr)
+    for label, points in (("gather", gather_points), ("fused", fused_points)):
+        fit = fit_scaling(label, points)
+        print(
+            f"  {label:<7} exponent {fit.exponent:+.3f} ({fit.regime}), "
+            f"{fit.per_token_s * 1e9:8.1f} ns/token at L={max(fit.lengths)}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -161,7 +188,10 @@ def main() -> None:
 
     torch.manual_seed(0)
     print("paged-read microbenchmark (gather vs fused, CPU, fp32):", file=sys.stderr)
-    rows = sweep(args.lens, args.repeats, args.warmup, args.block_size)
+    rows, gather_points, fused_points = sweep(
+        args.lens, args.repeats, args.warmup, args.block_size
+    )
+    report_scaling(gather_points, fused_points)
 
     out = Path(args.csv)
     write_csv(out, rows)

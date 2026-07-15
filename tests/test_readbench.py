@@ -17,7 +17,9 @@ import pytest
 from nanoserve.readbench import (
     ReadComparison,
     ReadTiming,
+    ScalingFit,
     compare_reads,
+    fit_scaling,
     time_read,
 )
 
@@ -109,3 +111,76 @@ def test_compare_reads_times_both_paths_in_order():
     assert cmp.gather.min_s == pytest.approx(1.0)
     assert cmp.fused.min_s == pytest.approx(0.3)
     assert cmp.speedup == pytest.approx(1.0 / 0.3)
+
+
+# --- Day 24: the scaling fit -----------------------------------------------
+#
+# The sweep hands per-length times; these read the *growth* off them. Synthetic
+# series with a known closed form (t = c*L^p) pin the log-log slope to the exact
+# exponent, so the instrument that decides "flat" vs "linear" is checked, not the
+# noise it will later be run on. Same discipline as the timing math above: a
+# scaling number no test constrains is a story, not a measurement.
+
+
+def test_perfectly_linear_series_fits_exponent_one():
+    # t = 1e-4 * L: doubling the history doubles the time, slope exactly 1.
+    fit = fit_scaling("gather", [(10, 1e-3), (20, 2e-3), (40, 4e-3), (80, 8e-3)])
+
+    assert isinstance(fit, ScalingFit)
+    assert fit.label == "gather"
+    assert fit.exponent == pytest.approx(1.0)
+    assert fit.regime == "linear"
+    # per-token cost is read off the *largest* length: 8e-3 / 80 = 1e-4 s.
+    assert fit.per_token_s == pytest.approx(1e-4)
+
+
+def test_constant_series_fits_flat():
+    # Same time at every length: the read does not grow with history, slope 0.
+    fit = fit_scaling("fused", [(16, 5e-3), (64, 5e-3), (256, 5e-3)])
+
+    assert fit.exponent == pytest.approx(0.0)
+    assert fit.regime == "flat"
+    assert fit.per_token_s == pytest.approx(5e-3 / 256)
+
+
+def test_quadratic_series_fits_exponent_two():
+    # t = L**2 / 100: the classic superlinear blow-up, slope exactly 2.
+    fit = fit_scaling("gather", [(10, 1.0), (20, 4.0), (40, 16.0)])
+
+    assert fit.exponent == pytest.approx(2.0)
+    assert fit.regime == "superlinear"
+
+
+def test_sqrt_series_fits_sublinear():
+    # t = sqrt(L): grows, but slower than the history, slope 0.5.
+    fit = fit_scaling("fused", [(4, 2.0), (16, 4.0), (64, 8.0)])
+
+    assert fit.exponent == pytest.approx(0.5)
+    assert fit.regime == "sublinear"
+
+
+def test_per_token_uses_the_largest_length_regardless_of_order():
+    # Points handed out of order; the per-token cost still comes from L=80.
+    fit = fit_scaling("gather", [(80, 8e-3), (10, 1e-3), (40, 4e-3)])
+
+    assert fit.per_token_s == pytest.approx(8e-3 / 80)
+
+
+def test_fit_needs_at_least_two_points():
+    with pytest.raises(ValueError, match="at least two"):
+        fit_scaling("fused", [(16, 1e-3)])
+
+
+def test_fit_needs_two_distinct_lengths():
+    # Two samples at the same history length have no slope to fit.
+    with pytest.raises(ValueError, match="distinct"):
+        fit_scaling("fused", [(16, 1e-3), (16, 2e-3)])
+
+
+def test_fit_rejects_nonpositive_length_or_time():
+    # log-log has no answer at zero; a zero best-of (the degenerate case
+    # `speedup` guards) must raise here rather than feed NaN into the slope.
+    with pytest.raises(ValueError, match="positive"):
+        fit_scaling("fused", [(16, 1e-3), (64, 0.0)])
+    with pytest.raises(ValueError, match="positive"):
+        fit_scaling("fused", [(0, 1e-3), (64, 2e-3)])

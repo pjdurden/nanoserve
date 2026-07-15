@@ -112,6 +112,113 @@ class ReadComparison:
         return "fused" if self.fused.min_s < self.gather.min_s else "gather"
 
 
+@dataclass
+class ScalingFit:
+    """How one read path's cost grows with history, read off the sweep's points.
+
+    Day 20 timed each read at a handful of history lengths and printed a table; a
+    table does not tell you whether the curve is flat or climbing, which is the one
+    thing the kernel is supposed to change. This is the instrument that reads the
+    slope: given the per-length best-of times, it fits ``t = c * L**p`` and reports
+    the exponent ``p``. That is the empirical big-O of the read, the number that
+    separates "grows with the history" from "does not".
+
+    label:   which read this is ("gather", "fused", ...), so a printed fit and its
+             curve never get crossed.
+    lengths: the history lengths sampled, one per point, in the order given.
+    seconds: the best-of time at each of those lengths, aligned by index.
+
+    The fit is a least-squares line through the points in log-log space. Slope is
+    scale-invariant, so it does not matter whether the times are seconds or
+    milliseconds; only the ``per_token_s`` readout below carries a unit, and it is
+    taken straight from the raw seconds.
+    """
+
+    label: str
+    lengths: list[int] = field(default_factory=list)
+    seconds: list[float] = field(default_factory=list)
+
+    @property
+    def exponent(self) -> float:
+        """The log-log least-squares slope: the empirical exponent ``p`` in ``c*L**p``.
+
+        Fit ``log t = log c + p * log L`` by ordinary least squares over the points,
+        so ``p`` is the growth the sweep actually measured. A perfectly linear read
+        (double the history, double the time) returns 1.0; a read whose cost does not
+        move with the history returns 0.0; an O(L^2) blow-up returns 2.0. The log
+        turns every power law into a straight line, which is why the one slope
+        describes the whole curve instead of a single doubling.
+        """
+        xs = [math.log(length) for length in self.lengths]
+        ys = [math.log(sec) for sec in self.seconds]
+        n = len(xs)
+        x_bar = sum(xs) / n
+        y_bar = sum(ys) / n
+        num = sum((x - x_bar) * (y - y_bar) for x, y in zip(xs, ys))
+        den = sum((x - x_bar) ** 2 for x in xs)
+        return num / den
+
+    @property
+    def per_token_s(self) -> float:
+        """Seconds per history token at the *largest* length sampled.
+
+        The absolute cost the slope hides: two reads can share an exponent and still
+        differ by an order of magnitude in constant, and on CPU that constant is
+        where the fused read's whole win lives (same O(L), less memory moved). Taken
+        at the longest history because that is where the per-step cost matters and
+        where fixed overheads are most diluted.
+        """
+        i = max(range(len(self.lengths)), key=lambda j: self.lengths[j])
+        return self.seconds[i] / self.lengths[i]
+
+    @property
+    def regime(self) -> str:
+        """A word for the exponent: "flat", "sublinear", "linear", or "superlinear".
+
+        Bands around the integer exponents so a noisy real sweep still classifies
+        cleanly: <=0.25 reads as flat (cost independent of history), (0.25, 0.75] as
+        sublinear, (0.75, 1.25] as linear (the gather, and every honest per-step
+        attention, lives here), and anything past 1.25 as superlinear. The raw
+        ``exponent`` is the measurement; this is the label for a glance.
+        """
+        p = self.exponent
+        if p <= 0.25:
+            return "flat"
+        if p <= 0.75:
+            return "sublinear"
+        if p <= 1.25:
+            return "linear"
+        return "superlinear"
+
+
+def fit_scaling(label: str, points: list[tuple[int, float]]) -> ScalingFit:
+    """Fit ``t = c * L**p`` to (history_len, seconds) points; return the `ScalingFit`.
+
+    points: one ``(history_len, seconds)`` per sampled length, the best-of time at
+            each. Order is free; the fit and the per-token readout sort it out.
+
+    Raises `ValueError` on anything the log-log fit cannot answer: fewer than two
+    points (no line through one point), fewer than two *distinct* lengths (a vertical
+    line has no slope), or a non-positive length or time (``log`` is undefined, and a
+    zero best-of is the degenerate case `speedup` already guards). Catching these
+    here keeps a NaN out of the exponent, where it would quietly poison the regime.
+    """
+    if len(points) < 2:
+        raise ValueError(f"scaling needs at least two points to fit a slope; got {len(points)}")
+    lengths = [length for length, _ in points]
+    seconds = [sec for _, sec in points]
+    if any(length <= 0 for length in lengths) or any(sec <= 0.0 for sec in seconds):
+        raise ValueError(
+            "scaling is fit in log-log space, so every history length and time must be "
+            f"positive; got lengths={lengths}, seconds={seconds}"
+        )
+    if len(set(lengths)) < 2:
+        raise ValueError(
+            f"scaling needs at least two distinct history lengths to fit a slope; got {lengths}"
+        )
+    return ScalingFit(label=label, lengths=lengths, seconds=seconds)
+
+
 def time_read(
     fn: Callable[[], object],
     *,
