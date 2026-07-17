@@ -307,10 +307,13 @@ def test_reference_over_paged_cache_matches_naive_history():
 # the paged path.
 #
 # The contract is again "paging changes nothing observable": the fused read must
-# return exactly what a plain SDPA over the naive contiguous history returns, and
-# it must leave the cache in exactly the state a bare `append` would (same slots
-# written, same seq_len, same pool bytes). Only what it *returns* differs: the
-# attention output instead of the running K/V.
+# return what a plain SDPA over the naive contiguous history returns, and it must
+# leave the cache in exactly the state a bare `append` would (same slots written,
+# same seq_len, same pool bytes). Only what it *returns* differs: the attention
+# output instead of the running K/V. Through Day 24 the returned output was byte
+# identical; Day 25 dispatches the read to the streaming softmax, so it is now
+# flash-close (a few ulps), the same tolerance the kernel is held to. The stored
+# state stays byte-for-byte identical, since the write is unchanged.
 
 
 def test_fused_read_matches_naive_gather_across_prefill_and_decode():
@@ -319,9 +322,11 @@ def test_fused_read_matches_naive_gather_across_prefill_and_decode():
     Drive a paged and a naive cache with identical K/V across a prefill and two
     decode steps, over every layer, the way the model does. At each (step, layer)
     a fresh query attends through the fused read, and the truth is a plain SDPA
-    over the K/V the naive cache hands back. `torch.equal`, not `allclose`: the
-    fused read scatters and gathers by exact index and runs the identical causal
-    fp32 softmax, so the numbers are the same, not merely close.
+    over the K/V the naive cache hands back. `allclose` at the flash tolerance, not
+    `torch.equal`: since Day 25 the cache read dispatches to the streaming softmax
+    (the tlsim model here), which reassociates the exponent sums and so lands a few
+    ulps off the contiguous SDPA. The read still scatters and gathers by exact index,
+    so the K/V it sees is identical; only the softmax summation order moved.
     """
     cfg = _tiny_config()
     n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
@@ -343,7 +348,7 @@ def test_fused_read_matches_naive_gather_across_prefill_and_decode():
             truth = _contiguous_attention(q, full_k, full_v, n_rep, d**-0.5)
 
             assert fused.shape == (1, n_q, new_seq, d)
-            assert torch.equal(fused, truth)
+            assert torch.allclose(fused, truth, atol=1e-5, rtol=1e-4)
 
 
 def test_fused_read_stores_exactly_what_append_would():
@@ -383,8 +388,10 @@ def test_fused_read_over_physically_scattered_blocks():
 
     Pre-fragment the pool so the sequence lands on non-contiguous physical blocks,
     then drive the fused read and a naive twin with identical K/V. The output still
-    equals the contiguous SDPA: paging moved where the K/V live, not what attention
-    computes, all the way through the cache method now, not just the bare reference.
+    matches the contiguous SDPA to the flash tolerance: paging moved where the K/V
+    live, not what attention computes, all the way through the dispatched cache method
+    now, not just the bare reference. The few-ulp gap is the streaming softmax, not
+    the scatter, which reads by exact slot no matter how the blocks are laid out.
     """
     cfg = _tiny_config()
     n_q, n_kv, d = cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim
@@ -408,7 +415,7 @@ def test_fused_read_over_physically_scattered_blocks():
             fused = paged.paged_attention(layer, k, v, q, n_rep)
             full_k, full_v = naive.append(layer, k, v)
             truth = _contiguous_attention(q, full_k, full_v, n_rep, d**-0.5)
-            assert torch.equal(fused, truth)
+            assert torch.allclose(fused, truth, atol=1e-5, rtol=1e-4)
 
     assert paged.table.block_ids != sorted(paged.table.block_ids)  # genuinely scattered
 

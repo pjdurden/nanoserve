@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import torch
 
-from .kernels.paged_attention import paged_attention_reference
+from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
 
 
 class NaiveKVCache:
@@ -301,8 +301,10 @@ class PagedKVCache:
     the tests still compare against. `paged_attention` is the Week-6 fused read: it
     attends directly over the scattered blocks through the Day-18 reference and
     hands `gqa_attention` the attention output, never rebuilding the history. The
-    model runs on the fused read now; a Triton kernel later slots in behind the same
-    signature, held to `paged_attention_reference`.
+    model runs on the fused read now, and since Day 25 that read dispatches through
+    `select_backend`: the Triton kernel on a card, the tlsim CPU model on a laptop,
+    both held to `paged_attention_reference` as the oracle. The reference is the
+    check the dispatch is graded against, no longer the path the model runs.
     """
 
     def __init__(self, config, allocator: BlockAllocator):
@@ -401,10 +403,17 @@ class PagedKVCache:
 
         This is Week 6's payoff wired into the cache. Rather than hand attention the
         contiguous history to score itself (`append`), the cache does the read: it
-        writes the K/V (see `_write`), then runs `paged_attention_reference` over its
-        own scattered pool, reading each past token through its slot and never
-        rebuilding the contiguous buffer. `gqa_attention` calls this and takes the
-        attention output straight back.
+        writes the K/V (see `_write`), then dispatches the paged read over its own
+        scattered pool, reading each past token through its slot and never rebuilding
+        the contiguous buffer. `gqa_attention` calls this and takes the attention
+        output straight back.
+
+        Since Day 25 the read goes through `paged_attention_dispatch`, the Day-23
+        entry point that asks `select_backend` which read the query's device can run:
+        the Triton kernel on a CUDA tensor, the Day-22 tlsim model on the CPU. The
+        engine gets the kernel on a card and the correct-and-slow model on a laptop
+        without the cache knowing which, and `paged_attention_reference` steps back to
+        being the oracle both backends are graded against, not the path either runs.
 
         k, v: [1, num_kv_heads, new_seq, head_dim] this step's compact K/V.
         q:    [1, num_attention_heads, new_seq, head_dim] this step's rotated query.
@@ -412,13 +421,15 @@ class PagedKVCache:
         scale: softmax scale; defaults to `head_dim ** -0.5`, matching `gqa_attention`.
 
         Returns [1, num_attention_heads, new_seq, head_dim], the attention output
-        before o_proj, byte-identical to a contiguous SDPA over the same K/V. The
-        pool and table are left exactly as `append` would leave them; only the
-        return value differs.
+        before o_proj. It matches a contiguous SDPA over the same K/V to a few ulps
+        rather than bit for bit: both backends stream the online softmax, which
+        reassociates the exponent sums, the accuracy trade every flash-attention
+        kernel makes. The pool and table are left exactly as `append` would leave
+        them; only the return value differs.
         """
         self._write(layer, k, v)
         slot_mapping = self._slots_for(range(self.table.num_tokens), q.device)
-        return paged_attention_reference(
+        return paged_attention_dispatch(
             q, self.k_pool[layer], self.v_pool[layer], slot_mapping, n_rep, scale
         )
 

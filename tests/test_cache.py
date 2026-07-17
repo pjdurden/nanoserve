@@ -26,6 +26,7 @@ from nanoserve.cache import (
     PagedKVCache,
 )
 from nanoserve.config import ModelConfig
+from nanoserve.kernels.paged_attention import paged_attention_reference
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes, load_weights
 from nanoserve.model import LlamaModel
 
@@ -518,7 +519,14 @@ def test_paged_cache_pulls_blocks_only_as_the_sequence_crosses_boundaries():
 
 
 def test_paged_prefill_matches_naive_prefill_logits():
-    """A forward over the paged cache yields the same logits as the naive cache."""
+    """A forward over the paged cache yields the same logits as the naive cache.
+
+    Flash-close, not bit-identical: since Day 25 the paged read dispatches to the
+    streaming softmax (the tlsim model here, the Triton kernel on a card), which
+    reassociates the exponent sums and so lands a few ulps off the naive contiguous
+    SDPA. `atol=1e-5` is the same tolerance the kernel itself is held to against the
+    reference, the accuracy trade every flash-attention kernel makes.
+    """
     cfg = _tiny_config()
     model = LlamaModel(cfg, _random_weights(cfg))
     ids = torch.randint(0, cfg.vocab_size, (1, 6))
@@ -528,7 +536,7 @@ def test_paged_prefill_matches_naive_prefill_logits():
     out_naive = model.forward(ids, cache=naive)
     out_paged = model.forward(ids, cache=paged)
 
-    assert torch.allclose(out_naive, out_paged, atol=1e-6)
+    assert torch.allclose(out_naive, out_paged, atol=1e-5)
     assert paged.seq_len == 6
 
 
@@ -587,10 +595,12 @@ def test_paged_cache_rejects_a_real_batch():
 # now hands a paged cache this step's Q/K/V and takes back the attention output
 # directly, reading through the block table without rebuilding the history. The
 # naive cache is untouched (it has no paged read), so the two backends split at
-# the one duck-typed branch. The observable behaviour cannot change (the fused
-# read is byte-identical to the gather), which every paged equality test above
-# still pins; this one pins the *plumbing*: the model's paged forward calls the
-# fused read once per layer and never the gather.
+# the one duck-typed branch. Through Day 24 the fused read was byte-identical to the
+# gather, which every paged equality test above pinned; Day 25 dispatches the read to
+# the streaming backend, so the output is now flash-close (a few ulps) rather than
+# bit-identical, and the equality tests carry that tolerance. This one pins the
+# *plumbing*: the model's paged forward calls the fused read once per layer and never
+# the gather.
 
 
 def test_model_paged_forward_uses_the_fused_read_not_the_gather():
@@ -623,6 +633,77 @@ def test_model_paged_forward_uses_the_fused_read_not_the_gather():
     model.forward(ids, cache=cache)
     assert calls["fused"] == cfg.num_hidden_layers  # one fused read per layer
     assert calls["append"] == 0  # the gather read is gone from the paged path
+
+
+# --- Day 25: the fused read dispatches to the kernel backend -----------------
+#
+# Day 19 wired the fused read into the model but called `paged_attention_reference`
+# directly, the byte-exact torch oracle. Day 23 built the dispatcher
+# (`kernels.triton_paged_attention.paged_attention`): the Triton kernel on a CUDA
+# tensor, the Day-22 tlsim model everywhere else, both held to the reference. Day
+# 25 routes the cache's read through that dispatcher, so the engine runs the kernel
+# on a card and the streaming CPU model on a laptop. The reference is now the oracle
+# the dispatch is checked against, no longer the path the model runs, so the paged
+# output is flash-close to naive (a few ulps of reassociated softmax) instead of
+# bit-identical. That is the accuracy trade every flash-attention kernel makes, and
+# it lands on the model's real path the moment the kernel does.
+
+
+def test_cache_fused_read_dispatches_to_the_backend_not_the_reference(monkeypatch):
+    """The cache's fused read goes through the Day-23 dispatcher, once, with its own pool.
+
+    Spy on the dispatcher symbol the cache imports. One paged read must call it
+    exactly once, handed this layer's own K/V pools and the slot mapping for the
+    whole history, and hand back whatever it returns. This is the wiring: the cache
+    no longer calls the reference oracle directly, it asks `select_backend` which
+    read this device can run and takes that one.
+    """
+    import nanoserve.cache as cache_mod
+
+    cfg = _tiny_config()
+    cache = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+    k, v = _kv(3, cfg)
+    q = torch.randn(1, cfg.num_attention_heads, 3, cfg.head_dim)
+
+    calls = []
+    sentinel = torch.zeros(1, cfg.num_attention_heads, 3, cfg.head_dim)
+
+    def spy(q_arg, k_pool, v_pool, slot_mapping, n_rep, scale=None):
+        calls.append((k_pool, v_pool, slot_mapping, n_rep))
+        return sentinel
+
+    monkeypatch.setattr(cache_mod, "paged_attention_dispatch", spy)
+
+    out = cache.paged_attention(0, k, v, q, cfg.num_kv_groups)
+    assert out is sentinel  # the dispatch result flows straight back, unmodified
+    assert len(calls) == 1  # exactly one read, not the gather and not two
+    k_pool, v_pool, slot_mapping, n_rep = calls[0]
+    assert k_pool is cache.k_pool[0]  # the layer's own physical K pool, not a copy
+    assert v_pool is cache.v_pool[0]
+    assert torch.equal(slot_mapping, cache._slots_for(range(3), q.device))  # full history
+    assert n_rep == cfg.num_kv_groups
+
+
+def test_cache_fused_read_stays_flash_close_to_the_reference_oracle():
+    """The dispatched read still matches the torch oracle, to the streaming tolerance.
+
+    On CPU the dispatcher runs the tlsim model, which reassociates the online softmax
+    and so agrees with `paged_attention_reference` to a few ulps, not bit for bit.
+    Feed the cache's own pool through both and pin the dispatched read to the oracle
+    at the same atol the kernel itself is held to. Dispatch is a speed choice, never
+    a numerics one; the reference is the oracle, no longer the path.
+    """
+    cfg = _tiny_config()
+    cache = PagedKVCache(cfg, BlockAllocator(num_blocks=8, block_size=4))
+    torch.manual_seed(0)
+    k, v = _kv(5, cfg)
+    q = torch.randn(1, cfg.num_attention_heads, 5, cfg.head_dim)
+    n_rep = cfg.num_kv_groups
+
+    out = cache.paged_attention(0, k, v, q, n_rep)
+    slot_mapping = cache._slots_for(range(5), q.device)
+    ref = paged_attention_reference(q, cache.k_pool[0], cache.v_pool[0], slot_mapping, n_rep)
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-4)
 
 
 @requires_weights
