@@ -264,3 +264,156 @@ def compare_reads(
     gather = time_read(gather_fn, label="gather", repeats=repeats, warmup=warmup, clock=clock)
     fused = time_read(fused_fn, label="fused", repeats=repeats, warmup=warmup, clock=clock)
     return ReadComparison(gather=gather, fused=fused)
+
+
+# --- Day 26: the closures wired to the cache's real dispatched read ----------
+#
+# Everything above is the timing core: stdlib-only, model-free, the clock
+# injected, and the two read paths handed in as opaque zero-arg callables. The
+# pure tests feed it `lambda: None`; Days 20 and 24 fed it standalone functions.
+# That measures the harness, not the engine.
+#
+# The runner below closes the gap the Day-25 log named: it builds a *real*
+# `PagedKVCache`, prefills it to a history length, and hands the core the two
+# closures for the reads the engine actually runs. The gather closure rebuilds the
+# contiguous history and scores it, the naive path a `NaiveKVCache` drives through
+# `gqa_attention`. The fused closure is the *dispatched* read: `paged_attention`
+# through `select_backend`, the tlsim model on a CPU and the Triton kernel on a
+# card, exactly what `PagedKVCache.paged_attention` invokes. So the sweep now times
+# the path the box would take, not a function called in isolation.
+#
+# torch and the cache are imported inside the functions, not at module top, so the
+# timing core above stays importable without them and keeps its stdlib-only shape.
+
+
+def build_paged_reads(
+    config,
+    history_len: int,
+    *,
+    block_size: int = 16,
+    layer: int = 0,
+    seed: int = 0,
+) -> tuple[Callable[[], object], Callable[[], object]]:
+    """Prefill a real `PagedKVCache` to `history_len` and return (gather_fn, fused_fn).
+
+    Two zero-arg read closures over that one fixed history, the pair `compare_reads`
+    expects:
+
+    gather_fn: the Day-16 read, gather the scattered pool back into one contiguous
+               ``[1, n_kv, L, d]`` history, GQA-repeat it, and score this step's
+               single decode query against it. That is the work a `NaiveKVCache`
+               drives inside `gqa_attention`; a single decode query sees the whole
+               history, so the causal mask is all-visible and drops out.
+    fused_fn:  the dispatched paged read, `paged_attention` through `select_backend`
+               over the *same* pool and the real slot mapping. On a CPU that is the
+               Day-22 tlsim model; on a card it is the Triton kernel. This is the
+               path `PagedKVCache.paged_attention` takes, minus the O(1) write.
+
+    Both return the decode step's attention output ``[1, n_q, 1, d]``. On CPU they
+    agree to a few ulps rather than bit for bit, because the fused read streams the
+    online softmax (the Day-25 trade); `test_readbench_cache` pins that closeness.
+
+    Neither closure writes: the query's K/V is never appended, so the cache's history
+    stays at `history_len` no matter how many times a closure is called. That is what
+    makes a repeated timing sample honest, every repeat reads the identical length,
+    where calling the engine's writing `paged_attention` in a loop would grow it.
+
+    Raises `ValueError` for `history_len < 1`: there is no token to read, and the
+    scaling fit downstream is over strictly-positive lengths anyway.
+    """
+    import torch
+
+    from .cache import BlockAllocator, PagedKVCache
+    from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
+    from .layers import repeat_kv
+
+    if history_len < 1:
+        raise ValueError(f"history_len must be at least 1 to read a token; got {history_len}")
+
+    n_q = config.num_attention_heads
+    n_kv = config.num_key_value_heads
+    n_rep = config.num_kv_groups
+    d = config.head_dim
+    scale = d**-0.5
+
+    # A pool sized to hold the whole history, then one prefill write to fill it.
+    num_blocks = -(-history_len // block_size)  # ceil division: blocks to cover L
+    cache = PagedKVCache(config, BlockAllocator(num_blocks=num_blocks, block_size=block_size))
+    gen = torch.Generator().manual_seed(seed)
+    k = torch.randn(1, n_kv, history_len, d, generator=gen)
+    v = torch.randn(1, n_kv, history_len, d, generator=gen)
+    cache.append(layer, k, v)  # write + gather; we keep only the pool it wrote
+
+    # This step's single decode query, fixed so both reads score the same thing.
+    q = torch.randn(1, n_q, 1, d, generator=gen)
+    slot_mapping = cache._slots_for(range(history_len), q.device)
+    k_pool = cache.k_pool[layer]
+    v_pool = cache.v_pool[layer]
+
+    def gather_fn() -> object:
+        # Rebuild the contiguous history (the Day-16 read), then score it: exactly
+        # the work a naive cache drives through `gqa_attention` on a decode step.
+        # One query over the full history has an all-visible mask, so it is omitted.
+        hist_k = repeat_kv(k_pool[slot_mapping].transpose(0, 1)[None], n_rep)
+        hist_v = repeat_kv(v_pool[slot_mapping].transpose(0, 1)[None], n_rep)
+        scores = torch.matmul(q, hist_k.transpose(2, 3)) * scale
+        weights = torch.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+        return torch.matmul(weights, hist_v)
+
+    def fused_fn() -> object:
+        # The dispatched paged read: `select_backend` over the same pool and slots.
+        return paged_attention_dispatch(q, k_pool, v_pool, slot_mapping, n_rep, scale)
+
+    return gather_fn, fused_fn
+
+
+def time_paged_reads(
+    config,
+    history_len: int,
+    *,
+    repeats: int,
+    warmup: int = 0,
+    clock: Clock = time.perf_counter,
+    **build_kwargs,
+) -> ReadComparison:
+    """Time the gather against the *dispatched* fused read at one history length.
+
+    Builds the real cache reads (`build_paged_reads`) and hands them to
+    `compare_reads` under identical settings. This is the Day-20 comparison run
+    against the path the engine actually takes rather than two standalone functions:
+    the fused side is `paged_attention` through `select_backend`, so on a CPU the
+    number is the tlsim model's and on a card it is the Triton kernel's. `warmup`
+    absorbs the first-call costs (lazy allocation, a cold cache) before timing.
+    """
+    gather_fn, fused_fn = build_paged_reads(config, history_len, **build_kwargs)
+    return compare_reads(gather_fn, fused_fn, repeats=repeats, warmup=warmup, clock=clock)
+
+
+def sweep_paged_reads(
+    config,
+    lengths: list[int],
+    *,
+    repeats: int,
+    warmup: int = 0,
+    clock: Clock = time.perf_counter,
+    **build_kwargs,
+) -> tuple[ScalingFit, ScalingFit]:
+    """Sweep the real reads across `lengths` and fit each path's growth.
+
+    Times both reads at every history length (`time_paged_reads`), takes each path's
+    best-of, and fits ``t = c * L**p`` to the points (`fit_scaling`). Returns
+    ``(gather_fit, fused_fit)``: the Day-24 scaling fit read off the *dispatched*
+    read, so the exponent and the per-token constant describe the path the engine
+    runs. On a CPU both fit roughly linear (both do an O(L) read); the fused
+    constant is the tlsim model's, the number a card bends down when the Triton
+    kernel replaces it, which is the whole claim Week 6 has been setting up.
+    """
+    gather_points: list[tuple[int, float]] = []
+    fused_points: list[tuple[int, float]] = []
+    for length in lengths:
+        comparison = time_paged_reads(
+            config, length, repeats=repeats, warmup=warmup, clock=clock, **build_kwargs
+        )
+        gather_points.append((length, comparison.gather.min_s))
+        fused_points.append((length, comparison.fused.min_s))
+    return fit_scaling("gather", gather_points), fit_scaling("fused", fused_points)
