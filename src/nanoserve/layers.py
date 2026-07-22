@@ -284,6 +284,7 @@ def gqa_attention(
     config: ModelConfig,
     cache=None,
     layer_idx: int | None = None,
+    attention_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Single-block grouped-query attention, prefill or one cached decode step.
 
@@ -302,6 +303,13 @@ def gqa_attention(
                  call. Either way the math is identical; the cache only changes
                  whether the past is recomputed or remembered.
     layer_idx:   which layer's K/V slot to use in `cache` (ignored if no cache).
+    attention_mask: optional [batch, kv_len] bool key mask, True where a key is a
+                 real token. This is what makes a *padded batch* (Day 27) legal:
+                 ragged prompts stacked into one rectangle carry pad slots whose
+                 K/V mean nothing, and under left padding those slots sit at the
+                 low indices the causal mask happily allows. The mask is combined
+                 with the causal band, never instead of it. `None` (the default)
+                 is the single-sequence path, unchanged.
 
     Returns [batch, seq, hidden]. Matches HF `LlamaAttention.forward` output
     (post o_proj, before the residual add) to ~1e-5.
@@ -336,6 +344,15 @@ def gqa_attention(
     if cache is not None:
         paged_read = getattr(cache, "paged_attention", None)
         if paged_read is not None:
+            if attention_mask is not None:
+                # The fused read walks one block table over one sequence's slots.
+                # Honouring a padded batch there needs a per-sequence table and a
+                # per-sequence slot mapping (later this week), so refuse rather
+                # than attend over a neighbour's blocks.
+                raise ValueError(
+                    "the paged read is single-sequence: a padded batch needs "
+                    "per-sequence block tables, which are not wired yet"
+                )
             attended = paged_read(layer_idx, k, v, q, config.num_kv_groups)
             out = attended.transpose(1, 2).reshape(batch, seq, n_q * d)
             return F.linear(out, o_weight)
@@ -359,6 +376,32 @@ def gqa_attention(
     causal = torch.full((seq, kv_len), float("-inf"), dtype=scores.dtype, device=scores.device)
     causal = torch.triu(causal, diagonal=past + 1)
     scores = scores + causal
+
+    # The padding mask, added on top of the causal band: a pad key is silenced for
+    # every query, in every head. Two details that both look like style and are not:
+    #
+    #   1. The bias is `finfo.min`, not `-inf`. A *pad query* row (left padding puts
+    #      pad slots before the real tokens) is causally allowed exactly one key,
+    #      itself, and the mask silences that too. With -inf that row is all -inf,
+    #      softmax computes 0/0, and the NaN does not stay in the padding: the next
+    #      block reads that position as a *key* for the real tokens, so one NaN
+    #      poisons the whole batch. A large finite bias makes the row a harmless
+    #      one-hot instead. This is why HF uses finfo.min everywhere too.
+    #   2. It is added, not `masked_fill`ed, so a key that is both padded and
+    #      causally forbidden stays -inf rather than being softened back to min.
+    if attention_mask is not None:
+        if attention_mask.shape != (batch, kv_len):
+            raise ValueError(
+                f"attention_mask must be [batch, kv_len] = {(batch, kv_len)}, "
+                f"got {tuple(attention_mask.shape)}"
+            )
+        pad_bias = torch.zeros(
+            (batch, 1, 1, kv_len), dtype=scores.dtype, device=scores.device
+        )
+        pad_bias.masked_fill_(
+            ~attention_mask.bool()[:, None, None, :], torch.finfo(scores.dtype).min
+        )
+        scores = scores + pad_bias
 
     # HF computes the softmax in fp32 even in a lower-precision model, then casts
     # back; we mirror it so the bf16 path matches later. In fp32 it is a no-op.
@@ -405,6 +448,7 @@ def transformer_block(
     config: ModelConfig,
     cache=None,
     layer_idx: int | None = None,
+    attention_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """One pre-norm Llama decoder block: attention sublayer, then MLP sublayer.
 
@@ -418,6 +462,10 @@ def transformer_block(
     cache, layer_idx: optional KV cache and this block's slot, passed straight
              through to attention. Only attention touches the cache; the MLP and
              norms are per-token and stateless.
+    attention_mask: optional [batch, kv_len] bool key mask for a padded batch,
+             also passed straight through. The MLP and norms need no mask: they
+             are per-position, so a pad slot's garbage stays in its own row and is
+             only ever a problem when attention lets it become someone's key.
 
     Returns [batch, seq, hidden]. Matches HF `LlamaDecoderLayer.forward` output
     (out[0], the hidden state) to ~1e-5.
@@ -438,6 +486,7 @@ def transformer_block(
         config,
         cache=cache,
         layer_idx=layer_idx,
+        attention_mask=attention_mask,
     )
     x = residual + h
 

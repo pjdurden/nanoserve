@@ -32,6 +32,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from .batch import PaddedBatch, last_token_logits
 from .cache import BlockAllocator, NaiveKVCache, PagedKVCache
 from .config import ModelConfig
 from .layers import RotaryEmbedding, rms_norm, transformer_block
@@ -61,6 +62,7 @@ class LlamaModel:
         input_ids: torch.Tensor,
         position_ids: torch.Tensor | None = None,
         cache=None,
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Run a forward pass and return logits over the vocab.
 
@@ -76,6 +78,11 @@ class LlamaModel:
                       K/V and attends over the whole history, so `input_ids` need
                       only be the new token(s). When `None`, this is the Week-2
                       recompute path: pass the entire prefix every call.
+        attention_mask: optional [batch, kv_len] bool key mask, True where a key is
+                      real. Needed only for a padded batch (Day 27), where the
+                      rectangle holds pad slots that no query may attend to.
+                      `nanoserve.batch.pad_prompts` builds it alongside the
+                      matching `position_ids`, and `forward_batch` passes both.
 
         Returns logits [batch, seq, vocab_size]. The next-token distribution is
         `logits[:, -1]`; the full sequence of logits is returned (not just the
@@ -97,13 +104,58 @@ class LlamaModel:
         # writes only its own K/V slot.
         for i in range(self.config.num_hidden_layers):
             x = transformer_block(
-                x, self.weights.layer(i), cos, sin, self.config, cache=cache, layer_idx=i
+                x,
+                self.weights.layer(i),
+                cos,
+                sin,
+                self.config,
+                cache=cache,
+                layer_idx=i,
+                attention_mask=attention_mask,
             )
 
         # Final RMSNorm before the head (the one that is easy to forget), then the
         # tied output projection: logits = norm(x) @ embed_tokens.T.
         x = rms_norm(x, self.weights["norm.weight"], self.config.rms_norm_eps)
         return F.linear(x, self.weights[LM_HEAD])
+
+    @torch.no_grad()
+    def forward_batch(self, batch: PaddedBatch) -> torch.Tensor:
+        """Forward a `PaddedBatch`: many ragged prompts in one rectangle. Day 27.
+
+        The whole method is one `forward` call with the batch's own mask and
+        positions, and that is the point: batching is not a different forward
+        pass, it is the same one handed the three tensors that keep the padding
+        honest (ids, key mask, positions). Row i of the result equals
+        `forward(prompt_i)` run alone, to fp error; `test_batch.py` pins that
+        against the single-sequence path and pins both controls (drop the mask,
+        drop the position shift) failing it.
+
+        No cache: a padded batch cannot reach the paged read yet, because that read
+        walks one block table over one sequence. Prefill-only batching is exactly
+        the static-batching step, and the per-sequence tables that let a *decode*
+        batch share the pool come later this week.
+
+        Returns logits [batch, max_len, vocab_size]. Use
+        `nanoserve.batch.last_token_logits` to take each row's next-token
+        distribution, since a right-padded row does not end at the last column.
+        """
+        return self.forward(
+            batch.input_ids,
+            batch.position_ids,
+            attention_mask=batch.attention_mask,
+        )
+
+    @torch.no_grad()
+    def greedy_token_batch(self, batch: PaddedBatch) -> torch.Tensor:
+        """Argmax next token for every prompt in a padded batch: [batch].
+
+        The batched counterpart of `greedy_token`, and the first place batching
+        pays: N prompts get their next token from one forward instead of N. The
+        tokens are identical to running each prompt alone, which is the only
+        acceptable outcome for a change that is meant to buy throughput.
+        """
+        return last_token_logits(self.forward_batch(batch), batch).argmax(dim=-1)
 
     @torch.no_grad()
     def greedy_token(self, input_ids: torch.Tensor) -> torch.Tensor:

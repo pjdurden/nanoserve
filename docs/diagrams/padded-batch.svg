@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">Many ragged prompts, one rectangle</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Phase 3 opens on static batching: stack N prompts of different lengths into one [batch, max_len] tensor and run a single forward.</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">Prompts are ragged, tensors are not, so the short rows get padded. Two tensors travel with the batch to keep that padding honest.</text>
+
+  <!-- ===== left: the three ragged prompts ===== -->
+  <text x="50" y="152" font-size="14" font-weight="700" fill="#334155">three prompts, as they arrive</text>
+
+  <rect x="50" y="168" width="188" height="40" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="144" y="194" font-size="14" font-weight="600" fill="#1e1b4b" text-anchor="middle">prompt A: 5 tokens</text>
+
+  <rect x="50" y="228" width="76" height="40" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="88" y="254" font-size="14" font-weight="600" fill="#1e1b4b" text-anchor="middle">B: 2</text>
+
+  <rect x="50" y="288" width="114" height="40" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="107" y="314" font-size="14" font-weight="600" fill="#1e1b4b" text-anchor="middle">C: 3</text>
+
+  <text x="50" y="360" font-size="13" fill="#64748b">pad_prompts(prompts, side="left")</text>
+
+  <line x1="270" y1="248" x2="352" y2="248" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ===== middle: the padded rectangle ===== -->
+  <text x="370" y="152" font-size="14" font-weight="700" fill="#334155">input_ids [3, 5], left-padded</text>
+
+  <!-- column index labels -->
+  <text x="399" y="166" font-size="11" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="461" y="166" font-size="11" fill="#94a3b8" text-anchor="middle">1</text>
+  <text x="523" y="166" font-size="11" fill="#94a3b8" text-anchor="middle">2</text>
+  <text x="585" y="166" font-size="11" fill="#94a3b8" text-anchor="middle">3</text>
+  <text x="647" y="166" font-size="11" fill="#94a3b8" text-anchor="middle">4</text>
+
+  <!-- row A: five real -->
+  <rect x="370" y="172" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="432" y="172" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="494" y="172" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="556" y="172" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="618" y="172" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="399" y="201" font-size="13" fill="#1e1b4b" text-anchor="middle">a0</text>
+  <text x="461" y="201" font-size="13" fill="#1e1b4b" text-anchor="middle">a1</text>
+  <text x="523" y="201" font-size="13" fill="#1e1b4b" text-anchor="middle">a2</text>
+  <text x="585" y="201" font-size="13" fill="#1e1b4b" text-anchor="middle">a3</text>
+  <text x="647" y="201" font-size="13" font-weight="700" fill="#1e1b4b" text-anchor="middle">a4</text>
+
+  <!-- row B: three pads, two real -->
+  <rect x="370" y="228" width="58" height="46" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="432" y="228" width="58" height="46" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="494" y="228" width="58" height="46" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="556" y="228" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="618" y="228" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="399" y="257" font-size="13" fill="#94a3b8" text-anchor="middle">pad</text>
+  <text x="461" y="257" font-size="13" fill="#94a3b8" text-anchor="middle">pad</text>
+  <text x="523" y="257" font-size="13" fill="#94a3b8" text-anchor="middle">pad</text>
+  <text x="585" y="257" font-size="13" fill="#1e1b4b" text-anchor="middle">b0</text>
+  <text x="647" y="257" font-size="13" font-weight="700" fill="#1e1b4b" text-anchor="middle">b1</text>
+
+  <!-- row C: two pads, three real -->
+  <rect x="370" y="284" width="58" height="46" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="432" y="284" width="58" height="46" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="494" y="284" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="556" y="284" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="618" y="284" width="58" height="46" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="399" y="313" font-size="13" fill="#94a3b8" text-anchor="middle">pad</text>
+  <text x="461" y="313" font-size="13" fill="#94a3b8" text-anchor="middle">pad</text>
+  <text x="523" y="313" font-size="13" fill="#1e1b4b" text-anchor="middle">c0</text>
+  <text x="585" y="313" font-size="13" fill="#1e1b4b" text-anchor="middle">c1</text>
+  <text x="647" y="313" font-size="13" font-weight="700" fill="#1e1b4b" text-anchor="middle">c2</text>
+
+  <!-- the last-column payoff -->
+  <rect x="614" y="166" width="66" height="170" rx="8" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-dasharray="6,4"/>
+  <line x1="647" y1="336" x2="647" y2="366" stroke="#6d28d9" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="424" y="368" width="448" height="52" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="648" y="391" font-size="15" font-weight="700" fill="#4c1d95" text-anchor="middle">logits[:, -1] is every row's next token</text>
+  <text x="648" y="411" font-size="12.5" fill="#6d28d9" text-anchor="middle">the reason to pad left: no per-row gather</text>
+
+  <!-- ===== right: the two companion tensors ===== -->
+  <rect x="712" y="150" width="438" height="94" rx="12" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="732" y="177" font-size="16" font-weight="700" fill="#14532d">attention_mask [3, 5]: load-bearing</text>
+  <text x="732" y="200" font-size="13" fill="#166534">Left padding puts the pads at low indices, which the causal</text>
+  <text x="732" y="218" font-size="13" fill="#166534">mask already permits every query to read. Drop the mask and</text>
+  <text x="732" y="236" font-size="13" font-weight="700" fill="#166534">the logits move by 7.5.</text>
+
+  <rect x="712" y="256" width="438" height="94" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <text x="732" y="283" font-size="16" font-weight="700" fill="#334155">position_ids [3, 5]: not load-bearing</text>
+  <text x="732" y="306" font-size="13" fill="#64748b">cumsum(mask) - 1, so each row restarts at 0. But a RoPE</text>
+  <text x="732" y="324" font-size="13" fill="#64748b">score depends on i - j only, so a uniform shift cancels:</text>
+  <text x="732" y="342" font-size="13" font-weight="700" fill="#64748b">measured 0.0 at shift 3, 2e-6 at shift 5000.</text>
+
+  <!-- the NaN corner -->
+  <rect x="880" y="368" width="270" height="52" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="1015" y="390" font-size="14" font-weight="700" fill="#7c2d12" text-anchor="middle">pad bias = finfo.min, not -inf</text>
+  <text x="1015" y="409" font-size="12" fill="#9a3412" text-anchor="middle">an all-masked query row would softmax 0/0</text>
+
+  <!-- ===== bottom: the waste ===== -->
+  <text x="50" y="470" font-size="14" font-weight="700" fill="#334155">what the rectangle costs</text>
+
+  <rect x="50" y="484" width="1100" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="50" y="484" width="367" height="34" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <text x="233" y="506" font-size="14" font-weight="700" fill="#64748b" text-anchor="middle">5 pad slots</text>
+  <text x="783" y="506" font-size="14" font-weight="700" fill="#1e1b4b" text-anchor="middle">10 real tokens</text>
+  <text x="50" y="540" font-size="13" fill="#64748b">padding_waste = 5 / 15 = 33%: every pad slot pays a full block of attention and MLP for a token that does not exist.</text>
+
+  <!-- bottom banner -->
+  <rect x="110" y="566" width="980" height="76" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="130" y="592" font-size="14" font-weight="700" fill="#92400e">A batch is sized by its longest member: one 500-token prompt batched with seven 20-token prompts is 86% padding.</text>
+  <text x="130" y="613" font-size="13" fill="#78350f">That number is the honest argument for everything after static batching: ragged packing, and the iteration-level scheduler of Week 8</text>
+  <text x="130" y="632" font-size="13" fill="#78350f">that lets a sequence join and leave mid-flight instead of waiting for the slowest row in its rectangle to finish.</text>
+</svg>
