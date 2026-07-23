@@ -304,7 +304,12 @@ def gqa_attention(
                  whether the past is recomputed or remembered.
     layer_idx:   which layer's K/V slot to use in `cache` (ignored if no cache).
     attention_mask: optional [batch, kv_len] bool key mask, True where a key is a
-                 real token. This is what makes a *padded batch* (Day 27) legal:
+                 real token. With a `BatchedPagedKVCache` (Day 28) this is the
+                 *prefill* signal: the mask says which columns are real, each row's
+                 real K/V is written to that row's own blocks, and the forward is the
+                 dense masked one below. A batched decode step passes no mask at all,
+                 because per-sequence tables never store a pad in the first place.
+                 This is what makes a *padded batch* (Day 27) legal:
                  ragged prompts stacked into one rectangle carry pad slots whose
                  K/V mean nothing, and under left padding those slots sit at the
                  low indices the causal mask happily allows. The mask is combined
@@ -342,21 +347,46 @@ def gqa_attention(
     # before. Duck-typed on the method name so layers.py stays decoupled from the
     # cache classes, just as the `cache.append` call already is.
     if cache is not None:
-        paged_read = getattr(cache, "paged_attention", None)
-        if paged_read is not None:
-            if attention_mask is not None:
-                # The fused read walks one block table over one sequence's slots.
-                # Honouring a padded batch there needs a per-sequence table and a
-                # per-sequence slot mapping (later this week), so refuse rather
-                # than attend over a neighbour's blocks.
+        # A batched paged cache (Day 28) owns one block table per row and exposes a
+        # ragged `write`. Under a padded prefill that is all it is asked for: store
+        # each row's *real* K/V in its own blocks and let the dense masked path below
+        # do this forward, since on a prefill the history is exactly this step's own
+        # tokens and there is nothing cached to read. Decode is the other half, and it
+        # arrives with no mask, so it falls through to the fused read.
+        ragged_write = getattr(cache, "write", None)
+        if ragged_write is not None and attention_mask is not None:
+            if attention_mask.shape != (batch, seq):
                 raise ValueError(
-                    "the paged read is single-sequence: a padded batch needs "
-                    "per-sequence block tables, which are not wired yet"
+                    f"a padded prefill into per-sequence tables needs the batch's own "
+                    f"[batch, seq] = {(batch, seq)} key mask; got "
+                    f"{tuple(attention_mask.shape)}. Attending over a cached history "
+                    "with a mask is the decode path, which needs no mask at all"
                 )
-            attended = paged_read(layer_idx, k, v, q, config.num_kv_groups)
-            out = attended.transpose(1, 2).reshape(batch, seq, n_q * d)
-            return F.linear(out, o_weight)
-        k, v = cache.append(layer_idx, k, v)
+            # Layer 0 is the one that grows the tables, so it is also the only layer
+            # that can still see the pre-prefill state; by layer 1 the rows already
+            # hold this step's own tokens.
+            if layer_idx == 0 and any(cache.seq_lens):
+                raise ValueError(
+                    "the rows already hold cached tokens: a masked forward attends "
+                    "only over this step's K/V, so it would silently ignore the history"
+                )
+            ragged_write(layer_idx, k, v, attention_mask)
+        else:
+            paged_read = getattr(cache, "paged_attention", None)
+            if paged_read is not None:
+                if attention_mask is not None:
+                    # The single-sequence fused read walks one block table over one
+                    # sequence's slots. A padded batch there would attend over a
+                    # neighbour's blocks, so refuse; a `BatchedPagedKVCache` is what
+                    # that batch wants, and it took the branch above.
+                    raise ValueError(
+                        "the paged read is single-sequence: a padded batch needs "
+                        "per-sequence block tables (BatchedPagedKVCache)"
+                    )
+                attended = paged_read(layer_idx, k, v, q, config.num_kv_groups)
+                out = attended.transpose(1, 2).reshape(batch, seq, n_q * d)
+                return F.linear(out, o_weight)
+            k, v = cache.append(layer_idx, k, v)
 
     # Grow 8 KV heads to 32 so every query head has a partner.
     k = repeat_kv(k, config.num_kv_groups)

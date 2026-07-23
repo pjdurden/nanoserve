@@ -103,6 +103,112 @@ def paged_attention_reference(
     return torch.matmul(weights, v)
 
 
+def paged_attention_batched_reference(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+) -> torch.Tensor:
+    """The decode read for a whole batch: one new token per row, one table per row.
+
+    Day 28. The single-sequence read above walks one slot mapping over one history.
+    A batch of N sequences decoding together has N histories of different lengths,
+    living in one shared pool, so the mapping grows a row axis and the "how far does
+    this row's history go" scalar becomes a vector.
+
+    q:            [batch, n_q, 1, d] this step's rotated queries, one new token per
+                  row. Exactly one: a decode step is one token per sequence, and a
+                  ragged *prefill* is the dense masked path (`gqa_attention` with an
+                  attention mask), not this.
+    k_pool,
+    v_pool:       [num_slots, n_kv, d] the layer's flat physical pool, shared by
+                  every row. Rows interleave in it freely; the mapping is what keeps
+                  them apart.
+    slot_mapping: [batch, max_ctx] long. `slot_mapping[i, p]` is the flat pool slot
+                  of row i's logical position p, oldest first. Rows shorter than
+                  `max_ctx` are padded with any *legal* index (the cache uses 0):
+                  this reference gathers the whole rectangle before it masks, so a
+                  padded entry really is read, and a -1 would silently wrap onto the
+                  last slot of the pool instead of erroring.
+    context_lens: [batch] long, how many of a row's slots are real. This is what the
+                  Day-27 key mask turns into once each sequence owns its own table:
+                  no pad token is ever written to the cache, so the read does not
+                  need to be told which keys are fake, only how many are real.
+    n_rep:        GQA repeat factor (`config.num_kv_groups`).
+    scale:        softmax scale; defaults to `head_dim ** -0.5`.
+
+    Returns [batch, n_q, 1, d], the attention output before o_proj. Row i is equal to
+    `paged_attention_reference` run on row i's slots alone, which is the property the
+    tests pin: batching is a throughput change and never a behaviour change.
+
+    No causal mask appears here, and its absence is not an oversight. The single new
+    query of a decode step sits at the end of its own history, so it may see every
+    cached token; the only thing to exclude is the rectangle's padding, and that is
+    what `context_lens` does. The bias is `finfo.min` rather than `-inf` for the
+    reason Day 27 found the hard way, though here it is belt and braces: every row is
+    required to have at least one real key, so no row can softmax over nothing.
+
+    Reference, not the fast path: the gather still materializes `[batch, max_ctx]`
+    tokens of K/V, which is both the contiguous buffer paging exists to avoid *and*
+    a rectangle sized by the longest history in the batch. A kernel streams each
+    row's own tiles and never pays for another row's length. This is the oracle that
+    version gets held to.
+    """
+    if q.ndim != 4:
+        raise ValueError(f"q must be [batch, n_q, 1, d]; got {tuple(q.shape)}")
+    if q.shape[2] != 1:
+        raise ValueError(
+            f"the batched read is the decode read: one new token per row, got "
+            f"seq_q={q.shape[2]}. A ragged prefill goes through the dense masked path"
+        )
+    if k_pool.ndim != 3 or k_pool.shape != v_pool.shape:
+        raise ValueError(
+            "k_pool and v_pool must have the same shape [num_slots, n_kv, d]; got "
+            f"{tuple(k_pool.shape)} and {tuple(v_pool.shape)}"
+        )
+    if slot_mapping.ndim != 2:
+        raise ValueError(
+            f"slot_mapping must be [batch, max_ctx]; got {tuple(slot_mapping.shape)}"
+        )
+    batch, n_q, _, d = q.shape
+    max_ctx = slot_mapping.shape[1]
+    if slot_mapping.shape[0] != batch or context_lens.shape != (batch,):
+        raise ValueError(
+            f"slot_mapping and context_lens must have one row each per sequence "
+            f"(batch={batch}); got {tuple(slot_mapping.shape)} and "
+            f"{tuple(context_lens.shape)}"
+        )
+    if int(context_lens.min()) < 1:
+        raise ValueError(
+            "context_lens must be at least 1 for every row: a query with no visible "
+            "key softmaxes over nothing (0/0). A decode query always has its own token"
+        )
+    if int(context_lens.max()) > max_ctx:
+        raise ValueError(
+            f"context_lens claims more history than the mapping holds: max "
+            f"{int(context_lens.max())} > max_ctx {max_ctx}"
+        )
+    if scale is None:
+        scale = d**-0.5
+
+    # Paged read, one gather for the whole batch: [batch, max_ctx, n_kv, d] ->
+    # [batch, n_kv, max_ctx, d], the shape attention scores against.
+    k = k_pool[slot_mapping].permute(0, 2, 1, 3)
+    v = v_pool[slot_mapping].permute(0, 2, 1, 3)
+    k = repeat_kv(k, n_rep)
+    v = repeat_kv(v, n_rep)
+
+    scores = torch.matmul(q, k.transpose(2, 3)) * scale  # [batch, n_q, 1, max_ctx]
+    beyond = torch.arange(max_ctx, device=q.device)[None, :] >= context_lens[:, None].to(q.device)
+    scores = scores.masked_fill(beyond[:, None, None, :], torch.finfo(scores.dtype).min)
+
+    weights = torch.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+    return torch.matmul(weights, v)
+
+
 def paged_attention_kernel(
     q: torch.Tensor,
     k_pool: torch.Tensor,

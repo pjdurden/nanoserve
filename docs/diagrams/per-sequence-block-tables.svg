@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">One pool, one block table per sequence</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Day 27 batched the prefill and stopped: the paged cache had one block table, so a batch could not say whose blocks were whose.</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">Give each row its own table over one shared pool and the decode step batches too: ragged in the cache, rectangular only to read.</text>
+
+  <!-- ===== left: three tables ===== -->
+  <text x="50" y="148" font-size="14" font-weight="700" fill="#334155">three sequences, three block tables</text>
+
+  <text x="50" y="205" font-size="14" font-weight="600" fill="#1e1b4b">seq A: 7 tokens</text>
+  <rect x="190" y="182" width="44" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <rect x="242" y="182" width="44" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <rect x="294" y="182" width="44" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <rect x="346" y="182" width="44" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <text x="212" y="205" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">0</text>
+  <text x="264" y="205" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">1</text>
+  <text x="316" y="205" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">2</text>
+  <text x="368" y="205" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">6</text>
+
+  <text x="50" y="255" font-size="14" font-weight="600" fill="#14532d">seq B: 3 tokens</text>
+  <rect x="190" y="232" width="44" height="34" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="242" y="232" width="44" height="34" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <text x="212" y="255" font-size="13" font-weight="600" fill="#14532d" text-anchor="middle">3</text>
+  <text x="264" y="255" font-size="13" font-weight="600" fill="#14532d" text-anchor="middle">7</text>
+
+  <text x="50" y="305" font-size="14" font-weight="600" fill="#7c2d12">seq C: 4 tokens</text>
+  <rect x="190" y="282" width="44" height="34" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.8"/>
+  <rect x="242" y="282" width="44" height="34" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.8"/>
+  <text x="212" y="305" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">4</text>
+  <text x="264" y="305" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">5</text>
+
+  <text x="50" y="336" font-size="12.5" fill="#64748b">a table is a list of physical block ids, and they need not be adjacent</text>
+
+  <line x1="430" y1="245" x2="512" y2="245" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ===== right: the read's addressing ===== -->
+  <text x="560" y="148" font-size="14" font-weight="700" fill="#334155">the read's addressing: slot_mapping [3, 7]</text>
+  <text x="1090" y="150" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">context_lens</text>
+
+  <text x="550" y="189" font-size="13" font-weight="700" fill="#1e1b4b" text-anchor="end">A</text>
+  <rect x="560" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="626" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="692" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="758" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="824" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="890" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="956" y="162" width="62" height="42" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="591" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">0</text>
+  <text x="657" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">1</text>
+  <text x="723" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">2</text>
+  <text x="789" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">3</text>
+  <text x="855" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">4</text>
+  <text x="921" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">5</text>
+  <text x="987" y="189" font-size="13" fill="#1e1b4b" text-anchor="middle">12</text>
+  <rect x="1040" y="162" width="100" height="42" rx="6" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.8"/>
+  <text x="1090" y="189" font-size="14" font-weight="700" fill="#4c1d95" text-anchor="middle">7</text>
+
+  <text x="550" y="237" font-size="13" font-weight="700" fill="#14532d" text-anchor="end">B</text>
+  <rect x="560" y="210" width="62" height="42" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="626" y="210" width="62" height="42" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="692" y="210" width="62" height="42" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="758" y="210" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="824" y="210" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="890" y="210" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="956" y="210" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <text x="591" y="237" font-size="13" fill="#14532d" text-anchor="middle">6</text>
+  <text x="657" y="237" font-size="13" fill="#14532d" text-anchor="middle">7</text>
+  <text x="723" y="237" font-size="13" fill="#14532d" text-anchor="middle">14</text>
+  <text x="789" y="237" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="855" y="237" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="921" y="237" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="987" y="237" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <rect x="1040" y="210" width="100" height="42" rx="6" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.8"/>
+  <text x="1090" y="237" font-size="14" font-weight="700" fill="#4c1d95" text-anchor="middle">3</text>
+
+  <text x="550" y="285" font-size="13" font-weight="700" fill="#7c2d12" text-anchor="end">C</text>
+  <rect x="560" y="258" width="62" height="42" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="626" y="258" width="62" height="42" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="692" y="258" width="62" height="42" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="758" y="258" width="62" height="42" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="824" y="258" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="890" y="258" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="956" y="258" width="62" height="42" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <text x="591" y="285" font-size="13" fill="#7c2d12" text-anchor="middle">8</text>
+  <text x="657" y="285" font-size="13" fill="#7c2d12" text-anchor="middle">9</text>
+  <text x="723" y="285" font-size="13" fill="#7c2d12" text-anchor="middle">10</text>
+  <text x="789" y="285" font-size="13" fill="#7c2d12" text-anchor="middle">11</text>
+  <text x="855" y="285" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="921" y="285" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="987" y="285" font-size="12" fill="#94a3b8" text-anchor="middle">0</text>
+  <rect x="1040" y="258" width="100" height="42" rx="6" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.8"/>
+  <text x="1090" y="285" font-size="14" font-weight="700" fill="#4c1d95" text-anchor="middle">4</text>
+
+  <text x="560" y="322" font-size="12.5" fill="#64748b">rectangular only here, because a kernel wants one tensor with a stride.</text>
+  <text x="560" y="340" font-size="12.5" fill="#64748b">The dashed cells are inert padding: gathered, then killed by context_lens.</text>
+
+  <!-- ===== middle band: the shared pool ===== -->
+  <text x="50" y="372" font-size="14" font-weight="700" fill="#334155">one shared pool: 10 physical blocks, block_size = 2, so 20 slots</text>
+
+  <text x="75" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="130" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">1</text>
+  <text x="185" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">2</text>
+  <text x="240" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">3</text>
+  <text x="295" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">4</text>
+  <text x="350" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">5</text>
+  <text x="405" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">6</text>
+  <text x="460" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">7</text>
+  <text x="515" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">8</text>
+  <text x="570" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">9</text>
+  <text x="625" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">10</text>
+  <text x="680" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">11</text>
+  <text x="735" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">12</text>
+  <text x="790" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">13</text>
+  <text x="845" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">14</text>
+  <text x="900" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">15</text>
+  <text x="955" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">16</text>
+  <text x="1010" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">17</text>
+  <text x="1065" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">18</text>
+  <text x="1120" y="390" font-size="10" fill="#94a3b8" text-anchor="middle">19</text>
+
+  <rect x="50" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="105" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="160" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="215" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="270" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="325" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="75" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a0</text>
+  <text x="130" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a1</text>
+  <text x="185" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a2</text>
+  <text x="240" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a3</text>
+  <text x="295" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a4</text>
+  <text x="350" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a5</text>
+
+  <rect x="380" y="396" width="51" height="48" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="435" y="396" width="51" height="48" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <text x="405" y="426" font-size="13" font-weight="600" fill="#14532d" text-anchor="middle">b0</text>
+  <text x="460" y="426" font-size="13" font-weight="600" fill="#14532d" text-anchor="middle">b1</text>
+
+  <rect x="490" y="396" width="51" height="48" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="545" y="396" width="51" height="48" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="600" y="396" width="51" height="48" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <rect x="655" y="396" width="51" height="48" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <text x="515" y="426" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">c0</text>
+  <text x="570" y="426" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">c1</text>
+  <text x="625" y="426" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">c2</text>
+  <text x="680" y="426" font-size="13" font-weight="600" fill="#7c2d12" text-anchor="middle">c3</text>
+
+  <rect x="710" y="396" width="51" height="48" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="765" y="396" width="51" height="48" rx="6" fill="#ffffff" stroke="#4338ca" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <text x="735" y="426" font-size="13" font-weight="600" fill="#1e1b4b" text-anchor="middle">a6</text>
+  <text x="790" y="426" font-size="11" fill="#a5b4fc" text-anchor="middle">spare</text>
+
+  <rect x="820" y="396" width="51" height="48" rx="6" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="875" y="396" width="51" height="48" rx="6" fill="#ffffff" stroke="#15803d" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <text x="845" y="426" font-size="13" font-weight="600" fill="#14532d" text-anchor="middle">b2</text>
+  <text x="900" y="426" font-size="11" fill="#86efac" text-anchor="middle">spare</text>
+
+  <rect x="930" y="396" width="51" height="48" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="985" y="396" width="51" height="48" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="1040" y="396" width="51" height="48" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+  <rect x="1095" y="396" width="51" height="48" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4,3"/>
+
+  <text x="105" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 0: A</text>
+  <text x="215" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 1: A</text>
+  <text x="325" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 2: A</text>
+  <text x="435" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 3: B</text>
+  <text x="545" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 4: C</text>
+  <text x="655" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 5: C</text>
+  <text x="765" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 6: A</text>
+  <text x="875" y="461" font-size="11" fill="#64748b" text-anchor="middle">blk 7: B</text>
+  <text x="985" y="461" font-size="11" fill="#94a3b8" text-anchor="middle">blk 8: free</text>
+  <text x="1095" y="461" font-size="11" fill="#94a3b8" text-anchor="middle">blk 9: free</text>
+
+  <text x="50" y="484" font-size="12.5" fill="#64748b">A's fourth block is 6, not 3: B and C took the next free ones first. Physical order is allocation order, and no row can name a block it does not own.</text>
+
+  <!-- ===== bottom: the three lessons ===== -->
+  <rect x="50" y="498" width="356" height="86" rx="10" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="70" y="522" font-size="14" font-weight="700" fill="#14532d">the key mask became a context length</text>
+  <text x="70" y="543" font-size="12" fill="#166534">No pad is ever written to the pool, so the decode read</text>
+  <text x="70" y="561" font-size="12" fill="#166534">is never told which keys are fake, only how many are</text>
+  <text x="70" y="579" font-size="12" fill="#166534">real: context_lens[i]. One vector replaces the mask.</text>
+
+  <rect x="422" y="498" width="356" height="86" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="442" y="522" font-size="14" font-weight="700" fill="#7c2d12">the padding must still be a legal index</text>
+  <text x="442" y="543" font-size="12" fill="#9a3412">The reference gathers the whole rectangle and then</text>
+  <text x="442" y="561" font-size="12" fill="#9a3412">masks it, so a pad entry really is dereferenced. A -1</text>
+  <text x="442" y="579" font-size="12" fill="#9a3412">would wrap onto the pool's last slot, in silence.</text>
+
+  <rect x="794" y="498" width="356" height="86" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="814" y="522" font-size="14" font-weight="700" fill="#4c1d95">all rows fit, or none of them moves</text>
+  <text x="814" y="543" font-size="12" fill="#6d28d9">One table's append is atomic. With N, rows 0 and 1</text>
+  <text x="814" y="561" font-size="12" fill="#6d28d9">can grow and row 2 find the pool dry, so the batch's</text>
+  <text x="814" y="579" font-size="12" fill="#6d28d9">whole block demand is checked before anything moves.</text>
+
+  <!-- bottom banner -->
+  <rect x="50" y="596" width="1100" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="70" y="621" font-size="14" font-weight="700" fill="#92400e">The bill static batching still pays: a row that has emitted EOS keeps its query, slot and block until the batch's slowest row finishes.</text>
+  <text x="70" y="643" font-size="13" fill="#78350f">Week 8's iteration-level scheduler is what lets a finished row leave and a waiting request take its place mid-flight. 239 tests green.</text>
+</svg>

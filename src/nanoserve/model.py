@@ -32,8 +32,8 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from .batch import PaddedBatch, last_token_logits
-from .cache import BlockAllocator, NaiveKVCache, PagedKVCache
+from .batch import PaddedBatch, last_token_logits, pad_prompts
+from .cache import BatchedPagedKVCache, BlockAllocator, NaiveKVCache, PagedKVCache
 from .config import ModelConfig
 from .layers import RotaryEmbedding, rms_norm, transformer_block
 from .loader import EMBED, LM_HEAD, Weights
@@ -131,10 +131,11 @@ class LlamaModel:
         against the single-sequence path and pins both controls (drop the mask,
         drop the position shift) failing it.
 
-        No cache: a padded batch cannot reach the paged read yet, because that read
-        walks one block table over one sequence. Prefill-only batching is exactly
-        the static-batching step, and the per-sequence tables that let a *decode*
-        batch share the pool come later this week.
+        No cache, which makes this the prefill-only version of batching: one forward
+        over N prompts and nothing kept. Day 28 gives each row its own block table
+        over one shared pool, which is what lets the *decode* steps batch too; that
+        loop is `greedy_generate_batch`, and it uses this same padded forward for its
+        prefill with a `BatchedPagedKVCache` listening.
 
         Returns logits [batch, max_len, vocab_size]. Use
         `nanoserve.batch.last_token_logits` to take each row's next-token
@@ -288,6 +289,96 @@ class LlamaModel:
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         cache = PagedKVCache(self.config, allocator)
         return self._greedy_decode(input_ids, max_new_tokens, cache, eos_id)
+
+    @torch.no_grad()
+    def greedy_generate_batch(
+        self,
+        prompts: list[list[int]],
+        max_new_tokens: int,
+        eos_id: int | None = None,
+        block_size: int = 16,
+        pad_id: int = 0,
+        num_blocks: int | None = None,
+        return_cache: bool = False,
+    ):
+        """Greedy decode many ragged prompts at once, over one shared block pool.
+
+        Day 28, and the point Phase 3 has been building to: Day 27 batched a single
+        *prefill* and stopped, because the cache was one sequence with one table.
+        With a `BatchedPagedKVCache` each row owns its own table over the same pool,
+        so the decode loop batches too. Every step is one forward over `batch` new
+        tokens instead of `batch` forwards over one, which is the whole throughput
+        argument, and the emitted tokens are identical to running each prompt alone.
+
+        prompts:        one list of token ids per sequence, ragged.
+        max_new_tokens: cap on generated tokens per row.
+        eos_id:         if given, a row stops when it emits this (the token is kept).
+        block_size:     tokens per physical block.
+        pad_id:         filler for the prefill rectangle; never attended to, and
+                        never written to the cache.
+        num_blocks:     pool size; defaults to exactly what this run needs. Passing a
+                        smaller one is how you see `KVCacheExhausted`, which is the
+                        pressure the Week-9 scheduler exists to handle.
+        return_cache:   also hand back the cache, so a caller (or a test) can look at
+                        what the run actually cost.
+
+        Returns a list of `prompt + generated` id lists, ragged: rows stop at their
+        own EOS. With `return_cache=True`, returns `(rows, cache)`.
+
+        Two shapes of waste are visible in this loop and both are deliberate, because
+        Week 8's continuous batching is defined by removing them. The prefill pays for
+        the padded rectangle (`PaddedBatch.padding_waste`). And a row that has already
+        emitted EOS keeps getting a query, a slot and a block every step until the
+        slowest row in the batch finishes, because the batch is fixed at the start.
+        Iteration-level scheduling is what lets a finished row leave and a waiting one
+        take its place mid-flight; until then, static means static.
+        """
+        batch = pad_prompts(prompts, pad_id=pad_id, side="left")
+        if num_blocks is None:
+            # Per row, not on the total: blocks are the unit of allocation, so each
+            # sequence's partial last block is its own and cannot be shared.
+            num_blocks = sum(
+                (len(p) + max_new_tokens + block_size - 1) // block_size for p in prompts
+            )
+        allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
+        cache = BatchedPagedKVCache(self.config, allocator, batch.batch_size)
+
+        # Prefill: the padded rectangle with its mask and positions, exactly Day 27's
+        # forward, except the cache is listening and stores each row's real K/V into
+        # that row's own blocks.
+        logits = self.forward(
+            batch.input_ids,
+            batch.position_ids,
+            cache=cache,
+            attention_mask=batch.attention_mask,
+        )
+        nxt = last_token_logits(logits, batch).argmax(dim=-1)  # [batch]
+
+        rows = [list(prompt) for prompt in prompts]
+        done = [False] * batch.batch_size
+        for i, token in enumerate(nxt.tolist()):
+            rows[i].append(token)
+            done[i] = eos_id is not None and token == eos_id
+
+        # Decode: one new token per row per step. Each row is at its own absolute
+        # position (its own cached length), which is why the positions are a column
+        # and not a scalar, and why the paged read needs no key mask: the rows are
+        # ragged in the cache, not padded.
+        for _ in range(max_new_tokens - 1):
+            if all(done):
+                break
+            positions = torch.tensor(
+                [[n] for n in cache.seq_lens], dtype=torch.long, device=batch.input_ids.device
+            )
+            logits = self.forward(nxt[:, None], position_ids=positions, cache=cache)
+            nxt = logits[:, -1].argmax(dim=-1)
+            for i, token in enumerate(nxt.tolist()):
+                if done[i]:
+                    continue  # still forwarded, still cached, no longer collected
+                rows[i].append(token)
+                done[i] = eos_id is not None and token == eos_id
+
+        return (rows, cache) if return_cache else rows
 
     @torch.no_grad()
     def _greedy_decode(
