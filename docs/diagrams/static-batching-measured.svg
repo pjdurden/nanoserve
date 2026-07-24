@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <pattern id="waste" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="2.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">Static batching, measured: what a row buys and what it blocks</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Week 7 built the batched prefill and the batched decode. This is the bill: a batch is fixed at the start, so it runs until its</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">slowest row is done and hands every row back then. Two costs fall out, one in throughput and one in latency, and they differ.</text>
+
+  <!-- ===== left: the head-of-line timeline ===== -->
+  <text x="50" y="146" font-size="14" font-weight="700" fill="#334155">one batch: 7 rows of 4 tokens behind 1 row of 32</text>
+
+  <line x1="150" y1="158" x2="150" y2="390" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="232" y1="158" x2="232" y2="390" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <line x1="690" y1="158" x2="690" y2="390" stroke="#b91c1c" stroke-width="2" stroke-dasharray="5,4"/>
+
+  <text x="50" y="181" font-size="12.5" font-weight="600" fill="#1e1b4b">row 0: 32 tok</text>
+  <rect x="150" y="167" width="540" height="18" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+
+  <text x="50" y="207" font-size="12.5" font-weight="600" fill="#14532d">row 1: 4 tok</text>
+  <rect x="150" y="193" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="193" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="233" font-size="12.5" font-weight="600" fill="#14532d">row 2: 4 tok</text>
+  <rect x="150" y="219" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="219" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="259" font-size="12.5" font-weight="600" fill="#14532d">row 3: 4 tok</text>
+  <rect x="150" y="245" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="245" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="285" font-size="12.5" font-weight="600" fill="#14532d">row 4: 4 tok</text>
+  <rect x="150" y="271" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="271" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="311" font-size="12.5" font-weight="600" fill="#14532d">row 5: 4 tok</text>
+  <rect x="150" y="297" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="297" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="337" font-size="12.5" font-weight="600" fill="#14532d">row 6: 4 tok</text>
+  <rect x="150" y="323" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="323" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="50" y="363" font-size="12.5" font-weight="600" fill="#14532d">row 7: 4 tok</text>
+  <rect x="150" y="349" width="82" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="232" y="349" width="458" height="18" rx="4" fill="url(#waste)" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4,3"/>
+
+  <text x="232" y="385" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">10.5s</text>
+  <text x="690" y="385" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">69.4s</text>
+  <text x="461" y="385" font-size="11.5" fill="#b91c1c" text-anchor="middle">still forwarded, still cached, still charged, collecting nothing</text>
+
+  <text x="50" y="411" font-size="12.5" fill="#64748b">Issued 248 tokens, collected 52: <tspan font-weight="700" fill="#b91c1c">79% went to finished rows.</tspan></text>
+  <text x="50" y="431" font-size="12.5" fill="#64748b">Row 7 was done at 10.5s, answered at 69.4s: <tspan font-weight="700" fill="#b91c1c">6.6x its own latency.</tspan></text>
+
+  <!-- ===== right: the uniform sweep ===== -->
+  <text x="740" y="146" font-size="14" font-weight="700" fill="#334155">uniform sweep: median decode step vs batch size</text>
+
+  <text x="740" y="181" font-size="12.5" font-weight="600" fill="#1e1b4b">batch 1</text>
+  <rect x="812" y="167" width="32" height="18" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="852" y="181" font-size="11.5" fill="#475569">279 ms</text>
+  <text x="1150" y="181" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="end">eff 1.00</text>
+
+  <text x="740" y="213" font-size="12.5" font-weight="600" fill="#1e1b4b">batch 2</text>
+  <rect x="812" y="199" width="54" height="18" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="874" y="213" font-size="11.5" fill="#475569">474 ms</text>
+  <text x="1150" y="213" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="end">eff 0.59</text>
+
+  <text x="740" y="245" font-size="12.5" font-weight="600" fill="#1e1b4b">batch 4</text>
+  <rect x="812" y="231" width="108" height="18" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="928" y="245" font-size="11.5" fill="#475569">940 ms</text>
+  <text x="1150" y="245" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="end">eff 0.30</text>
+
+  <text x="740" y="277" font-size="12.5" font-weight="600" fill="#1e1b4b">batch 8</text>
+  <rect x="812" y="263" width="240" height="18" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="1060" y="277" font-size="11.5" fill="#475569">2092 ms</text>
+  <text x="1150" y="299" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="end">eff 0.13</text>
+
+  <rect x="740" y="313" width="410" height="112" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="760" y="337" font-size="13" font-weight="700" fill="#334155">a free row is a claim about HBM</text>
+  <text x="760" y="358" font-size="12" fill="#475569">On a card the weights leave memory once per</text>
+  <text x="760" y="376" font-size="12" fill="#475569">step whatever the batch, so rows ride nearly free.</text>
+  <text x="760" y="394" font-size="12" fill="#475569">On this CPU the step time doubles with the batch:</text>
+  <text x="760" y="412" font-size="12" fill="#475569">peak 4.3 tok/s at batch 4, a 1.19x win, knee at 1.</text>
+
+  <!-- ===== bottom: the three lessons ===== -->
+  <rect x="50" y="446" width="356" height="122" rx="10" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="70" y="470" font-size="14" font-weight="700" fill="#14532d">issued tokens are not useful tokens</text>
+  <text x="70" y="491" font-size="12" fill="#166534">An issued token is one the forward computed,</text>
+  <text x="70" y="509" font-size="12" fill="#166534">a useful one is what a row collected. Ragged rows</text>
+  <text x="70" y="527" font-size="12" fill="#166534">pull them apart: 3.8 tok/s issued against 0.8 tok/s</text>
+  <text x="70" y="545" font-size="12" fill="#166534">of goodput here. Quote the second one.</text>
+  <text x="70" y="563" font-size="12" font-style="italic" fill="#166534">The gap is zero on equal-length rows.</text>
+
+  <rect x="422" y="446" width="356" height="122" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="442" y="470" font-size="14" font-weight="700" fill="#7c2d12">a uniform benchmark cannot see the bug</text>
+  <text x="442" y="491" font-size="12" fill="#9a3412">Sweep one prompt replicated N times and every</text>
+  <text x="442" y="509" font-size="12" fill="#9a3412">issued token is collected, the waste reads 0%, and</text>
+  <text x="442" y="527" font-size="12" fill="#9a3412">static batching looks done. So the sweep and the</text>
+  <text x="442" y="545" font-size="12" fill="#9a3412">blocking run stay two measurements, never one:</text>
+  <text x="442" y="563" font-size="12" font-style="italic" fill="#9a3412">raggedness is the variable, not the noise.</text>
+
+  <rect x="794" y="446" width="356" height="122" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="814" y="470" font-size="14" font-weight="700" fill="#4c1d95">wasted work and wasted time: two bills</text>
+  <text x="814" y="491" font-size="12" fill="#6d28d9">The waste fraction is throughput spent on nobody.</text>
+  <text x="814" y="509" font-size="12" fill="#6d28d9">The blocking delay is a caller kept waiting for an</text>
+  <text x="814" y="527" font-size="12" fill="#6d28d9">answer that already exists. A batch of clones pays</text>
+  <text x="814" y="545" font-size="12" fill="#6d28d9">the first and not the second, so no one number</text>
+  <text x="814" y="563" font-size="12" font-style="italic" fill="#6d28d9">stands in for both. Neither is optional.</text>
+
+  <!-- bottom banner -->
+  <rect x="50" y="580" width="1100" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="70" y="605" font-size="14" font-weight="700" fill="#92400e">What Week 8 has to remove: 79% of a ragged batch's decode goes to finished rows, and the first row done waits 6.6x its own latency.</text>
+  <text x="70" y="627" font-size="13" fill="#78350f">Iteration-level scheduling lets a finished row leave mid-flight and a waiting request take its slot. That is the trick, and now it has a target. 279 tests green.</text>
+</svg>

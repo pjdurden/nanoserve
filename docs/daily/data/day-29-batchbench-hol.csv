@@ -1,0 +1,2 @@
+batch_size,long_tokens,short_tokens,issued_tokens,useful_tokens,waste_fraction,goodput_tps,issued_tps,max_hol_delay_s,max_hol_inflation
+8,32,4,248,52,0.7903,0.8,3.81,58.889,6.604
