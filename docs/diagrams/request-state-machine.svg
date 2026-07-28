@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowghost" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <pattern id="waste" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="2.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">A request is a state, not a row index</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Day 29 measured what a fixed batch costs: 79% of a ragged decode goes to rows already finished.</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">A request stops being an index into a rectangle and becomes an object with a state, so it can leave mid-flight.</text>
+
+  <!-- ===== left: the state machine ===== -->
+  <text x="50" y="148" font-size="14" font-weight="700" fill="#334155">three states, and the edges written as data</text>
+
+  <rect x="64" y="180" width="104" height="52" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="116" y="204" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">waiting</text>
+  <text x="116" y="222" font-size="11" fill="#4338ca" text-anchor="middle">owns nothing</text>
+
+  <rect x="232" y="180" width="104" height="52" rx="9" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="284" y="204" font-size="15" font-weight="700" fill="#14532d" text-anchor="middle">running</text>
+  <text x="284" y="222" font-size="11" fill="#15803d" text-anchor="middle">slot + blocks</text>
+
+  <rect x="400" y="180" width="104" height="52" rx="9" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="452" y="204" font-size="15" font-weight="700" fill="#4c1d95" text-anchor="middle">finished</text>
+  <text x="452" y="222" font-size="11" fill="#6d28d9" text-anchor="middle">freed next step</text>
+
+  <line x1="168" y1="206" x2="232" y2="206" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="200" y="172" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">admit</text>
+  <line x1="336" y1="206" x2="400" y2="206" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="368" y="172" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">stop / length</text>
+
+  <!-- preempt: the edge Week 9 fills in -->
+  <path d="M284,232 C284,284 116,284 116,232" fill="none" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowghost)"/>
+  <text x="200" y="256" font-size="11.5" font-weight="600" fill="#94a3b8" text-anchor="middle">preempt: Week 9</text>
+
+  <path d="M116,232 C116,330 452,330 452,232" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="340" y="322" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">abort</text>
+
+  <rect x="50" y="345" width="470" height="95" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="368" font-size="13.5" font-weight="700" fill="#334155">admit needs two resources, and they fail differently</text>
+  <text x="70" y="390" font-size="12" fill="#475569">a slot: a row index in the batched cache, capped by its shape.</text>
+  <text x="70" y="410" font-size="12" fill="#475569">blocks: the prompt plus the whole budget, reserved atomically.</text>
+  <text x="70" y="430" font-size="12" font-style="italic" fill="#475569">FIFO: if the head does not fit, scheduling stops there.</text>
+
+  <!-- ===== right: what it buys, as an iteration timeline ===== -->
+  <text x="560" y="150" font-size="14" font-weight="700" fill="#334155">static: one rectangle, held until its slowest row is done</text>
+  <text x="1140" y="150" font-size="11.5" fill="#94a3b8" text-anchor="end">iterations 0 to 12</text>
+
+  <text x="592" y="178" font-size="11" fill="#64748b" text-anchor="end">slot 0</text>
+  <rect x="600" y="162" width="88" height="22" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="644" y="178" font-size="11.5" font-weight="700" fill="#1e1b4b" text-anchor="middle">A</text>
+  <rect x="688" y="162" width="440" height="22" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.4"/>
+
+  <text x="592" y="206" font-size="11" fill="#64748b" text-anchor="end">slot 1</text>
+  <rect x="600" y="190" width="132" height="22" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <text x="666" y="206" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">B</text>
+  <rect x="732" y="190" width="396" height="22" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.4"/>
+
+  <text x="592" y="234" font-size="11" fill="#64748b" text-anchor="end">slot 2</text>
+  <rect x="600" y="218" width="88" height="22" rx="4" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <text x="644" y="234" font-size="11.5" font-weight="700" fill="#7c2d12" text-anchor="middle">C</text>
+  <rect x="688" y="218" width="440" height="22" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.4"/>
+
+  <text x="592" y="262" font-size="11" fill="#64748b" text-anchor="end">slot 3</text>
+  <rect x="600" y="246" width="528" height="22" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="864" y="262" font-size="11.5" font-weight="700" fill="#4c1d95" text-anchor="middle">D</text>
+
+  <line x1="1128" y1="156" x2="1128" y2="276" stroke="#b91c1c" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="600" y="286" font-size="12" fill="#b91c1c">hatched = computed for a row that already finished. Every row returns at the line.</text>
+
+  <text x="560" y="312" font-size="14" font-weight="700" fill="#334155">scheduled: each row leaves at its own last token and its slot refills</text>
+
+  <text x="592" y="340" font-size="11" fill="#64748b" text-anchor="end">slot 0</text>
+  <rect x="600" y="324" width="88" height="22" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="644" y="340" font-size="11.5" font-weight="700" fill="#1e1b4b" text-anchor="middle">A</text>
+  <rect x="688" y="324" width="176" height="22" rx="4" fill="#ecfeff" stroke="#0e7490" stroke-width="1.6"/>
+  <text x="776" y="340" font-size="11.5" font-weight="700" fill="#164e63" text-anchor="middle">E</text>
+  <rect x="864" y="324" width="132" height="22" rx="4" fill="#fef9c3" stroke="#a16207" stroke-width="1.6"/>
+  <text x="930" y="340" font-size="11.5" font-weight="700" fill="#713f12" text-anchor="middle">H</text>
+
+  <text x="592" y="368" font-size="11" fill="#64748b" text-anchor="end">slot 1</text>
+  <rect x="600" y="352" width="132" height="22" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <text x="666" y="368" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">B</text>
+  <rect x="732" y="352" width="220" height="22" rx="4" fill="#fdf2f8" stroke="#be185d" stroke-width="1.6"/>
+  <text x="842" y="368" font-size="11.5" font-weight="700" fill="#831843" text-anchor="middle">F</text>
+
+  <text x="592" y="396" font-size="11" fill="#64748b" text-anchor="end">slot 2</text>
+  <rect x="600" y="380" width="88" height="22" rx="4" fill="#fff7ed" stroke="#b45309" stroke-width="1.6"/>
+  <text x="644" y="396" font-size="11.5" font-weight="700" fill="#7c2d12" text-anchor="middle">C</text>
+  <rect x="688" y="380" width="220" height="22" rx="4" fill="#f7fee7" stroke="#4d7c0f" stroke-width="1.6"/>
+  <text x="798" y="396" font-size="11.5" font-weight="700" fill="#365314" text-anchor="middle">G</text>
+
+  <text x="592" y="424" font-size="11" fill="#64748b" text-anchor="end">slot 3</text>
+  <rect x="600" y="408" width="528" height="22" rx="4" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+  <text x="864" y="424" font-size="11.5" font-weight="700" fill="#4c1d95" text-anchor="middle">D</text>
+
+  <!-- ===== bottom: the three lessons ===== -->
+  <rect x="50" y="446" width="356" height="122" rx="10" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="70" y="470" font-size="14" font-weight="700" fill="#14532d">an object leaves a batch, an index cannot</text>
+  <text x="70" y="491" font-size="12" fill="#166534">Waiting, running, finished, and the legal edges</text>
+  <text x="70" y="509" font-size="12" fill="#166534">written as a dict. Three states feel too small to</text>
+  <text x="70" y="527" font-size="12" fill="#166534">need a table, and the table is what shows the</text>
+  <text x="70" y="545" font-size="12" fill="#166534">missing edge: running back to waiting.</text>
+  <text x="70" y="563" font-size="12" font-style="italic" fill="#166534">An edge with no other half is better absent.</text>
+
+  <rect x="422" y="446" width="356" height="122" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="442" y="470" font-size="14" font-weight="700" fill="#7c2d12">release first, then admit</text>
+  <text x="442" y="491" font-size="12" fill="#9a3412">Admit-then-reap is equally correct and idles the</text>
+  <text x="442" y="509" font-size="12" fill="#9a3412">slot a request gave up for one whole forward: it</text>
+  <text x="442" y="527" font-size="12" fill="#9a3412">cannot be refilled until the next iteration. No</text>
+  <text x="442" y="545" font-size="12" fill="#9a3412">answer is wrong, a row is simply empty.</text>
+  <text x="442" y="563" font-size="12" font-style="italic" fill="#9a3412">Correctness stays green, utilisation pays.</text>
+
+  <rect x="794" y="446" width="356" height="122" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="814" y="470" font-size="14" font-weight="700" fill="#4c1d95">FIFO, and a blocked head is not skipped</text>
+  <text x="814" y="491" font-size="12" fill="#6d28d9">Looking past a head that does not fit, for a</text>
+  <text x="814" y="509" font-size="12" fill="#6d28d9">smaller request that does, raises utilisation for</text>
+  <text x="814" y="527" font-size="12" fill="#6d28d9">free and starves the large prompt forever, while</text>
+  <text x="814" y="545" font-size="12" fill="#6d28d9">the server reports busy and healthy.</text>
+  <text x="814" y="563" font-size="12" font-style="italic" fill="#6d28d9">A visible queue beats an invisible one.</text>
+
+  <!-- bottom banner -->
+  <rect x="50" y="580" width="1100" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="70" y="605" font-size="14" font-weight="700" fill="#92400e">Day 29's ragged shape, recounted: a static batch issues 264 tokens to collect 60. The scheduled loop issues 60.</text>
+  <text x="70" y="627" font-size="13" fill="#78350f">Row 0 returns at iteration 4, not 32. 24 requests through 8 slots: 45 iterations against 96. 314 tests green.</text>
+</svg>
