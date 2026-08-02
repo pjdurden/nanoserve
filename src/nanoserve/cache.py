@@ -267,6 +267,44 @@ class BlockTable:
         block_id, offset = self.position(logical_pos)
         return block_id * self.block_size + offset
 
+    def adopt(self, block_ids: list[int]) -> None:
+        """Take over blocks somebody else already reserved from this pool. Day 31.
+
+        The scheduler allocates a request's whole worst case at admission, so by the
+        time the engine gives that request a cache row the blocks are already out of
+        the pool. The row borrows them rather than allocating a second set: two
+        reservations for one sequence would double-book the pool and the second one
+        is the one that fails, at the worst possible moment, mid-flight.
+
+        Borrowing is also what makes the reservation's promise true. A table that
+        starts with `capacity >= worst_case_tokens` never crosses a boundary it has
+        no block for, so `append` cannot reach the allocator at all and a running
+        request cannot raise `KVCacheExhausted`.
+
+        Refuses a table that is already holding blocks: overwriting the list would
+        strand them, allocated and unreachable, which is the one bug a pool cannot
+        recover from.
+        """
+        if self.block_ids or self.num_tokens:
+            raise ValueError(
+                f"adopt needs an empty table; this one holds {self.num_tokens} tokens "
+                f"in {len(self.block_ids)} blocks"
+            )
+        self.block_ids = list(block_ids)
+
+    def detach(self) -> list[int]:
+        """Give the borrowed blocks back to their owner and reset. Day 31.
+
+        The counterpart of `adopt`, and deliberately not `free`: the table never
+        owned these blocks, so it must not return them to the pool. It hands the ids
+        back to whoever lent them (the scheduler, via the finished request) and that
+        owner does the freeing, which keeps exactly one thing talking to the
+        allocator about any given block.
+        """
+        block_ids, self.block_ids = self.block_ids, []
+        self.num_tokens = 0
+        return block_ids
+
     def free(self) -> None:
         """Return every block to the pool and reset to an empty, reusable table."""
         self.allocator.free_all(self.block_ids)
@@ -498,20 +536,70 @@ class BatchedPagedKVCache:
         # This step's per-row destination slots, computed once on layer 0 and reused
         # by the rest (every layer stores the same tokens at the same positions).
         self._step_slots: list[torch.Tensor] | None = None
-        # The read's `[batch, max_ctx]` addressing, rebuilt whenever the tables grow.
+        # Which rows layer 0 grew, so the other layers cannot scatter somewhere else.
+        self._step_rows: tuple[int, ...] | None = None
+        # The read's `[batch, max_ctx]` addressing, rebuilt whenever the tables grow
+        # or a different set of rows is read.
         self._mapping: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._mapping_rows: tuple[int, ...] | None = None
 
     @property
     def seq_lens(self) -> list[int]:
         """Cached tokens per row. Ragged by construction: no padding is stored."""
         return [table.num_tokens for table in self.tables]
 
+    # --- rows ------------------------------------------------------------------
+
+    def _rows(self, rows) -> tuple[int, ...]:
+        """Normalise and check a row selection; `None` means the whole batch."""
+        if rows is None:
+            return tuple(range(self.batch_size))
+        rows = tuple(int(r) for r in rows)
+        if not rows:
+            raise ValueError("a row view needs at least one row")
+        if len(set(rows)) != len(rows):
+            raise ValueError(f"rows must be distinct, got {list(rows)}")
+        if any(r < 0 or r >= self.batch_size for r in rows):
+            raise ValueError(
+                f"rows out of range for a cache of {self.batch_size}: {list(rows)}"
+            )
+        return rows
+
+    def view(self, rows) -> BatchedCacheRows:
+        """Present `rows` as if they were a whole batch. Day 31.
+
+        What continuous batching needs and Day 28 did not have: a forward is over
+        whichever requests the scheduler picked this iteration, not over every row
+        the cache owns. See `BatchedCacheRows`.
+        """
+        return BatchedCacheRows(self, self._rows(rows))
+
+    def adopt_row(self, row: int, block_ids: list[int]) -> None:
+        """Give row `row` a reservation somebody else made. See `BlockTable.adopt`."""
+        (index,) = self._rows([row])
+        self.tables[index].adopt(block_ids)
+        self._mapping = None
+
+    def reset_row(self, row: int) -> list[int]:
+        """Hand a row back empty and return the blocks it was borrowing. Day 31.
+
+        Called when a request finishes, before its slot is handed to the next one.
+        Without it the new tenant's table would still be carrying the old tenant's
+        tokens, so its very first decode would attend over a stranger's history: a
+        wrong answer with nothing in it that looks like an error. The blocks are
+        returned rather than freed, because the request that reserved them is the one
+        that gives them back to the pool.
+        """
+        (index,) = self._rows([row])
+        self._mapping = None
+        return self.tables[index].detach()
+
     @property
     def cached_tokens(self) -> int:
         """Total real tokens held across every row, i.e. slots actually in use."""
         return sum(self.seq_lens)
 
-    def _reserve(self, counts: list[int]) -> None:
+    def _reserve(self, counts: list[int], rows: tuple[int, ...]) -> None:
         """Check the pool can take every row's growth *before* any row grows.
 
         `BlockTable.append` is already atomic for one sequence, and with N sequences
@@ -525,18 +613,24 @@ class BatchedPagedKVCache:
         fewer requests or preempt a running one, not to crash.
         """
         need = 0
-        for table, n_new in zip(self.tables, counts):
+        for row, n_new in zip(rows, counts):
+            table = self.tables[row]
             need += self.allocator.blocks_for_length(table.num_tokens + n_new) - len(
                 table.block_ids
             )
         if need > self.allocator.num_free:
             raise KVCacheExhausted(
                 f"the batch needs {need} more blocks, only {self.allocator.num_free} free "
-                f"(rows hold {self.seq_lens}, adding {counts})"
+                f"(rows hold {self.seq_lens}, adding {counts} to rows {list(rows)})"
             )
 
     def write(
-        self, layer: int, k: torch.Tensor, v: torch.Tensor, valid: torch.Tensor | None = None
+        self,
+        layer: int,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        valid: torch.Tensor | None = None,
+        rows=None,
     ) -> None:
         """Store this step's K/V into each row's own blocks. No read.
 
@@ -547,6 +641,10 @@ class BatchedPagedKVCache:
               ragged: row i contributes `valid[i].sum()` tokens to its table, taken in
               column order, so left and right padding both work. `None` means every
               column is real, which is the decode case.
+        rows: optional row selection (Day 31). `None` is every row, which is the
+              static-batch case Day 28 built. A scheduled engine passes the slots the
+              scheduler picked, and then `batch` is the width of *that* selection:
+              `k[i]` belongs to `rows[i]`, and the rows left out do not grow.
 
         On layer 0 the tables grow (atomically across the whole batch, see `_reserve`)
         and each row's destination slots are recorded; every layer then scatters its
@@ -555,15 +653,17 @@ class BatchedPagedKVCache:
         is honest for a reference and is exactly the loop a real engine flattens into
         one `[total_new_tokens]` slot vector.
         """
+        rows = self._rows(rows)
         if k.ndim != 4 or k.shape != v.shape:
             raise ValueError(
                 "k and v must both be [batch, num_kv_heads, seq, head_dim]; got "
                 f"{tuple(k.shape)} and {tuple(v.shape)}"
             )
         batch, _, seq, _ = k.shape
-        if batch != self.batch_size:
+        if batch != len(rows):
             raise ValueError(
-                f"this cache holds {self.batch_size} sequences, got a batch of {batch}"
+                f"this forward covers {len(rows)} rows {list(rows)}, got a batch of "
+                f"{batch}"
             )
         if valid is not None and tuple(valid.shape) != (batch, seq):
             raise ValueError(
@@ -575,9 +675,10 @@ class BatchedPagedKVCache:
             counts = (
                 [seq] * batch if valid is None else [int(n) for n in valid.sum(dim=1).tolist()]
             )
-            self._reserve(counts)  # all rows fit, or none of them moves
+            self._reserve(counts, rows)  # all rows fit, or none of them moves
             slots = []
-            for table, n_new in zip(self.tables, counts):
+            for row, n_new in zip(rows, counts):
+                table = self.tables[row]
                 start = table.num_tokens
                 table.append(n_new)
                 slots.append(
@@ -588,9 +689,18 @@ class BatchedPagedKVCache:
                     )
                 )
             self._step_slots = slots
+            self._step_rows = rows
             self._mapping = None  # the tables grew; the read's addressing is stale
         if self._step_slots is None:
             raise ValueError("layer 0 must be written first: it is what grows the tables")
+        if self._step_rows != rows:
+            # Layer 0 decided where this step's tokens go. A later layer naming
+            # different rows would scatter its K/V into slots that belong to some
+            # other sequence, so the layers of one forward must agree on the batch.
+            raise ValueError(
+                f"layer {layer} names rows {list(rows)} but layer 0 grew "
+                f"{list(self._step_rows)}: every layer of one step writes the same rows"
+            )
 
         if self.k_pool[layer] is None:
             pool = (
@@ -613,7 +723,7 @@ class BatchedPagedKVCache:
             self.k_pool[layer][self._step_slots[row]] = k[row][:, cols, :].transpose(0, 1)
             self.v_pool[layer][self._step_slots[row]] = v[row][:, cols, :].transpose(0, 1)
 
-    def slot_mapping(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
+    def slot_mapping(self, device=None, rows=None) -> tuple[torch.Tensor, torch.Tensor]:
         """The read's addressing: `[batch, max_ctx]` slots and `[batch]` real lengths.
 
         Ragged histories, one rectangle, because a kernel wants a tensor with a stride
@@ -627,25 +737,30 @@ class BatchedPagedKVCache:
         the pool rather than reject. Zero is always in range, and whatever it holds is
         masked away by `context_lens`.
 
-        Rebuilt only when the tables have grown (`write` on layer 0 invalidates it),
-        so the 15 remaining layers of a decode step reuse one construction.
+        Rebuilt only when the tables have grown (`write` on layer 0 invalidates it) or
+        a different row selection asks for it, so the 15 remaining layers of a decode
+        step reuse one construction.
         """
-        lens = self.seq_lens
+        rows = self._rows(rows)
+        lens = [self.tables[r].num_tokens for r in rows]
         if max(lens) == 0:
             raise ValueError("nothing is cached yet: write a prefill before reading")
-        stale = self._mapping is None or (
-            device is not None and self._mapping[0].device != torch.device(device)
+        stale = (
+            self._mapping is None
+            or self._mapping_rows != rows
+            or (device is not None and self._mapping[0].device != torch.device(device))
         )
         if stale:
             max_ctx = max(lens)
-            rows = [
-                [table.slot(p) for p in range(table.num_tokens)] + [0] * (max_ctx - n)
-                for table, n in zip(self.tables, lens)
+            grid = [
+                [self.tables[r].slot(p) for p in range(n)] + [0] * (max_ctx - n)
+                for r, n in zip(rows, lens)
             ]
             self._mapping = (
-                torch.tensor(rows, dtype=torch.long, device=device),
+                torch.tensor(grid, dtype=torch.long, device=device),
                 torch.tensor(lens, dtype=torch.long, device=device),
             )
+            self._mapping_rows = rows
         return self._mapping
 
     def paged_attention(
@@ -657,6 +772,7 @@ class BatchedPagedKVCache:
         n_rep: int,
         scale: float | None = None,
         attention_mask: torch.Tensor | None = None,
+        rows=None,
     ) -> torch.Tensor:
         """The batched fused read: store one new token per row, attend per row.
 
@@ -684,17 +800,82 @@ class BatchedPagedKVCache:
                 f"the batched paged read is the decode read: one new token per row, "
                 f"got {k.shape[2]}. A ragged prefill writes and attends densely"
             )
-        self.write(layer, k, v)
-        slot_mapping, context_lens = self.slot_mapping(q.device)
+        rows = self._rows(rows)
+        self.write(layer, k, v, rows=rows)
+        slot_mapping, context_lens = self.slot_mapping(q.device, rows=rows)
         return paged_attention_batched_reference(
             q, self.k_pool[layer], self.v_pool[layer], slot_mapping, context_lens, n_rep, scale
         )
 
     def free(self) -> None:
-        """Return every row's blocks to the pool and reset to an empty, reusable cache."""
+        """Return every row's blocks to the pool and reset to an empty, reusable cache.
+
+        For a cache the engine drives this is the wrong call: its rows *borrow* their
+        blocks from the scheduler's reservations (`adopt_row`), and freeing borrowed
+        blocks here would double-free them when the request is released. That cache is
+        drained a row at a time with `reset_row`.
+        """
         for table in self.tables:
             table.free()
         self.k_pool = [None] * self.num_layers
         self.v_pool = [None] * self.num_layers
+
+
+class BatchedCacheRows:
+    """A subset of a batched cache's rows, wearing the interface of a whole batch.
+
+    Week 8's forward is over whichever requests the scheduler picked this iteration,
+    and that set changes every step: four rows, then two, then five. The cache still
+    owns `max_batch_size` rows because a slot is a fixed row index, so something has
+    to sit between "the rows that exist" and "the rows in this forward".
+
+    This is that something, and it is deliberately thin. It holds a cache and a tuple
+    of row indices and forwards `write` / `paged_attention` / `seq_lens` with those
+    rows attached, so a batch of 2 over rows [1, 3] behaves exactly like a 2-row
+    cache: `k[0]` is row 1's, `seq_lens[0]` is row 1's length, and rows 0 and 2 do not
+    grow, are not read, and cannot be seen.
+
+    The payoff is that `layers.py` needed no change at all. It already duck-types on
+    the cache's methods, so handing it a view instead of a cache is invisible to it,
+    and the "did this row already hold tokens?" guard on the padded prefill keeps
+    working *because* the view hides the neighbours: under continuous batching the
+    other rows are mid-generation, so a guard that looked at the whole cache would
+    refuse every prefill after the first.
+    """
+
+    def __init__(self, cache: BatchedPagedKVCache, rows: tuple[int, ...]):
+        self.cache = cache
+        self.rows = rows
+
+    @property
+    def batch_size(self) -> int:
+        return len(self.rows)
+
+    @property
+    def seq_lens(self) -> list[int]:
+        """Cached tokens per row *of this view*, in the order the view named them."""
+        return [self.cache.tables[r].num_tokens for r in self.rows]
+
+    def write(
+        self, layer: int, k: torch.Tensor, v: torch.Tensor, valid: torch.Tensor | None = None
+    ) -> None:
+        self.cache.write(layer, k, v, valid, rows=self.rows)
+
+    def slot_mapping(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.cache.slot_mapping(device, rows=self.rows)
+
+    def paged_attention(
+        self,
+        layer: int,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        q: torch.Tensor,
+        n_rep: int,
+        scale: float | None = None,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.cache.paged_attention(
+            layer, k, v, q, n_rep, scale, attention_mask, rows=self.rows
+        )
         self._step_slots = None
         self._mapping = None

@@ -39,6 +39,7 @@ from nanoserve.batch import pad_prompts
 from nanoserve.cache import (
     BatchedPagedKVCache,
     BlockAllocator,
+    BlockTable,
     KVCacheExhausted,
     PagedKVCache,
 )
@@ -500,6 +501,190 @@ def test_batched_decode_rejects_a_pool_that_cannot_hold_the_batch():
         model.greedy_generate_batch(
             [[3, 9, 14, 2], [7]], max_new_tokens=4, block_size=2, num_blocks=1
         )
+
+
+# --- Day 31: borrowed blocks and row views -----------------------------------
+#
+# Two things the Week-8 engine needs from this cache and Day 28 did not give it.
+# First, a row must be able to run on blocks *someone else* reserved: the scheduler
+# already allocated a request's whole worst case at admission, so the cache row has
+# to borrow that reservation rather than allocate a second one out of the same pool.
+# Second, a forward is no longer over every row. The batch changes shape every
+# iteration, so the cache has to present an arbitrary subset of its rows as if that
+# subset were the whole batch, and hand a row back empty when its tenant leaves.
+
+
+def test_a_table_can_adopt_blocks_someone_else_reserved():
+    allocator = BlockAllocator(num_blocks=8, block_size=2)
+    reserved = allocator.allocate_for(4)  # somebody else's reservation: 2 blocks
+    table = BlockTable(allocator)
+
+    table.adopt(reserved)
+
+    assert table.block_ids == reserved
+    assert table.capacity == 4
+    assert table.num_tokens == 0  # blocks held, no tokens in them yet
+    assert allocator.num_free == 6  # adopting takes nothing: they were already out
+
+
+def test_adopting_onto_a_table_that_already_holds_blocks_is_refused():
+    """Adopting over a live table would strand the blocks it is already holding."""
+    allocator = BlockAllocator(num_blocks=8, block_size=2)
+    table = BlockTable(allocator)
+    table.append(3)
+
+    with pytest.raises(ValueError, match="empty"):
+        table.adopt(allocator.allocate_for(2))
+
+
+def test_an_adopted_table_grows_without_touching_the_allocator():
+    """The point of the reservation: a running row can never fail mid-flight."""
+    allocator = BlockAllocator(num_blocks=8, block_size=2)
+    table = BlockTable(allocator)
+    table.adopt(allocator.allocate_for(6))  # 3 blocks for a worst case of 6 tokens
+    free_after_reservation = allocator.num_free
+
+    for _ in range(6):
+        table.append(1)
+
+    assert table.num_tokens == 6
+    assert allocator.num_free == free_after_reservation  # not one block more
+
+
+def test_detach_forgets_the_blocks_without_returning_them_to_the_pool():
+    """Ownership stays with whoever reserved them; the table was only borrowing."""
+    allocator = BlockAllocator(num_blocks=8, block_size=2)
+    reserved = allocator.allocate_for(4)
+    table = BlockTable(allocator)
+    table.adopt(reserved)
+    table.append(3)
+
+    returned = table.detach()
+
+    assert returned == reserved
+    assert table.block_ids == [] and table.num_tokens == 0
+    assert allocator.num_free == 6  # still allocated: free() is the lender's call
+    allocator.free_all(reserved)  # and it still works, i.e. nothing double-freed
+    assert allocator.num_free == 8
+
+
+def test_a_row_view_writes_only_into_the_rows_it_names():
+    cfg = _tiny_config()
+    cache = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=4)
+    batch = pad_prompts([[1, 2, 3], [4]], pad_id=0)  # lengths 3, 1
+    k, v = _kv(cfg, 2, batch.max_length)
+
+    cache.view([1, 3]).write(0, k, v, batch.attention_mask)
+
+    assert cache.seq_lens == [0, 3, 0, 1]
+
+
+def test_a_row_view_looks_like_a_batch_of_its_own_width():
+    cfg = _tiny_config()
+    cache = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=4)
+    view = cache.view([1, 3])
+
+    assert view.batch_size == 2
+    assert view.seq_lens == [0, 0]  # its rows, in the order it named them
+
+
+def test_a_view_reads_exactly_what_the_full_batch_would_read():
+    """A subset of the rows must be numerically the same subset, not an approximation."""
+    cfg = _tiny_config()
+    torch.manual_seed(11)
+    batch = pad_prompts([[1, 2, 3], [4], [5, 6]], pad_id=0)
+    k, v = _kv(cfg, 3, batch.max_length)
+    kn, vn = _kv(cfg, 3, 1)
+    q = _q(cfg, 3, 1)
+
+    full = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=3)
+    full.write(0, k, v, batch.attention_mask)
+    expected = full.paged_attention(0, kn, vn, q, cfg.num_kv_groups)
+
+    part = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=3)
+    part.write(0, k, v, batch.attention_mask)
+    rows = [0, 2]
+    out = part.view(rows).paged_attention(
+        0, kn[rows], vn[rows], q[rows], cfg.num_kv_groups
+    )
+
+    torch.testing.assert_close(out, expected[rows])
+    assert part.seq_lens == [4, 1, 3]  # row 1 was not in the forward and did not grow
+
+
+def test_a_view_rejects_a_batch_that_is_not_its_width():
+    cfg = _tiny_config()
+    cache = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=4)
+    k, v = _kv(cfg, 3, 1)
+
+    with pytest.raises(ValueError, match="2 rows"):
+        cache.view([0, 2]).write(0, k, v)
+
+
+def test_a_view_rejects_a_repeated_or_out_of_range_row():
+    cfg = _tiny_config()
+    cache = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=4)
+
+    with pytest.raises(ValueError, match="distinct"):
+        cache.view([1, 1])
+    with pytest.raises(ValueError, match="range"):
+        cache.view([0, 4])
+    with pytest.raises(ValueError, match="at least one"):
+        cache.view([])
+
+
+def test_every_layer_of_one_step_must_name_the_same_rows():
+    """Layer 0 grows the tables and records where the rest will scatter their K/V."""
+    cfg = _tiny_config()
+    cache = BatchedPagedKVCache(cfg, BlockAllocator(num_blocks=16, block_size=2), batch_size=4)
+    k, v = _kv(cfg, 2, 1)
+    cache.view([0, 1]).write(0, k, v)
+
+    with pytest.raises(ValueError, match="rows"):
+        cache.view([2, 3]).write(1, k, v)
+
+
+def test_reset_row_empties_the_row_and_leaves_its_blocks_allocated():
+    cfg = _tiny_config()
+    allocator = BlockAllocator(num_blocks=16, block_size=2)
+    cache = BatchedPagedKVCache(cfg, allocator, batch_size=2)
+    reserved = allocator.allocate_for(6)
+    cache.adopt_row(0, reserved)
+    k, v = _kv(cfg, 1, 3)
+    cache.view([0]).write(0, k, v)
+    free_before = allocator.num_free
+
+    returned = cache.reset_row(0)
+
+    assert returned == reserved
+    assert cache.seq_lens == [0, 0]
+    assert allocator.num_free == free_before  # the lender frees, not the cache
+
+
+def test_the_next_tenant_of_a_row_starts_from_an_empty_history():
+    """The reuse bug this exists to stop: row 0's second occupant reading row 0's first."""
+    cfg = _tiny_config()
+    allocator = BlockAllocator(num_blocks=16, block_size=2)
+    cache = BatchedPagedKVCache(cfg, allocator, batch_size=2)
+    first = allocator.allocate_for(6)
+    cache.adopt_row(0, first)
+    cache.view([0]).write(0, *_kv(cfg, 1, 3))
+
+    allocator.free_all(cache.reset_row(0))
+    cache.adopt_row(0, allocator.allocate_for(4))
+    cache.view([0]).write(0, *_kv(cfg, 1, 1))
+
+    assert cache.seq_lens[0] == 1  # 1, not 4: the previous tenant left nothing behind
+
+
+def test_adopting_onto_a_row_that_is_still_occupied_is_refused():
+    cfg = _tiny_config()
+    allocator = BlockAllocator(num_blocks=16, block_size=2)
+    cache = BatchedPagedKVCache(cfg, allocator, batch_size=2)
+    cache.adopt_row(0, allocator.allocate_for(4))
+
+    with pytest.raises(ValueError, match="empty"):
+        cache.adopt_row(0, allocator.allocate_for(2))
 
 
 # --- real weights ------------------------------------------------------------
