@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <pattern id="waste" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="2.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="32" font-weight="700" fill="#1e1b4b">Continuous batching, measured: both loops, one clock</text>
+  <text x="50" y="82" font-size="17" fill="#64748b">Day 29 measured static batching and Day 31 built the loop meant to fix it. Both are now timed by one module over one</text>
+  <text x="50" y="104" font-size="17" fill="#64748b">workload: Llama-3.2-1B in fp32 on CPU, seven requests wanting 4 tokens behind one wanting 32. Same text out, both ways.</text>
+
+  <!-- ===== left: the two timelines ===== -->
+  <text x="50" y="140" font-size="14" font-weight="700" fill="#334155">static: one fixed batch, every row returned when the slowest one finishes</text>
+
+  <line x1="150" y1="148" x2="150" y2="248" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="215" y1="148" x2="215" y2="248" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <line x1="690" y1="148" x2="690" y2="248" stroke="#b91c1c" stroke-width="2" stroke-dasharray="5,4"/>
+
+  <text x="50" y="161" font-size="11" font-weight="600" fill="#1e1b4b">r0  32 tok</text>
+  <rect x="150" y="152" width="540" height="10" rx="3" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="50" y="174" font-size="11" font-weight="600" fill="#14532d">r1  4 tok</text>
+  <rect x="150" y="165" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="165" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="187" font-size="11" font-weight="600" fill="#14532d">r2  4 tok</text>
+  <rect x="150" y="178" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="178" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="200" font-size="11" font-weight="600" fill="#14532d">r3  4 tok</text>
+  <rect x="150" y="191" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="191" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="213" font-size="11" font-weight="600" fill="#14532d">r4  4 tok</text>
+  <rect x="150" y="204" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="204" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="226" font-size="11" font-weight="600" fill="#14532d">r5  4 tok</text>
+  <rect x="150" y="217" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="217" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="239" font-size="11" font-weight="600" fill="#14532d">r6  4 tok</text>
+  <rect x="150" y="230" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="230" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="50" y="252" font-size="11" font-weight="600" fill="#14532d">r7  4 tok</text>
+  <rect x="150" y="243" width="65" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <rect x="215" y="243" width="475" height="10" rx="3" fill="url(#waste)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <text x="215" y="270" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">8.5s</text>
+  <text x="690" y="270" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">70.3s</text>
+  <text x="452" y="270" font-size="11.5" fill="#b91c1c" text-anchor="middle">still forwarded, still cached, still charged, collecting nothing</text>
+
+  <text x="50" y="300" font-size="14" font-weight="700" fill="#334155">scheduled: each request leaves the batch at its own last token</text>
+
+  <line x1="150" y1="308" x2="150" y2="408" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="217" y1="308" x2="217" y2="408" stroke="#15803d" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <line x1="282" y1="308" x2="282" y2="408" stroke="#4338ca" stroke-width="2" stroke-dasharray="5,4"/>
+
+  <text x="50" y="321" font-size="11" font-weight="600" fill="#1e1b4b">r0  32 tok</text>
+  <rect x="150" y="312" width="132" height="10" rx="3" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="50" y="334" font-size="11" font-weight="600" fill="#14532d">r1  4 tok</text>
+  <rect x="150" y="325" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="347" font-size="11" font-weight="600" fill="#14532d">r2  4 tok</text>
+  <rect x="150" y="338" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="360" font-size="11" font-weight="600" fill="#14532d">r3  4 tok</text>
+  <rect x="150" y="351" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="373" font-size="11" font-weight="600" fill="#14532d">r4  4 tok</text>
+  <rect x="150" y="364" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="386" font-size="11" font-weight="600" fill="#14532d">r5  4 tok</text>
+  <rect x="150" y="377" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="399" font-size="11" font-weight="600" fill="#14532d">r6  4 tok</text>
+  <rect x="150" y="390" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <text x="50" y="412" font-size="11" font-weight="600" fill="#14532d">r7  4 tok</text>
+  <rect x="150" y="403" width="67" height="10" rx="3" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+
+  <rect x="222" y="325" width="468" height="88" rx="5" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="5,4"/>
+  <text x="456" y="365" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">seven slots free, no arrivals to fill them</text>
+  <text x="456" y="384" font-size="12" fill="#64748b" text-anchor="middle">occupancy 0.234: this is Week 9 and Week 10's half</text>
+
+  <text x="217" y="430" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">8.7s</text>
+  <text x="282" y="430" font-size="11.5" font-weight="700" fill="#4338ca" text-anchor="middle">17.2s</text>
+
+  <!-- ===== right: the harness ===== -->
+  <text x="740" y="140" font-size="14" font-weight="700" fill="#334155">one workload, two timing cores, one comparison</text>
+
+  <rect x="740" y="152" width="196" height="66" rx="9" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.8"/>
+  <text x="758" y="174" font-size="12.5" font-weight="700" fill="#7f1d1d">time_batched_decode</text>
+  <text x="758" y="193" font-size="11.5" fill="#991b1b">one timed call per step, the</text>
+  <text x="758" y="209" font-size="11.5" fill="#991b1b">prefill held out. Day 29.</text>
+
+  <rect x="954" y="152" width="196" height="66" rx="9" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <text x="972" y="174" font-size="12.5" font-weight="700" fill="#14532d">time_continuous_run</text>
+  <text x="972" y="193" font-size="11.5" fill="#166534">one timed call per iteration,</text>
+  <text x="972" y="209" font-size="11.5" fill="#166534">no phase to hold out. Today.</text>
+
+  <line x1="838" y1="218" x2="838" y2="246" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="1052" y1="218" x2="1052" y2="246" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <rect x="740" y="248" width="410" height="80" rx="9" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="758" y="270" font-size="13" font-weight="700" fill="#4c1d95">compare_batching: same work, or no answer</text>
+  <text x="758" y="292" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#5b21b6">useful_tokens + batch_size == collected_tokens</text>
+  <text x="758" y="313" font-size="11.5" fill="#6d28d9">Off by one batch is small enough to read as noise, so it raises.</text>
+
+  <line x1="838" y1="328" x2="838" y2="352" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="1052" y1="328" x2="1052" y2="352" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <rect x="740" y="354" width="196" height="76" rx="9" fill="#f8fafc" stroke="#334155" stroke-width="1.8"/>
+  <text x="758" y="375" font-size="12.5" font-weight="700" fill="#1e293b">counts, which travel</text>
+  <text x="758" y="394" font-size="11.5" fill="#475569">work_ratio 4.27x</text>
+  <text x="758" y="411" font-size="11.5" fill="#475569">waste 79.0% to 0.0%</text>
+
+  <rect x="954" y="354" width="196" height="76" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+  <text x="972" y="375" font-size="12.5" font-weight="700" fill="#92400e">seconds, which do not</text>
+  <text x="972" y="394" font-size="11.5" fill="#a16207">makespan 4.09x on this CPU</text>
+  <text x="972" y="411" font-size="11.5" fill="#a16207">0.97x counted in iterations</text>
+
+  <!-- ===== bottom: the three cautions ===== -->
+  <rect x="50" y="452" width="356" height="120" rx="10" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="70" y="476" font-size="14" font-weight="700" fill="#14532d">the two loops count tokens differently</text>
+  <text x="70" y="497" font-size="12" fill="#166534">Static counts decode tokens, since its prefill is a</text>
+  <text x="70" y="515" font-size="12" fill="#166534">separate phase; the scheduled loop counts every</text>
+  <text x="70" y="533" font-size="12" fill="#166534">token kept. The gap is exactly one batch, and it</text>
+  <text x="70" y="551" font-size="12" fill="#166534">inflates every ratio by a believable few percent.</text>
+  <text x="70" y="567" font-size="12" font-style="italic" fill="#166534">So the pairing is checked, not assumed.</text>
+
+  <rect x="422" y="452" width="356" height="120" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="442" y="476" font-size="14" font-weight="700" fill="#7c2d12">stamp the latency at the last token</text>
+  <text x="442" y="497" font-size="12" fill="#9a3412">The scheduler releases a finished request on the</text>
+  <text x="442" y="515" font-size="12" fill="#9a3412">next iteration, which is right for the pool and</text>
+  <text x="442" y="533" font-size="12" fill="#9a3412">wrong for the clock: the answer exists when it is</text>
+  <text x="442" y="551" font-size="12" fill="#9a3412">sampled. Timing the reap charges every request.</text>
+  <text x="442" y="567" font-size="12" font-style="italic" fill="#9a3412">A double finish raises, it does not overwrite.</text>
+
+  <rect x="794" y="452" width="356" height="120" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="814" y="476" font-size="14" font-weight="700" fill="#4c1d95">occupancy is not the waste fraction</text>
+  <text x="814" y="497" font-size="12" fill="#6d28d9">Waste went to zero and the run still spent 28 of</text>
+  <text x="814" y="515" font-size="12" fill="#6d28d9">32 iterations at one row in a batch of eight. Both</text>
+  <text x="814" y="533" font-size="12" fill="#6d28d9">are true: it stopped computing tokens nobody</text>
+  <text x="814" y="551" font-size="12" fill="#6d28d9">wanted, and had nobody left to admit.</text>
+  <text x="814" y="567" font-size="12" font-style="italic" fill="#6d28d9">Freeing a slot is not filling it.</text>
+
+  <!-- bottom banner -->
+  <rect x="50" y="584" width="1100" height="62" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="70" y="609" font-size="14" font-weight="700" fill="#312e81">Week 8's target, measured: 256 token-slots against 60 for the same text, 79.0% waste against 0.0%, first answer at 8.7s not 70.3s.</text>
+  <text x="70" y="631" font-size="13" fill="#4338ca">The straggler still sets the makespan and the batch is 23.4% full, which is exactly the shape of what Week 9 and the server owe. 390 tests green.</text>
+</svg>

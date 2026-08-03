@@ -48,6 +48,25 @@ split Day 13 drew and Day 20 repeated: the runner at the bottom builds a real mo
 and a real `BatchedPagedKVCache` and hands this core two opaque callables, while the
 pure tests hand it a fake clock and scripted done vectors and pin the arithmetic to
 the decimal. A benchmark whose own math is unverified is just a confident guess.
+
+**Day 32 adds the other side of the same measurement.** Day 31 built the scheduled
+loop that is supposed to remove both bills, and a claim like that is worth exactly
+what the harness behind it is worth, so the continuous run is measured by the same
+module, in the same vocabulary, over the same workload. `time_continuous_run` is the
+mirror of `time_batched_decode`: one timed callable per *iteration* instead of per
+step, because under continuous batching there is no separable prefill phase to hold
+out of the denominator, only iterations in which some rows happened to be new. It
+records the batch size of every iteration, which is the thing a static run cannot
+have (that number is a constant there and a variable here), and the iteration each
+request finished in, which is what turns "the batch finished" into "this request
+finished" and is the entire latency argument of the week.
+
+`compare_batching` puts the two side by side and refuses to do it unless both runs
+collected the same tokens for the same requests. That check is the point of the
+function. Two batching strategies timed on workloads that quietly differ produce a
+speedup number that is not about batching at all, and it is very easy to do by
+accident, since the static path stops rows on a scripted step budget and the
+continuous path stops them on the request's own `max_new_tokens`.
 """
 
 from __future__ import annotations
@@ -193,6 +212,21 @@ class BatchTiming:
         so both are reported and neither is called "throughput" on its own.
         """
         return self.issued_tokens / self.decode_s if self.decode_s > 0.0 else 0.0
+
+    @property
+    def end_to_end_goodput_tps(self) -> float:
+        """Collected tokens per second of the *whole* run, prefill included.
+
+        Added Day 32, for one reason: the scheduled loop has no separable prefill to
+        hold out, so comparing its rate against `goodput_tps` would charge static
+        batching for its decode only and continuous batching for everything it did.
+        Two changes from the number above and they pull in opposite directions: the
+        prefill seconds enter the denominator, and every row's prefill token enters
+        the numerator, because the prefill really did emit one token per row and
+        every row really did keep it.
+        """
+        useful = self.useful_tokens + self.batch_size
+        return useful / self.total_s if self.total_s > 0.0 else 0.0
 
     # --- head-of-line blocking ------------------------------------------------
 
@@ -416,6 +450,440 @@ def fit_batch_scaling(points: list[tuple[int, float]]) -> BatchScaling:
     return BatchScaling(sizes=sizes, tps=rates)
 
 
+# --- Day 32: the same measurement, taken of the scheduled loop ----------------
+
+
+@dataclass(frozen=True)
+class IterationOutcome:
+    """One engine iteration, as the timer is allowed to see it.
+
+    batch_size: rows in this iteration's forward. The number that is a constant
+                under static batching and a variable here, which is the whole
+                mechanism the comparison is attributing its win to.
+    collected:  tokens a request actually kept this iteration. Under the Day-31
+                engine this equals `batch_size`, because a row is in the forward
+                only while it still wants a token, and that equality is the claim
+                rather than an assumption: it is counted, not assumed, so a future
+                scheduler that speculates or drops a token still measures honestly.
+    finished:   request ids that reached a terminal state *in* this iteration, at
+                their own last token. Not the ids the scheduler released, which it
+                does one iteration later: the answer is ready when it is sampled,
+                and charging the reap to the caller would flatter neither side.
+
+    Frozen: it describes one iteration that already happened.
+    """
+
+    batch_size: int
+    collected: int
+    finished: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.batch_size < 0 or self.collected < 0:
+            raise ValueError(
+                f"an iteration cannot have negative rows or tokens; got "
+                f"batch_size={self.batch_size}, collected={self.collected}"
+            )
+        if self.collected > self.batch_size:
+            raise ValueError(
+                "a row collects at most one token per iteration; got "
+                f"{self.collected} tokens from {self.batch_size} rows"
+            )
+
+
+@dataclass
+class ContinuousTiming:
+    """One scheduled run: what the clock saw, and when each request got its answer.
+
+    num_requests:   requests submitted to the run. Not the batch size: the whole
+                    point is that these two numbers come apart.
+    max_batch_size: slots the engine had, i.e. rows in the cache. The denominator
+                    of `occupancy`.
+    step_s:         seconds per iteration, in order.
+    batch_sizes:    rows forwarded in each iteration, aligned with `step_s`.
+    collected:      tokens kept in each iteration, aligned with `step_s`.
+    finished_at:    request id to the index of the iteration it finished in.
+
+    The shape difference from `BatchTiming` is the result, not an accident of the
+    API. There, `finished_at` is a list indexed by row, because a row *is* the
+    request and there are exactly `batch_size` of them for the whole run. Here it
+    is a dict keyed by request id, because a row is a slot that several requests
+    take turns holding, and a request that has not been admitted yet still exists.
+
+    A request missing from `finished_at` never finished within the run, and asking
+    for its latency raises rather than returning the makespan, which would quietly
+    read as a completed request that was merely slow.
+    """
+
+    num_requests: int
+    max_batch_size: int
+    step_s: list[float] = field(default_factory=list)
+    batch_sizes: list[int] = field(default_factory=list)
+    collected: list[int] = field(default_factory=list)
+    finished_at: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.num_requests < 1:
+            raise ValueError(f"a run needs at least one request; got {self.num_requests}")
+        if self.max_batch_size < 1:
+            raise ValueError(f"an engine needs at least one slot; got {self.max_batch_size}")
+        if len(self.batch_sizes) != self.n_iterations or len(self.collected) != self.n_iterations:
+            raise ValueError(
+                "a timing needs one entry per iteration in each series; got "
+                f"{self.n_iterations} times, {len(self.batch_sizes)} batch sizes, "
+                f"{len(self.collected)} token counts"
+            )
+        if any(b > self.max_batch_size for b in self.batch_sizes):
+            raise ValueError(
+                f"a forward cannot have more rows than the cache has slots "
+                f"({self.max_batch_size}); got {self.batch_sizes}"
+            )
+        if any(c > b for c, b in zip(self.collected, self.batch_sizes)):
+            raise ValueError(
+                "a row collects at most one token per iteration; got "
+                f"collected={self.collected} over batch_sizes={self.batch_sizes}"
+            )
+        if len(self.finished_at) > self.num_requests:
+            raise ValueError(
+                f"more requests finished than were submitted: {len(self.finished_at)} "
+                f"finishes for {self.num_requests} requests"
+            )
+        if any(not 0 <= i < self.n_iterations for i in self.finished_at.values()):
+            raise ValueError(
+                f"a request finished outside the run's {self.n_iterations} "
+                f"iterations; got {self.finished_at}"
+            )
+
+    # --- what the clock saw ---------------------------------------------------
+
+    @property
+    def n_iterations(self) -> int:
+        """Iterations the engine ran, the drain included."""
+        return len(self.step_s)
+
+    @property
+    def forward_iterations(self) -> int:
+        """Iterations that actually forwarded a row.
+
+        The engine's last step reaps the final request and schedules an empty batch.
+        It costs real time, so it belongs in the makespan; it forwards nothing, so
+        it must not dilute `occupancy`.
+        """
+        return sum(1 for b in self.batch_sizes if b > 0)
+
+    @property
+    def total_s(self) -> float:
+        """Makespan: every iteration, prefill and drain included."""
+        return sum(self.step_s)
+
+    def elapsed_s(self, iteration: int) -> float:
+        """Seconds from the start of the run to the end of `iteration`."""
+        return sum(self.step_s[: iteration + 1])
+
+    # --- issued versus collected ----------------------------------------------
+
+    @property
+    def issued_tokens(self) -> int:
+        """Token-slots the forwards computed: the sum of the batch sizes."""
+        return sum(self.batch_sizes)
+
+    @property
+    def collected_tokens(self) -> int:
+        """Tokens a request kept. Equal to the issued count on the Day-31 loop."""
+        return sum(self.collected)
+
+    @property
+    def wasted_tokens(self) -> int:
+        return self.issued_tokens - self.collected_tokens
+
+    @property
+    def waste_fraction(self) -> float:
+        """Share of the forwards nobody kept. Day 29's number, for this loop.
+
+        Zero here by construction rather than by luck: the batch is rebuilt every
+        iteration out of requests that still want a token. Measuring it anyway is
+        what makes it evidence instead of a restatement of the design.
+        """
+        issued = self.issued_tokens
+        return self.wasted_tokens / issued if issued else 0.0
+
+    @property
+    def goodput_tps(self) -> float:
+        """Collected tokens per second of the whole run.
+
+        Over the makespan and not over a decode phase, because there is no phase to
+        exclude: an iteration with newly admitted rows runs a prefill and the rest
+        run a decode, and both are the loop. `BatchTiming.end_to_end_goodput_tps`
+        is the static side's matching number.
+        """
+        return self.collected_tokens / self.total_s if self.total_s > 0.0 else 0.0
+
+    @property
+    def issued_tps(self) -> float:
+        """Computed tokens per second: what the box moved, not what it served."""
+        return self.issued_tokens / self.total_s if self.total_s > 0.0 else 0.0
+
+    # --- how full the batch stayed --------------------------------------------
+
+    @property
+    def mean_batch_size(self) -> float:
+        """Average rows per forwarding iteration."""
+        forwards = self.forward_iterations
+        return self.issued_tokens / forwards if forwards else 0.0
+
+    @property
+    def occupancy(self) -> float:
+        """Share of the available slots a forward actually filled.
+
+        The number that says whether the queue kept the engine fed. It falls for two
+        opposite reasons and telling them apart is the operational skill: a drained
+        queue (nothing left to admit, which is fine) or a dry pool (requests waiting
+        on blocks the running set has reserved and is not using, which is the
+        Week-9 debt showing up as idle rows).
+        """
+        slots = self.max_batch_size * self.forward_iterations
+        return self.issued_tokens / slots if slots else 0.0
+
+    # --- latency, per request -------------------------------------------------
+
+    def latency_s(self, request_id: str) -> float:
+        """Seconds from the start of the run to this request's own last token.
+
+        The number static batching cannot produce. There, a row's observed latency
+        is the batch's `total_s` whenever it finished, because the batch is returned
+        as one object; here every request has its own, and the spread between them
+        is the head-of-line delay, paid back.
+        """
+        try:
+            iteration = self.finished_at[request_id]
+        except KeyError:
+            raise KeyError(
+                f"request {request_id!r} never finished in this run, so it has no "
+                "latency; the run's makespan is not an answer to that question"
+            ) from None
+        return self.elapsed_s(iteration)
+
+    @property
+    def latencies_s(self) -> list[float]:
+        """Every finished request's latency, in finish order."""
+        order = sorted(self.finished_at.items(), key=lambda kv: kv[1])
+        return [self.elapsed_s(i) for _, i in order]
+
+    @property
+    def min_latency_s(self) -> float:
+        """The first answer out of the engine: the row static batching punished most."""
+        latencies = self.latencies_s
+        return min(latencies) if latencies else 0.0
+
+    @property
+    def mean_latency_s(self) -> float:
+        latencies = self.latencies_s
+        return statistics.fmean(latencies) if latencies else 0.0
+
+    @property
+    def max_latency_s(self) -> float:
+        """The straggler, which waits about as long either way. That is the point."""
+        latencies = self.latencies_s
+        return max(latencies) if latencies else 0.0
+
+
+# One timed engine iteration: run it, and say what it did.
+IterationFn = Callable[[], IterationOutcome]
+# Whether the engine has any reason to run another iteration.
+UnfinishedFn = Callable[[], bool]
+
+
+def time_continuous_run(
+    step_fn: IterationFn,
+    unfinished_fn: UnfinishedFn,
+    *,
+    num_requests: int,
+    max_batch_size: int,
+    clock: Clock = time.perf_counter,
+    max_iterations: int = 100_000,
+) -> ContinuousTiming:
+    """Time a scheduled run: one timed iteration until the queues are empty.
+
+    step_fn:        runs one `Engine.step()` and reports what that iteration did.
+    unfinished_fn:  whether anything is still waiting or running. Asked before each
+                    iteration and outside the timed window, so the clock only ever
+                    sees the forward.
+    num_requests:   how many requests the run was given, for the timing's own
+                    validation.
+    max_batch_size: slots the engine has.
+    max_iterations: hang guard, not a policy, the same one `run_to_completion`
+                    carries: every iteration either emits a token or releases a
+                    request, so a loop that does not drain is a bug and a raise is
+                    a better way to hear about it than a wedged benchmark.
+
+    Two clock reads per iteration and none anywhere else, so a run of N iterations
+    reads it exactly 2N times and a scripted fake clock lines up with the tests.
+
+    Raises `ValueError` if a request reports finishing twice. That is not a
+    harmless duplicate: the second one silently overwrites the first, moving the
+    request's latency later, which makes the engine look slower than it is in
+    exactly the direction that would be believed.
+    """
+    step_s: list[float] = []
+    batch_sizes: list[int] = []
+    collected: list[int] = []
+    finished_at: dict[str, int] = {}
+
+    while unfinished_fn():
+        if len(step_s) >= max_iterations:
+            raise RuntimeError(
+                f"the engine did not drain in {max_iterations} iterations; "
+                f"{len(finished_at)} of {num_requests} requests finished"
+            )
+        t0 = clock()
+        outcome = step_fn()
+        step_s.append(clock() - t0)
+
+        index = len(step_s) - 1
+        batch_sizes.append(outcome.batch_size)
+        collected.append(outcome.collected)
+        for request_id in outcome.finished:
+            if request_id in finished_at:
+                raise ValueError(
+                    f"request {request_id!r} finished twice, at iterations "
+                    f"{finished_at[request_id]} and {index}"
+                )
+            finished_at[request_id] = index
+
+    return ContinuousTiming(
+        num_requests=num_requests,
+        max_batch_size=max_batch_size,
+        step_s=step_s,
+        batch_sizes=batch_sizes,
+        collected=collected,
+        finished_at=finished_at,
+    )
+
+
+@dataclass(frozen=True)
+class BatchingComparison:
+    """The two runs side by side: what the scheduled loop stopped paying.
+
+    static:     the Day-29 `BatchTiming` for a fixed batch of the same requests.
+    continuous: the Day-32 `ContinuousTiming` for the same requests, scheduled.
+
+    Built through `compare_batching`, which refuses to pair two runs that did not
+    produce the same tokens for the same requests. Every ratio below is a ratio of
+    two measurements of *the same work*, or it is nothing at all.
+
+    The counts (`work_ratio`, `waste_removed`) travel: they are numbers of rows and
+    tokens and they hold on any box. The times (`makespan_speedup`, the latency
+    ratios) do not: a shrinking batch also makes each forward cheaper, and how much
+    that is worth depends entirely on where this hardware sits between bandwidth
+    and FLOPs, which is the same caveat the throughput sweep carries.
+    """
+
+    static: BatchTiming
+    continuous: ContinuousTiming
+
+    # --- work ------------------------------------------------------------------
+
+    @property
+    def static_issued_tokens(self) -> int:
+        """Token-slots the static run computed, its prefill row included."""
+        return self.static.issued_tokens + self.static.batch_size
+
+    @property
+    def continuous_issued_tokens(self) -> int:
+        """Token-slots the scheduled run computed."""
+        return self.continuous.issued_tokens
+
+    @property
+    def work_ratio(self) -> float:
+        """How many times more token-slots static batching computed for the same answers.
+
+        The honest headline of the week, because it is a count. 4.3x means the card
+        did 4.3 times the forward work to produce the identical text.
+        """
+        issued = self.continuous_issued_tokens
+        return self.static_issued_tokens / issued if issued else 0.0
+
+    @property
+    def waste_removed(self) -> float:
+        """Waste fraction removed, in points: static's minus the scheduled loop's."""
+        return self.static.waste_fraction - self.continuous.waste_fraction
+
+    # --- time ------------------------------------------------------------------
+
+    @property
+    def makespan_speedup(self) -> float:
+        """Static wall time over scheduled wall time, for the whole workload.
+
+        The least flattering of these ratios and the one to quote first. The
+        straggler sets the makespan on both sides, so this can sit near 1.0 (or
+        under it, by the drain iteration) even while every other row's latency
+        collapses. Continuous batching is not primarily a makespan optimisation.
+        """
+        return self.static.total_s / self.continuous.total_s
+
+    @property
+    def mean_latency_speedup(self) -> float:
+        """Mean per-request latency, static over scheduled.
+
+        Static batching hands the whole batch back at once, so *every* row's
+        latency is the run's `total_s`, which is what makes the numerator a single
+        number rather than an average.
+        """
+        mean = self.continuous.mean_latency_s
+        return self.static.total_s / mean if mean > 0.0 else 0.0
+
+    @property
+    def first_answer_speedup(self) -> float:
+        """How much sooner the first request got its answer. The user-visible one.
+
+        The shortest request is the one static batching punishes hardest, and it is
+        also the one a serving stack has the most of.
+        """
+        first = self.continuous.min_latency_s
+        return self.static.total_s / first if first > 0.0 else 0.0
+
+    @property
+    def goodput_speedup(self) -> float:
+        """Scheduled goodput over static goodput, both end to end, prefill included."""
+        static_tps = self.static.end_to_end_goodput_tps
+        return self.continuous.goodput_tps / static_tps if static_tps > 0.0 else 0.0
+
+
+def compare_batching(static: BatchTiming, continuous: ContinuousTiming) -> BatchingComparison:
+    """Pair a static and a scheduled run of the same workload, validating the pairing.
+
+    Three checks, and they are the function. Same number of requests, or the two
+    runs are not describing the same submission. Same collected tokens, or one of
+    them generated less text than the other and the speedup is measuring that
+    instead. Non-zero measured time on both sides, or the ratios are divisions by
+    zero dressed up as results.
+
+    The token check is the subtle one, because the two counters are shaped
+    differently on purpose. `BatchTiming.useful_tokens` counts decode tokens only,
+    since its prefill is a separate timed phase that emitted one token per row;
+    `ContinuousTiming.collected_tokens` counts every token any request kept. So the
+    same workload satisfies `useful_tokens + batch_size == collected_tokens`, and
+    off-by-`batch_size` is exactly the mistake this catches.
+    """
+    if static.batch_size != continuous.num_requests:
+        raise ValueError(
+            "two runs of the same workload need the same number of requests; got "
+            f"{static.batch_size} static rows and {continuous.num_requests} requests"
+        )
+    static_collected = static.useful_tokens + static.batch_size
+    if static_collected != continuous.collected_tokens:
+        raise ValueError(
+            "two runs are comparable only if they collected the same tokens; got "
+            f"{static_collected} static (decode plus one prefill token per row) "
+            f"against {continuous.collected_tokens} scheduled"
+        )
+    if static.total_s <= 0.0 or continuous.total_s <= 0.0:
+        raise ValueError(
+            "a run with no measured time cannot be compared; got "
+            f"{static.total_s}s static and {continuous.total_s}s scheduled"
+        )
+    return BatchingComparison(static=static, continuous=continuous)
+
+
 # --- the runner: the closures wired to the engine's own batched decode --------
 #
 # Everything above is the timing core: stdlib-only, model-free, the clock injected,
@@ -627,3 +1095,204 @@ def sweep_batch_sizes(
         )
     scaling = fit_batch_scaling([(t.batch_size, t.goodput_tps) for t in timings])
     return scaling, timings
+
+
+# --- the runner: the closures wired to the Day-31 engine ----------------------
+#
+# The static runner above had to bolt a stopping rule onto the batch, because a row
+# there cannot leave and something has to decide when it is done. Here the rule is
+# already the request's: `max_new_tokens` is what the scheduler admitted against and
+# what `append_token` stops on, so raggedness is expressed by giving each request its
+# own budget rather than by scripting a done vector. That is the same shape as the
+# static `stop_steps` (budget b means b-1 decode steps after the prefill token) and
+# it is worth noticing that only one side needed the scaffolding.
+
+
+@dataclass
+class ContinuousRun:
+    """The timed closure for one scheduled run, plus what it is running over.
+
+    step_fn:       one `Engine.step()`, reported as an `IterationOutcome`.
+    unfinished_fn: whether the engine has anything left to do.
+    engine:        the live `Engine`, so the pool, the queues and the cache can be
+                   inspected after the run.
+    requests:      the submitted `Request` objects, in submission order, each
+                   accumulating its own tokens as the run proceeds, so a test can
+                   hold the benchmark to what the engine generates.
+    """
+
+    step_fn: IterationFn
+    unfinished_fn: UnfinishedFn
+    engine: object
+    requests: list
+
+
+def build_continuous_run(
+    model,
+    prompts: list[list[int]],
+    *,
+    max_new_tokens: int | list[int],
+    block_size: int = 16,
+    max_batch_size: int | None = None,
+    num_blocks: int | None = None,
+    pad_id: int = 0,
+    eos_id: int | None = None,
+) -> ContinuousRun:
+    """Stand up a real scheduled run and return it as a `ContinuousRun` of closures.
+
+    model:          a `LlamaModel`, real weights or tiny random ones.
+    prompts:        one list of token ids per request, ragged.
+    max_new_tokens: one budget for every request, or one per request. The ragged
+                    list is the head-of-line measurement; the scalar is the uniform
+                    case a throughput sweep wants.
+    max_batch_size: slots, i.e. rows in the cache. Defaults to one per prompt, which
+                    is the fair setting against a static batch of the same prompts:
+                    same width of forward available, different rule for filling it.
+    num_blocks:     pool size. Defaults to every request's *worst case* reservation,
+                    so nothing ever queues on blocks. That default is bigger than
+                    the static runner's for the same workload, and the difference is
+                    the Day-30 debt showing up in a benchmark default: admission
+                    reserves the whole budget up front. Pass a smaller pool to
+                    measure a queue.
+
+    The timed closure reports the ids that reached a terminal state *during* that
+    iteration, which is one iteration earlier than the scheduler releases them.
+    Deferred release is right for the pool (nothing is freed while a forward may
+    still be reading it) and wrong for latency: the answer exists the moment its
+    last token is sampled, and a benchmark that waited for the reap would charge
+    every request one extra iteration and quietly understate the win.
+
+    Raises `ValueError` for a budget below 1 or a budget list that is not one entry
+    per prompt.
+    """
+    import torch
+
+    from .cache import BatchedPagedKVCache, BlockAllocator
+    from .engine import Engine
+    from .scheduler import Request, Scheduler
+
+    if isinstance(max_new_tokens, int):
+        budgets = [max_new_tokens] * len(prompts)
+    else:
+        budgets = list(max_new_tokens)
+    if len(budgets) != len(prompts):
+        raise ValueError(
+            "a scheduled run needs one token budget per prompt; got "
+            f"{len(budgets)} for {len(prompts)} prompts"
+        )
+    if any(b < 1 for b in budgets):
+        raise ValueError(f"every token budget must be at least 1; got {budgets}")
+
+    if max_batch_size is None:
+        max_batch_size = len(prompts)
+    if num_blocks is None:
+        num_blocks = sum(
+            (len(prompt) + budget + block_size - 1) // block_size
+            for prompt, budget in zip(prompts, budgets)
+        )
+
+    allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
+    engine = Engine(
+        model,
+        Scheduler(allocator, max_batch_size=max_batch_size),
+        BatchedPagedKVCache(model.config, allocator, batch_size=max_batch_size),
+        pad_id=pad_id,
+    )
+    requests = [
+        engine.add_request(
+            Request(
+                request_id=f"r{i}",
+                prompt_token_ids=list(prompt),
+                max_new_tokens=budget,
+                eos_token_id=eos_id,
+            )
+        )
+        for i, (prompt, budget) in enumerate(zip(prompts, budgets))
+    ]
+    # Insertion-ordered, so the finishes a step reports are in submission order.
+    pending = {request.request_id: request for request in requests}
+
+    def step_fn() -> IterationOutcome:
+        # `no_grad` for the same reason the static closures use it: timing a graph
+        # nobody will backward through would charge one side for bookkeeping the
+        # other does not do.
+        before = engine.collected_tokens
+        with torch.no_grad():
+            out = engine.step()
+        finished = tuple(rid for rid, r in pending.items() if r.is_finished)
+        for request_id in finished:
+            del pending[request_id]
+        return IterationOutcome(
+            batch_size=out.batch_size,
+            collected=engine.collected_tokens - before,
+            finished=finished,
+        )
+
+    return ContinuousRun(
+        step_fn=step_fn,
+        unfinished_fn=engine.has_unfinished,
+        engine=engine,
+        requests=requests,
+    )
+
+
+def time_model_continuous(
+    model,
+    prompts: list[list[int]],
+    *,
+    max_new_tokens: int | list[int],
+    clock: Clock = time.perf_counter,
+    **build_kwargs,
+) -> ContinuousTiming:
+    """Time one real scheduled run end to end and return its `ContinuousTiming`."""
+    run = build_continuous_run(model, prompts, max_new_tokens=max_new_tokens, **build_kwargs)
+    return time_continuous_run(
+        run.step_fn,
+        run.unfinished_fn,
+        num_requests=len(prompts),
+        max_batch_size=run.engine.scheduler.max_batch_size,
+        clock=clock,
+    )
+
+
+def compare_model_batching(
+    model,
+    prompts: list[list[int]],
+    *,
+    max_new_tokens: int | list[int],
+    clock: Clock = time.perf_counter,
+    **build_kwargs,
+) -> BatchingComparison:
+    """Run one workload both ways, back to back, and pair the timings.
+
+    The same prompts and the same per-request output lengths, once as a static batch
+    that runs until its slowest row is done and once through the Day-31 scheduler.
+    Translating between the two stopping rules is the whole of the wiring: a budget
+    of `b` tokens is `b - 1` decode steps for the static runner, whose prefill emits
+    the first one, and the static batch is sized by the longest budget because that
+    is what a fixed rectangle costs.
+
+    Both runs share the injected clock, which matters for a fake one: a scripted or
+    counting clock keeps counting across the pair rather than restarting, so the
+    ratios stay exact.
+    """
+    budgets = (
+        [max_new_tokens] * len(prompts) if isinstance(max_new_tokens, int) else list(max_new_tokens)
+    )
+    if len(budgets) != len(prompts):
+        raise ValueError(
+            "a comparison needs one token budget per prompt; got "
+            f"{len(budgets)} for {len(prompts)} prompts"
+        )
+    static = time_model_batch(
+        model,
+        prompts,
+        max_new_tokens=max(budgets),
+        stop_steps=[b - 1 for b in budgets],
+        clock=clock,
+        **build_kwargs,
+    )
+    continuous = time_model_continuous(
+        model, prompts, max_new_tokens=budgets, clock=clock, **build_kwargs
+    )
+    return compare_batching(static, continuous)
