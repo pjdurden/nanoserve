@@ -292,6 +292,27 @@ class BlockTable:
             )
         self.block_ids = list(block_ids)
 
+    def extend(self, block_ids: list[int]) -> None:
+        """Take over more blocks the owner reserved after the adoption. Day 33.
+
+        Incremental allocation ends the assumption `adopt` was written under. A
+        request no longer arrives holding every block it will ever need; the
+        scheduler gives it one more at the top of the iteration that crosses a block
+        boundary, and the row has to learn about it before the write that needs it.
+
+        The two lists are copies, not one aliased list, on purpose: the request's
+        reservation is the scheduler's record and the table is the cache's, and a
+        shared list would make a scheduler bug corrupt addressing silently. The cost
+        is this method and an explicit sync in the engine, which is the trade the
+        rest of the file already makes.
+        """
+        seen = set(self.block_ids)
+        for block_id in block_ids:
+            if block_id in seen:
+                raise ValueError(f"block {block_id} is already in this table")
+            seen.add(block_id)
+        self.block_ids.extend(block_ids)
+
     def detach(self) -> list[int]:
         """Give the borrowed blocks back to their owner and reset. Day 31.
 
@@ -578,6 +599,12 @@ class BatchedPagedKVCache:
         """Give row `row` a reservation somebody else made. See `BlockTable.adopt`."""
         (index,) = self._rows([row])
         self.tables[index].adopt(block_ids)
+        self._mapping = None
+
+    def extend_row(self, row: int, block_ids: list[int]) -> None:
+        """Give row `row` more blocks its owner just reserved. See `BlockTable.extend`."""
+        (index,) = self._rows([row])
+        self.tables[index].extend(block_ids)
         self._mapping = None
 
     def reset_row(self, row: int) -> list[int]:

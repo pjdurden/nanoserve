@@ -687,6 +687,35 @@ def test_adopting_onto_a_row_that_is_still_occupied_is_refused():
         cache.adopt_row(0, allocator.allocate_for(2))
 
 
+def test_extend_row_takes_over_a_block_the_owner_reserved_later():
+    """Day 33: a row grows mid-run, and the block still comes from its owner."""
+    cfg = _tiny_config()
+    allocator = BlockAllocator(num_blocks=16, block_size=2)
+    cache = BatchedPagedKVCache(cfg, allocator, batch_size=2)
+    cache.adopt_row(0, allocator.allocate_for(4))
+    cache.view([0]).write(0, *_kv(cfg, 1, 2))
+    free_before = allocator.num_free
+
+    cache.extend_row(0, allocator.allocate_for(2))
+
+    assert len(cache.tables[0].block_ids) == 3
+    assert cache.tables[0].capacity == 6
+    assert cache.seq_lens[0] == 2  # more room, not more tokens
+    assert allocator.num_free == free_before - 1
+
+
+def test_extending_a_row_with_a_block_it_already_holds_is_refused():
+    """A repeat id would make two logical positions share one physical slot."""
+    cfg = _tiny_config()
+    allocator = BlockAllocator(num_blocks=16, block_size=2)
+    cache = BatchedPagedKVCache(cfg, allocator, batch_size=2)
+    held = allocator.allocate_for(4)
+    cache.adopt_row(0, held)
+
+    with pytest.raises(ValueError, match="already"):
+        cache.extend_row(0, [held[0]])
+
+
 # --- real weights ------------------------------------------------------------
 
 

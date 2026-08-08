@@ -8,7 +8,11 @@ its blocks come back, and what a request is allowed to do in each state.
 The file is organised the way the day was built. First the `Request`: an object
 with a state, replacing "row index into a fixed batch" as the thing the engine
 tracks. Then the `Scheduler`: two queues over that object, admitting from the head
-of the waiting queue while a slot and the blocks are both there. The last test is
+of the waiting queue while a slot and the blocks are both there. Day 33 changed
+what "the blocks" means (the tokens the request holds, not the ones it might one
+day hold) and added the preemption that pays for it, and those tests live in
+`test_preemption.py`; the ones here are the shape of the queues, which did not
+change. The last test is
 the point of Week 8 stated in Day 29's vocabulary: on a scheduled loop every token
 the forward issues is a token some unfinished row collects, so the waste fraction
 that static batching paid is 0.0 by construction.
@@ -79,8 +83,13 @@ def test_length_counts_prompt_plus_what_has_been_generated():
     assert r.token_ids == [1, 2, 3, 9]
 
 
-def test_worst_case_tokens_is_the_footprint_admission_reserves():
-    """Prompt plus every token it is still allowed to emit: the longest it can get."""
+def test_worst_case_tokens_is_the_longest_the_request_can_ever_get():
+    """Prompt plus every token it is still allowed to emit.
+
+    Week 8 reserved this much at admission. Day 33 buys blocks a step at a time
+    instead, and the number survives as the door check in `add_request`: a request
+    that could outgrow an empty pool is refused rather than queued forever.
+    """
     assert _req(prompt=(1, 2, 3), max_new_tokens=4).worst_case_tokens == 7
 
 
@@ -139,10 +148,8 @@ def test_the_legal_edges_are_admit_finish_and_abort():
 @pytest.mark.parametrize(
     "path",
     [
-        # No preemption yet: putting a running request back on the waiting queue is
-        # Week 9's edge, and until the recompute path exists it would silently strand
-        # blocks.
-        (RequestState.RUNNING, RequestState.WAITING),
+        # RUNNING -> WAITING is not here: Day 33 opened it, and `test_preemption.py`
+        # owns the edge and the recompute path that makes it safe.
         # Finished is terminal in both directions.
         (RequestState.RUNNING, RequestState.FINISHED, RequestState.RUNNING),
         (RequestState.FINISHED, RequestState.WAITING),
@@ -218,27 +225,28 @@ def test_schedule_admits_up_to_the_batch_size_and_leaves_the_rest_waiting():
     assert all(r.state is RequestState.RUNNING for r in out.scheduled)
 
 
-def test_admission_reserves_the_worst_case_and_hands_out_a_slot():
+def test_admission_buys_the_tokens_the_request_holds_and_hands_out_a_slot():
+    """Day 33: the prompt's blocks, not the budget's. `test_preemption.py` has the rest."""
     s = _sched(num_blocks=64, block_size=4, max_batch_size=2)
     free_before = s.allocator.num_free
-    s.add_request(_req("a", prompt=(1, 2, 3), max_new_tokens=4))  # 7 tokens -> 2 blocks
-    s.add_request(_req("b", prompt=(1,) * 5, max_new_tokens=4))  # 9 tokens -> 3 blocks
+    s.add_request(_req("a", prompt=(1, 2, 3), max_new_tokens=4))  # 3 tokens -> 1 block
+    s.add_request(_req("b", prompt=(1,) * 5, max_new_tokens=4))  # 5 tokens -> 2 blocks
 
     out = s.schedule()
     a, b = out.scheduled
 
-    assert len(a.block_ids) == 2
-    assert len(b.block_ids) == 3
-    assert s.allocator.num_free == free_before - 5
+    assert len(a.block_ids) == 1
+    assert len(b.block_ids) == 2
+    assert s.allocator.num_free == free_before - 3
     assert (a.slot, b.slot) == (0, 1)
     assert len(set(a.block_ids) & set(b.block_ids)) == 0
 
 
 def test_admission_stops_when_the_pool_cannot_take_the_next_request():
-    # 3 blocks of 4 tokens. Each request needs 8 tokens, i.e. 2 blocks.
+    # 3 blocks of 4 tokens. Each prompt is 8 tokens, i.e. 2 blocks, so one fits.
     s = _sched(num_blocks=3, block_size=4, max_batch_size=4)
     for i in range(3):
-        s.add_request(_req(f"r{i}", prompt=(1,) * 4, max_new_tokens=4))
+        s.add_request(_req(f"r{i}", prompt=(1,) * 8, max_new_tokens=4))
 
     out = s.schedule()
 
@@ -250,8 +258,8 @@ def test_admission_stops_when_the_pool_cannot_take_the_next_request():
 def test_a_blocked_head_is_not_skipped_over():
     """FIFO, deliberately. Letting small requests overtake starves the large one."""
     s = _sched(num_blocks=4, block_size=4, max_batch_size=4)
-    s.add_request(_req("big", prompt=(1,) * 8, max_new_tokens=8))  # 16 tokens, 4 blocks
-    s.add_request(_req("small", prompt=(1,), max_new_tokens=1))  # 2 tokens, 1 block
+    s.add_request(_req("big", prompt=(1,) * 13, max_new_tokens=3))  # 13 tokens, 4 blocks
+    s.add_request(_req("small", prompt=(1,), max_new_tokens=1))  # 1 token, 1 block
     s.schedule()  # big takes the whole pool
     assert s.num_running == 1
 
@@ -314,7 +322,7 @@ def test_a_request_aborted_while_waiting_never_runs():
 
     assert [r.request_id for r in out.admitted] == ["b"]
     assert [r.request_id for r in out.finished] == ["a"]
-    assert s.allocator.num_free == s.allocator.num_blocks - 2  # only b reserved
+    assert s.allocator.num_free == s.allocator.num_blocks - 1  # only b's prompt is held
 
 
 def test_a_request_aborted_while_running_releases_everything():
@@ -378,30 +386,40 @@ def test_every_block_comes_back_when_the_queues_drain():
     assert s.num_waiting == 0
 
 
-# --- what the reservation costs ----------------------------------------------
+# --- what the pool is holding -------------------------------------------------
 
 
-def test_reserved_and_used_blocks_are_reported_separately():
-    s = _sched(num_blocks=32, block_size=4, max_batch_size=2)
-    s.add_request(_req("a", prompt=(1, 2, 3), max_new_tokens=4))  # 7 worst case, 2 blocks
-    s.schedule()
-
-    # 3 prompt tokens live in 1 block; the second block is reserved and empty.
-    assert s.reserved_blocks == 2
-    assert s.used_blocks == 1
-    assert s.reservation_waste == pytest.approx(0.5)
-
-
-def test_reservation_waste_falls_as_a_request_generates():
+def test_reserved_and_used_blocks_are_the_same_number_now():
+    """Held versus needed. Week 8 could differ by the whole budget; Day 33 cannot."""
     s = _sched(num_blocks=32, block_size=4, max_batch_size=2)
     s.add_request(_req("a", prompt=(1, 2, 3), max_new_tokens=4))
+    s.schedule()
+
+    assert s.reserved_blocks == 1
+    assert s.used_blocks == 1
+    assert s.reservation_waste == pytest.approx(0.0)
+
+
+def test_a_request_may_be_one_token_ahead_of_its_blocks_between_iterations():
+    """It samples a token, and the scheduler buys that token's block at the next top.
+
+    The gap is real and it is always closed before a forward, so the honest report
+    is zero rather than a negative waste. `test_preemption.py` pins the growth that
+    closes it.
+    """
+    s = _sched(num_blocks=32, block_size=4, max_batch_size=2)
+    s.add_request(_req("a", prompt=(1, 2, 3), max_new_tokens=8))
     out = s.schedule()
 
     for _ in range(4):
         out.scheduled[0].append_token(7)
 
-    assert s.used_blocks == 2  # 7 tokens now really occupy both blocks
+    assert s.used_blocks == 2  # 7 tokens want two blocks
+    assert s.reserved_blocks == 1  # and hold one, until the next schedule
     assert s.reservation_waste == pytest.approx(0.0)
+
+    s.schedule()
+    assert s.reserved_blocks == 2
 
 
 def test_reservation_waste_is_zero_with_nothing_running():

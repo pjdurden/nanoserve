@@ -17,10 +17,10 @@ Three failure modes get their own tests, because all three are silent:
   1. **The inherited row.** A slot is a cache row, and the next request to land on
      it must start from an empty history. Miss the reset and the new tenant attends
      over the last tenant's tokens, which is a fluent, plausible, wrong answer.
-  2. **The double reservation.** The scheduler already reserved this request's
-     blocks; if the cache row allocates its own as it grows, the pool is booked
-     twice and the second booking fails mid-flight, which is the one thing the
-     worst-case reservation was supposed to make impossible.
+  2. **The double reservation.** The scheduler already holds this request's blocks;
+     if the cache row allocates its own as it grows, the pool is booked twice and
+     the second booking fails mid-flight, under whichever request happens to be
+     running then rather than the one that caused it.
   3. **The stale batch.** The forward covers whichever rows the scheduler picked,
      and that set changes every iteration. A row that is not in this step's batch
      must not grow, must not be read, and must not shift anyone else's addressing.
@@ -109,7 +109,7 @@ def test_the_first_step_prefills_and_emits_one_token_per_admitted_row():
     assert engine.cache.seq_lens[:3] == [3, 1, 2]
 
 
-def test_an_admitted_row_runs_on_the_blocks_the_scheduler_reserved():
+def test_an_admitted_row_runs_on_the_blocks_the_scheduler_gave_it():
     """One reservation per request, made by the scheduler, borrowed by the cache row."""
     model, _ = _model()
     engine = _engine(model, num_blocks=16, block_size=4)
@@ -119,21 +119,26 @@ def test_an_admitted_row_runs_on_the_blocks_the_scheduler_reserved():
     request = out.admitted[0]
 
     assert engine.cache.tables[request.slot].block_ids == request.block_ids
-    assert len(request.block_ids) == 2  # 3 + 4 tokens worst case, 4 per block
-    assert engine.allocator.num_free == 14
+    assert len(request.block_ids) == 1  # 3 prompt tokens, 4 per block
+    assert engine.allocator.num_free == 15
 
 
-def test_a_running_request_never_asks_the_pool_for_another_block():
-    """The reservation's whole promise: nothing can fail once it is running."""
+def test_a_running_request_never_reaches_the_pool_behind_the_scheduler():
+    """Blocks arrive by being handed over, never by the cache row helping itself.
+
+    Day 33 made a row grow mid-run, so the pool is touched during a generation now.
+    The claim that has to survive is narrower: every block a row uses came through
+    `Scheduler`, so the pool is never booked twice for one sequence.
+    """
     model, _ = _model()
     engine = _engine(model, num_blocks=16, block_size=4)
     engine.add_request(_req("r0", [1, 2, 3], max_new_tokens=8))
 
     engine.step()
-    free_while_running = engine.allocator.num_free
     while engine.has_unfinished():
         engine.step()
-        assert engine.allocator.num_free >= free_while_running
+        for request in engine.scheduler.running:
+            assert engine.cache.tables[request.slot].block_ids == request.block_ids
 
     assert engine.allocator.num_free == 16  # and everything came back at the end
 
@@ -353,15 +358,15 @@ def test_a_pool_too_small_for_the_batch_just_queues_instead_of_failing():
     model, _ = _model()
     engine = _engine(model, num_blocks=4, block_size=4, max_batch_size=4)
     for i in range(4):
-        engine.add_request(_req(f"r{i}", [1, 2, 3], max_new_tokens=4))
+        engine.add_request(_req(f"r{i}", [1, 2, 3, 4, 5], max_new_tokens=4))
 
     out = engine.step()
-    assert out.batch_size == 2  # two blocks each, four blocks in the pool
+    assert out.batch_size == 2  # two blocks per prompt, four blocks in the pool
     assert out.num_waiting == 2
 
     rows = [r.token_ids for r in engine.run_to_completion()]
     assert len(rows) == 4
-    assert all(len(row) == 7 for row in rows)
+    assert all(len(row) == 9 for row in rows)
 
 
 # --- the caller's view --------------------------------------------------------

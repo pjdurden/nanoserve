@@ -34,24 +34,38 @@ which is correct and, seen across the whole cache, would refuse every prefill af
 the first, since under continuous batching the other rows are always mid-generation.
 Through a view it asks the right question: are *these* rows empty?
 
-**The pool has one owner.** The scheduler reserved this request's blocks at
-admission, so the cache row borrows that reservation (`adopt_row`) instead of
-allocating its own. Two reservations for one sequence would book the pool twice and
-the second booking fails mid-flight, which is exactly what the worst-case
-reservation existed to make impossible. Borrowing keeps the promise literal: the
-row starts with more capacity than it can ever use, so growing it never reaches the
-allocator, and a running request cannot raise `KVCacheExhausted`.
+**The pool has one owner.** The scheduler holds this request's blocks, so the
+cache row borrows them (`adopt_row`) instead of allocating its own. Two
+reservations for one sequence would book the pool twice and the second booking
+fails mid-flight. Day 33 makes that borrowing continuous rather than one-off: the
+scheduler hands a running request another block whenever its next token crosses a
+boundary, so before every decode the engine syncs the row's table with the
+request's list (`extend_row`). The alternative, letting `BlockTable.append` reach
+the allocator when it runs short, is the double-booking bug wearing a hat.
 
-What the day buys is Day 29's two bills, paid off and counted. `issued_tokens` is
+**A row can be taken away.** Preemption is the Week-9 edge, and the tensor half of
+it is one rule: the cache row must be emptied at the moment its slot goes back to
+the free list, not at the engine's convenience, because the very next thing the
+scheduler does is hand that slot to somebody else. So the engine installs
+`Scheduler.on_release` and the reset happens inside `schedule`. The request that
+comes back is not a new one: it kept its tokens and lost their K/V, so its prefill
+runs over `token_ids` (prompt plus everything it generated) rather than over the
+prompt, and the token it samples is the one it would have sampled anyway. Every
+prefill in this file uses `token_ids` for that reason, and for a request that has
+never been preempted the two are the same list.
+
+What the loop buys is Day 29's two bills, paid off and counted. `issued_tokens` is
 the token-slots the forwards actually computed and `collected_tokens` is the ones a
 request kept; here they are equal, so `waste_fraction` is 0.0 rather than the 79%
 static batching paid, because a row is in the forward only while it still wants a
 token. What it does *not* buy is on the same object and reported next to it:
 `prefill_padding_waste`, because the prefill is still one padded rectangle and a
-short prompt batched with a long one still pays for the difference. Ragged (varlen)
-prefill and chunked prefill are what fix that, and they are later. vLLM and SGLang
-both run this loop; the parts still missing here are preemption, incremental
-allocation, and mixing prefill and decode tokens into one forward.
+short prompt batched with a long one still pays for the difference, and
+`recomputed_tokens`, the K/V a preempted request has to buy twice. Ragged (varlen)
+prefill and chunked prefill are what fix the first; a bigger pool is the only thing
+that fixes the second. vLLM and SGLang both run this loop; the parts still missing
+here are swap-out as an alternative to recompute, prefix caching, and mixing
+prefill and decode tokens into one forward.
 """
 
 from __future__ import annotations
@@ -103,12 +117,18 @@ class Engine:
         self.scheduler = scheduler
         self.cache = cache
         self.pad_id = pad_id
+        # The scheduler owns slot lifetime and has no tensors; this is the tensor
+        # half of releasing one. Installed rather than passed to the constructor so
+        # a caller who built the pair by hand cannot forget it, and because the
+        # engine is the only object that knows what a slot means physically.
+        scheduler.on_release = self._release_row
         # What the run cost, in the vocabulary Day 29 measured static batching in.
         self.iterations = 0
         self.issued_tokens = 0
         self.collected_tokens = 0
         self.prefill_slots = 0
         self.prefill_tokens = 0
+        self.recomputed_tokens = 0
         self._next_id = 0
 
     @classmethod
@@ -150,23 +170,24 @@ class Engine:
     # --- one iteration --------------------------------------------------------
 
     def step(self) -> SchedulerOutput:
-        """Reap, schedule, forward, sample, and feed the tokens back.
+        """Schedule, sync the rows, forward, sample, and feed the tokens back.
 
-        The reap comes first and it happens in two places for one reason: the
-        scheduler releases the *ids* (a slot to the free list, blocks to the pool)
-        and the engine releases the *tensors* (a row's block table). Both have to
-        happen before this iteration admits anyone, since the request admitted now
-        may be handed the very slot released a line earlier, which is the whole
-        point of Week 8 and the reason `schedule` reaps before it admits.
+        The reap is entirely inside `schedule` now. It releases the *ids* (a slot to
+        the free list, blocks to the pool) and calls back into `_release_row` for
+        the *tensors*, which is the only ordering that survives preemption: a slot
+        can be taken from one request and given to another within a single
+        `schedule` call, so a tidy-up loop before or after it would be either too
+        late or too early. It covers the aborted case for free, which is the one
+        that never comes back through sampling.
 
-        Prefill and decode are two forwards here, not one. The newly admitted rows
-        run their whole prompt through the Day-27 padded rectangle; the running
-        rows run one token each through the Day-28 batched decode. Both emit
-        exactly one token per row, so every scheduled request advances by one token
-        per iteration whichever half it was in. Mixing the two into a single
-        flattened forward (chunked prefill) is a real optimisation and a later one.
+        Prefill and decode are two forwards here, not one. Newly admitted rows run
+        their whole context through the Day-27 padded rectangle; already running
+        rows run one token each through the Day-28 batched decode. Both emit exactly
+        one token per row, so every scheduled request advances by one token per
+        iteration whichever half it was in, and a resumed request rejoins in the
+        prefill half. Mixing the two into a single flattened forward (chunked
+        prefill) is a real optimisation and a later one.
         """
-        self._release_rows()
         out = self.scheduler.schedule()
         if out.is_empty:
             return out
@@ -180,33 +201,36 @@ class Engine:
         self.iterations += 1
         return out
 
-    def _release_rows(self) -> None:
-        """Empty the cache row of every running request that has finished.
+    def _release_row(self, slot: int) -> None:
+        """Empty a cache row whose slot the scheduler just took back.
 
-        Runs before `schedule`, because after it the request no longer knows which
-        slot it held. Covers the aborted case too, which is the one that does not
-        come back through sampling: a request killed between steps never appended a
-        token, so this loop is the only thing that would ever clear its row.
-
-        The blocks are not freed here. They belong to the request's reservation and
-        the scheduler hands them back to the pool when it releases the request, so
-        exactly one component ever talks to the allocator about a given block.
+        Called from inside `Scheduler.schedule`, for a request that finished, was
+        aborted, or was preempted. The blocks are not freed here: they belong to the
+        request and the scheduler hands them back to the pool around this call, so
+        exactly one component ever talks to the allocator about a given block. What
+        this owns is the row's table, and emptying it is what stops the next tenant
+        of the slot attending over a stranger's K/V.
         """
-        for request in self.scheduler.running:
-            if request.is_finished and request.slot is not None:
-                self.cache.reset_row(request.slot)
+        self.cache.reset_row(slot)
 
     def _prefill(self, requests) -> None:
-        """Run the newly admitted requests' prompts, and emit their first token."""
+        """Run the admitted rows' context, and emit one token each.
+
+        `token_ids`, not `prompt_token_ids`, because a preempted request comes back
+        as a longer version of itself: prompt plus every token it generated before
+        it lost its blocks. Its K/V has to exist again before it can decode, and
+        recomputing it is exactly a prefill over that longer context. The two lists
+        are identical for a request that has never been preempted, which is why
+        there is no branch here.
+        """
         rows = [r.slot for r in requests]
         for request in requests:
             # The scheduler already took these blocks out of the pool; the row runs
             # on that reservation rather than making a second one.
             self.cache.adopt_row(request.slot, request.block_ids)
+            self.recomputed_tokens += request.num_tokens if request.num_preemptions else 0
 
-        batch = pad_prompts(
-            [r.prompt_token_ids for r in requests], pad_id=self.pad_id, side="left"
-        )
+        batch = pad_prompts([r.token_ids for r in requests], pad_id=self.pad_id, side="left")
         logits = self.model.forward(
             batch.input_ids,
             batch.position_ids,
@@ -226,6 +250,7 @@ class Engine:
         sampled last iteration, which is why the cache is exactly one token behind
         the request at the top of every decode step.
         """
+        self._sync_rows(requests)
         rows = [r.slot for r in requests]
         device = self.cache.k_pool[0].device if self.cache.k_pool[0] is not None else None
         input_ids = torch.tensor(
@@ -238,6 +263,22 @@ class Engine:
         )
         logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
         self._collect(requests, logits[:, -1].argmax(dim=-1))
+
+    def _sync_rows(self, requests) -> None:
+        """Copy any block the scheduler added this iteration into the row's table.
+
+        The row was given its blocks at adoption and the scheduler has been topping
+        the request up a block at a time since, so the two lists drift by at most one
+        entry per iteration and this closes the gap before the write that needs it.
+        Skipping it does not raise: `BlockTable.append` would quietly allocate a
+        block of its own, the pool would be booked twice for one sequence, and the
+        damage would surface much later as a stranger's K/V in somebody's context.
+        """
+        for request in requests:
+            table = self.cache.tables[request.slot]
+            held = len(table.block_ids)
+            if held < len(request.block_ids):
+                self.cache.extend_row(request.slot, request.block_ids[held:])
 
     def _collect(self, requests, tokens: torch.Tensor) -> None:
         """Hand each row its sampled token. `append_token` applies the stop rules."""

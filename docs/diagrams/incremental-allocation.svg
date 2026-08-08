@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <pattern id="waste" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="2.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">Blocks a step at a time, and the eviction that pays for it</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Week 8 admitted a request by reserving prompt plus its whole budget, so the pool was booked for text nobody wrote.</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">Now it holds only what its tokens need. Growth can find the pool dry, so the running-to-waiting edge finally exists.</text>
+
+  <!-- ===== left: the two policies ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">one request: 5-token prompt, 24 tokens of budget, block_size 4</text>
+
+  <text x="50" y="180" font-size="12" font-weight="700" fill="#94a3b8">Week 8, at admission</text>
+  <rect x="50" y="190" width="42" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <rect x="96" y="190" width="42" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.8"/>
+  <rect x="142" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="188" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="234" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="280" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="326" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="372" y="190" width="42" height="30" rx="4" fill="url(#waste)" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="428" y="203" font-size="12" font-weight="700" fill="#b91c1c">8 blocks held</text>
+  <text x="428" y="218" font-size="11.5" fill="#b91c1c">6 of them empty</text>
+
+  <text x="50" y="252" font-size="12" font-weight="700" fill="#15803d">Day 33, at admission</text>
+  <rect x="50" y="262" width="42" height="30" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="96" y="262" width="42" height="30" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.8"/>
+  <rect x="142" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="188" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="234" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="280" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="326" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="372" y="262" width="42" height="30" rx="4" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="428" y="275" font-size="12" font-weight="700" fill="#15803d">2 blocks held</text>
+  <text x="428" y="290" font-size="11.5" fill="#64748b">rest bought later</text>
+  <path d="M163,300 L163,316" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <text x="176" y="330" font-size="11.5" fill="#15803d">one more at token 9, then 13, then 17 ...</text>
+
+  <rect x="50" y="346" width="500" height="78" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="369" font-size="13.5" font-weight="700" fill="#334155">one allocation rule, and it ignores the state</text>
+  <text x="70" y="392" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e1b4b">blocks_for_length(num_tokens) - len(block_ids)</text>
+  <text x="70" y="412" font-size="11" fill="#475569">fresh: its prompt. running: 0, or 1 on a boundary. preempted: prompt + output.</text>
+
+  <!-- state machine -->
+  <text x="50" y="458" font-size="14" font-weight="700" fill="#334155">the edge Day 30 left out, because nothing made it safe</text>
+
+  <rect x="64" y="486" width="104" height="50" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+  <text x="116" y="509" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">waiting</text>
+  <text x="116" y="526" font-size="11" fill="#4338ca" text-anchor="middle">owns nothing</text>
+
+  <rect x="248" y="486" width="104" height="50" rx="9" fill="#ecfdf5" stroke="#15803d" stroke-width="2"/>
+  <text x="300" y="509" font-size="15" font-weight="700" fill="#14532d" text-anchor="middle">running</text>
+  <text x="300" y="526" font-size="11" fill="#15803d" text-anchor="middle">slot + blocks</text>
+
+  <rect x="432" y="486" width="104" height="50" rx="9" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="484" y="509" font-size="15" font-weight="700" fill="#4c1d95" text-anchor="middle">finished</text>
+  <text x="484" y="526" font-size="11" fill="#6d28d9" text-anchor="middle">freed next step</text>
+
+  <line x1="168" y1="500" x2="248" y2="500" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="208" y="478" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">admit</text>
+  <line x1="352" y1="511" x2="432" y2="511" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="392" y="478" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">stop / length</text>
+
+  <path d="M248,522 C208,548 208,548 168,522" fill="none" stroke="#b91c1c" stroke-width="2.4" marker-end="url(#arrowred)"/>
+  <text x="208" y="566" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">preempt: blocks and slot back,</text>
+  <text x="208" y="582" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">tokens kept, K/V thrown away</text>
+
+  <!-- ===== right: the cascade ===== -->
+  <text x="620" y="150" font-size="14" font-weight="700" fill="#334155">growth goes oldest first, the victim is the youngest</text>
+  <text x="620" y="170" font-size="12" fill="#64748b">three rows, one block each, a pool of three. Every row wants a second block.</text>
+
+  <rect x="620" y="184" width="530" height="128" rx="10" fill="#fdfdff" stroke="#cbd5e1" stroke-width="1.4"/>
+
+  <text x="640" y="212" font-size="11.5" font-weight="700" fill="#94a3b8">a  (oldest)</text>
+  <rect x="726" y="196" width="38" height="24" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="768" y="196" width="38" height="24" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <text x="786" y="234" font-size="9.5" fill="#15803d" text-anchor="middle">was c's</text>
+  <text x="822" y="207" font-size="11.5" font-weight="700" fill="#15803d">grows. never a victim, so</text>
+  <text x="822" y="222" font-size="11.5" fill="#15803d">somebody always finishes</text>
+
+  <text x="640" y="256" font-size="11.5" font-weight="700" fill="#94a3b8">b</text>
+  <rect x="726" y="242" width="38" height="24" rx="4" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+  <line x1="726" y1="266" x2="764" y2="242" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="822" y="252" font-size="11.5" font-weight="700" fill="#b91c1c">nobody younger to evict,</text>
+  <text x="822" y="267" font-size="11.5" fill="#b91c1c">so it is its own victim</text>
+
+  <text x="640" y="294" font-size="11.5" font-weight="700" fill="#94a3b8">c  (youngest)</text>
+  <rect x="726" y="280" width="38" height="24" rx="4" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+  <line x1="726" y1="304" x2="764" y2="280" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="822" y="290" font-size="11.5" font-weight="700" fill="#b91c1c">evicted first: its block is</text>
+  <text x="822" y="305" font-size="11.5" fill="#b91c1c">the one a grows into</text>
+
+  <rect x="620" y="326" width="258" height="112" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="638" y="349" font-size="13" font-weight="700" fill="#334155">why youngest, not largest</text>
+  <text x="638" y="371" font-size="11" fill="#475569">the oldest row can never be evicted,</text>
+  <text x="638" y="388" font-size="11" fill="#475569">so it reaches its last token, so it frees</text>
+  <text x="638" y="405" font-size="11" fill="#475569">its blocks. the only reason this loop</text>
+  <text x="638" y="422" font-size="11" font-weight="700" fill="#475569">cannot livelock.</text>
+
+  <rect x="892" y="326" width="258" height="112" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="910" y="349" font-size="13" font-weight="700" fill="#334155">recompute, not swap</text>
+  <text x="910" y="371" font-size="11" fill="#475569">a victim keeps its tokens and loses</text>
+  <text x="910" y="388" font-size="11" fill="#475569">their K/V, so its next prefill runs over</text>
+  <text x="910" y="405" font-size="11" fill="#475569">prompt plus output. same text, bought</text>
+  <text x="910" y="422" font-size="11" fill="#475569">twice. vLLM can swap out instead.</text>
+
+  <text x="620" y="464" font-size="13.5" font-weight="700" fill="#334155">measured: 4 requests, 24 tokens each, 4 slots, block_size 4</text>
+
+  <line x1="620" y1="478" x2="1150" y2="478" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="498" font-size="11.5" font-weight="700" fill="#94a3b8">pool</text>
+  <text x="800" y="498" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">iterations</text>
+  <text x="940" y="498" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">occupancy</text>
+  <text x="1090" y="498" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">preemptions</text>
+
+  <text x="620" y="521" font-size="12.5" fill="#475569">48 tokens, Week 8</text>
+  <text x="800" y="521" font-size="12.5" fill="#475569" text-anchor="middle">96</text>
+  <text x="940" y="521" font-size="12.5" fill="#475569" text-anchor="middle">0.250</text>
+  <text x="1090" y="521" font-size="12.5" fill="#475569" text-anchor="middle">n/a</text>
+
+  <text x="620" y="543" font-size="12.5" font-weight="700" fill="#15803d">48 tokens, Day 33</text>
+  <text x="800" y="543" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">44</text>
+  <text x="940" y="543" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.545</text>
+  <text x="1090" y="543" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">3</text>
+
+  <text x="620" y="567" font-size="12.5" fill="#475569">96 tokens, Week 8</text>
+  <text x="800" y="567" font-size="12.5" fill="#475569" text-anchor="middle">48</text>
+  <text x="940" y="567" font-size="12.5" fill="#475569" text-anchor="middle">0.500</text>
+  <text x="1090" y="567" font-size="12.5" fill="#475569" text-anchor="middle">n/a</text>
+
+  <text x="620" y="589" font-size="12.5" font-weight="700" fill="#15803d">96 tokens, Day 33</text>
+  <text x="800" y="589" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">28</text>
+  <text x="940" y="589" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.857</text>
+  <text x="1090" y="589" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">1</text>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="606" width="1100" height="50" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="70" y="628" font-size="14" fill="#1e1b4b">Same 96 tokens either way. Reservation waste is 0.0 and what is left is the unfilled tail block, at most block_size - 1 per row.</text>
+  <text x="70" y="648" font-size="14" fill="#1e1b4b">The bill: 25 tokens of K/V computed twice, and one request whose answer was late so an older one could be early.</text>
+</svg>

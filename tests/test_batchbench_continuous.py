@@ -471,14 +471,16 @@ def test_the_batch_shrinks_as_requests_leave_it():
 
 def test_a_pool_too_small_for_everyone_queues_instead_of_failing():
     model, _ = _model()
-    # Room for two worst-case reservations, so the last two requests wait, and the
-    # measured occupancy is a real number about a busy engine rather than 1.0.
+    # Three blocks for prompts wanting five, so the queue really is holding somebody
+    # back and the measured occupancy is a number about a busy engine, not 1.0. Day
+    # 33 is why this needs a pool half the size it used to: admission buys the
+    # prompt's blocks now, so the same six blocks fit every request at once.
     timing = time_model_continuous(
         model,
         PROMPTS,
         max_new_tokens=[3, 5, 2, 4],
         block_size=4,
-        num_blocks=6,
+        num_blocks=3,
         clock=unit_clock(),
     )
     assert timing.collected_tokens == 3 + 5 + 2 + 4
