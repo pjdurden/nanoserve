@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <pattern id="recompute" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="2.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">The recompute bill, put on the invoice</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Day 33 could evict a running request and rebuild its K/V later. The benchmark counted rows, so that cost was invisible:</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">a resumed request arrives as one row carrying a whole context, and the extra wait averaged quietly into the mean latency.</text>
+
+  <!-- ===== left top: the denominator ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">one iteration, counted two ways (pool of 12, iteration 28)</text>
+  <text x="50" y="170" font-size="12" fill="#64748b">one row decoding its next token, one row resumed after an eviction</text>
+
+  <rect x="50" y="182" width="510" height="112" rx="10" fill="#fdfdff" stroke="#cbd5e1" stroke-width="1.4"/>
+
+  <text x="68" y="215" font-size="11.5" font-weight="700" fill="#94a3b8">decode row</text>
+  <rect x="160" y="200" width="24" height="24" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <text x="196" y="217" font-size="11.5" fill="#15803d">1 position, and it is new work</text>
+
+  <text x="68" y="256" font-size="11.5" font-weight="700" fill="#94a3b8">resumed row</text>
+  <rect x="160" y="241" width="312" height="24" rx="4" fill="url(#recompute)" stroke="#fca5a5" stroke-width="1.6"/>
+  <text x="316" y="258" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">13 positions, every one of them bought before</text>
+
+  <text x="68" y="285" font-size="12" fill="#94a3b8">rows: 2</text>
+  <text x="150" y="285" font-size="12" font-weight="700" fill="#b91c1c">positions: 14, and 13 already existed</text>
+
+  <rect x="50" y="306" width="510" height="96" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="329" font-size="13.5" font-weight="700" fill="#334155">so the denominator stops being rows</text>
+  <text x="70" y="353" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e1b4b">recompute_fraction = recomputed / (prefill_tokens + decode_rows)</text>
+  <text x="70" y="375" font-size="11" fill="#475569">pad slots stay out: padding is its own bill, already</text>
+  <text x="70" y="392" font-size="11" fill="#475569">measured, and mixing the two would hide both.</text>
+
+  <!-- ===== left bottom: who pays it ===== -->
+  <text x="50" y="424" font-size="14" font-weight="700" fill="#334155">and the other half of the bill is one caller's wait (pool of 12)</text>
+
+  <text x="50" y="456" font-size="11.5" font-weight="700" fill="#94a3b8">r0  oldest</text>
+  <rect x="140" y="444" width="156" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <text x="306" y="458" font-size="11.5" font-weight="700" fill="#15803d">24 iterations, never a victim</text>
+
+  <text x="50" y="494" font-size="11.5" font-weight="700" fill="#94a3b8">r5  youngest</text>
+  <rect x="140" y="482" width="416" height="18" rx="4" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4"/>
+  <rect x="140" y="482" width="26" height="18" rx="4" fill="#ecfdf5" stroke="#15803d" stroke-width="1.4"/>
+  <line x1="166" y1="478" x2="166" y2="504" stroke="#b91c1c" stroke-width="2.4"/>
+  <line x1="400" y1="478" x2="400" y2="504" stroke="#b91c1c" stroke-width="2.4"/>
+  <line x1="478" y1="478" x2="478" y2="504" stroke="#b91c1c" stroke-width="2.4"/>
+  <text x="140" y="522" font-size="11.5" font-weight="700" fill="#b91c1c">evicted at iterations 4, 40 and 52</text>
+  <text x="374" y="522" font-size="11.5" font-weight="700" fill="#b91c1c">64 iterations, same 24 tokens</text>
+
+  <rect x="50" y="536" width="510" height="52" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="558" font-size="11.5" fill="#475569">Both requests asked for 24 tokens and both got the same 24 tokens. The mean latency of the run is</text>
+  <text x="70" y="576" font-size="11.5" fill="#475569">42 iterations, and it describes neither of them, which is why the victims are averaged separately.</text>
+
+  <!-- ===== right: the measured sweep ===== -->
+  <text x="620" y="150" font-size="14" font-weight="700" fill="#334155">measured: 6 requests, 24 tokens each, 6 slots, block_size 4</text>
+  <text x="620" y="170" font-size="12" fill="#64748b">5-token prompts. only the pool moves: every row collected the same 144 tokens.</text>
+
+  <line x1="620" y1="186" x2="1150" y2="186" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="206" font-size="11.5" font-weight="700" fill="#94a3b8">pool</text>
+  <text x="790" y="206" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">occupancy</text>
+  <text x="900" y="206" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">evictions</text>
+  <text x="900" y="220" font-size="10" fill="#94a3b8" text-anchor="middle">per request</text>
+  <text x="1010" y="206" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">recompute</text>
+  <text x="1010" y="220" font-size="10" fill="#94a3b8" text-anchor="middle">of the forward</text>
+  <text x="1120" y="206" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">victim</text>
+  <text x="1120" y="220" font-size="10" fill="#94a3b8" text-anchor="middle">latency</text>
+
+  <text x="620" y="246" font-size="12.5" font-weight="700" fill="#15803d">48 blocks</text>
+  <text x="790" y="246" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">1.000</text>
+  <text x="900" y="246" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.00</text>
+  <text x="1010" y="246" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.0%</text>
+  <text x="1120" y="246" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">1.00x</text>
+
+  <text x="620" y="272" font-size="12.5" fill="#475569">32 blocks</text>
+  <text x="790" y="272" font-size="12.5" fill="#475569" text-anchor="middle">0.750</text>
+  <text x="900" y="272" font-size="12.5" fill="#475569" text-anchor="middle">0.33</text>
+  <text x="1010" y="272" font-size="12.5" fill="#475569" text-anchor="middle">21.7%</text>
+  <text x="1120" y="272" font-size="12.5" fill="#475569" text-anchor="middle">1.25x</text>
+
+  <text x="620" y="298" font-size="12.5" fill="#475569">24 blocks</text>
+  <text x="790" y="298" font-size="12.5" fill="#475569" text-anchor="middle">0.667</text>
+  <text x="900" y="298" font-size="12.5" fill="#475569" text-anchor="middle">0.50</text>
+  <text x="1010" y="298" font-size="12.5" fill="#475569" text-anchor="middle">26.3%</text>
+  <text x="1120" y="298" font-size="12.5" fill="#475569" text-anchor="middle">1.39x</text>
+
+  <text x="620" y="324" font-size="12.5" fill="#475569">16 blocks</text>
+  <text x="790" y="324" font-size="12.5" fill="#475569" text-anchor="middle">0.462</text>
+  <text x="900" y="324" font-size="12.5" fill="#475569" text-anchor="middle">0.83</text>
+  <text x="1010" y="324" font-size="12.5" fill="#475569" text-anchor="middle">32.1%</text>
+  <text x="1120" y="324" font-size="12.5" fill="#475569" text-anchor="middle">1.71x</text>
+
+  <text x="620" y="350" font-size="12.5" font-weight="700" fill="#b91c1c">12 blocks</text>
+  <text x="790" y="350" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">0.375</text>
+  <text x="900" y="350" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">1.17</text>
+  <text x="1010" y="350" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">39.9%</text>
+  <text x="1120" y="350" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">1.90x</text>
+
+  <text x="620" y="376" font-size="12.5" fill="#475569">8 blocks</text>
+  <text x="790" y="376" font-size="12.5" fill="#475569" text-anchor="middle">0.240</text>
+  <text x="900" y="376" font-size="12.5" fill="#475569" text-anchor="middle">1.33</text>
+  <text x="1010" y="376" font-size="12.5" fill="#475569" text-anchor="middle">37.5%</text>
+  <text x="1120" y="376" font-size="12.5" fill="#475569" text-anchor="middle">2.83x</text>
+
+  <line x1="620" y1="392" x2="1150" y2="392" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <rect x="620" y="410" width="258" height="128" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="638" y="433" font-size="13" font-weight="700" fill="#334155">the bill is not monotone</text>
+  <text x="638" y="455" font-size="11" fill="#475569">8 blocks evicts more often than 12 and</text>
+  <text x="638" y="472" font-size="11" fill="#475569">pays less for it. A pool that tight runs</text>
+  <text x="638" y="489" font-size="11" fill="#475569">one row at a time, so victims are caught</text>
+  <text x="638" y="506" font-size="11" fill="#475569">young: 12.0 tokens per eviction against</text>
+  <text x="638" y="523" font-size="11" font-weight="700" fill="#475569">15.3. A late eviction is the costly one.</text>
+
+  <rect x="892" y="410" width="258" height="128" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="910" y="433" font-size="13" font-weight="700" fill="#334155">recompute now, swap later</text>
+  <text x="910" y="455" font-size="11" fill="#475569">Swapping a victim's blocks to host</text>
+  <text x="910" y="472" font-size="11" fill="#475569">memory pays PCIe instead of FLOPs, so</text>
+  <text x="910" y="489" font-size="11" fill="#475569">it replaces this column with a transfer.</text>
+  <text x="910" y="506" font-size="11" fill="#475569">vLLM offers both. Arguing about which</text>
+  <text x="910" y="523" font-size="11" font-weight="700" fill="#475569">needs one of them on a real workload.</text>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="606" width="1100" height="50" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="70" y="628" font-size="14" fill="#1e1b4b">Same 144 tokens at every pool size. What changes is what the card did to produce them: 168 forward positions at 48 blocks, 268 at 12.</text>
+  <text x="70" y="648" font-size="14" fill="#1e1b4b">Occupancy alone reads that as a busier engine. It was a busier engine spending two fifths of its forward on K/V it used to have.</text>
+</svg>

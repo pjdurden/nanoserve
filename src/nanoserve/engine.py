@@ -128,6 +128,7 @@ class Engine:
         self.collected_tokens = 0
         self.prefill_slots = 0
         self.prefill_tokens = 0
+        self.prefill_rows = 0
         self.recomputed_tokens = 0
         self._next_id = 0
 
@@ -239,6 +240,7 @@ class Engine:
         )
         self.prefill_slots += batch.batch_size * batch.max_length
         self.prefill_tokens += int(batch.lengths.sum().item())
+        self.prefill_rows += batch.batch_size
         self._collect(requests, last_token_logits(logits, batch).argmax(dim=-1))
 
     def _decode(self, requests) -> None:
@@ -358,6 +360,36 @@ class Engine:
         """
         issued = self.issued_tokens
         return (issued - self.collected_tokens) / issued if issued else 0.0
+
+    @property
+    def forward_tokens(self) -> int:
+        """Token positions the forwards computed: the honest denominator. Day 34.
+
+        `issued_tokens` counts rows, which is the right unit for the decode bill and
+        the wrong one for everything a prefill does. A decode row is one position; a
+        prefill row is its whole context, and a *resumed* prefill row is the whole
+        context of a request that already had one. Counting rows would hide the
+        recompute surcharge in exactly the place it is biggest, so this counts
+        positions: every real prefill token, plus one for each decode row.
+
+        Pad slots stay out on purpose. They are a separate bill, reported next door
+        as `prefill_padding_waste`, and folding them in would make the recompute
+        share move with how the prompts happened to line up in a rectangle.
+        """
+        return self.prefill_tokens + self.issued_tokens - self.prefill_rows
+
+    @property
+    def recompute_fraction(self) -> float:
+        """Share of the forward positions that were bought a second time.
+
+        The price of preemption in the currency the engine pays it in. Zero when the
+        pool is big enough for the offered load, and it climbs as the pool shrinks,
+        which is the trade Day 33 made when it stopped reserving the worst case.
+        The other half of the bill is not here: it is one caller's latency, and
+        `ContinuousTiming.preemption_latency_penalty` is where that lands.
+        """
+        forwarded = self.forward_tokens
+        return self.recomputed_tokens / forwarded if forwarded else 0.0
 
     @property
     def prefill_padding_waste(self) -> float:

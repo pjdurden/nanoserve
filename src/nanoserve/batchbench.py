@@ -470,12 +470,26 @@ class IterationOutcome:
                 does one iteration later: the answer is ready when it is sampled,
                 and charging the reap to the caller would flatter neither side.
 
+    Day 34 adds the three that make preemption visible:
+
+    preempted:        request ids evicted in this iteration. Per iteration and not
+                      as a running total, because who was evicted and when is what
+                      turns a pool-level count into a per-request charge.
+    forward_tokens:   positions the forward computed. 0 means "not reported", which
+                      is charged as one per row; see `work_tokens`.
+    recomputed_tokens: positions in that forward whose K/V had already been computed
+                      once, i.e. the context of a resumed request. A subset of
+                      `work_tokens`, never an extra charge alongside it.
+
     Frozen: it describes one iteration that already happened.
     """
 
     batch_size: int
     collected: int
     finished: tuple[str, ...] = ()
+    preempted: tuple[str, ...] = ()
+    forward_tokens: int = 0
+    recomputed_tokens: int = 0
 
     def __post_init__(self) -> None:
         if self.batch_size < 0 or self.collected < 0:
@@ -488,6 +502,33 @@ class IterationOutcome:
                 "a row collects at most one token per iteration; got "
                 f"{self.collected} tokens from {self.batch_size} rows"
             )
+        if self.forward_tokens < 0 or self.recomputed_tokens < 0:
+            raise ValueError(
+                "an iteration cannot have negative forward or recomputed tokens; got "
+                f"forward_tokens={self.forward_tokens}, "
+                f"recomputed_tokens={self.recomputed_tokens}"
+            )
+        if self.forward_tokens and self.forward_tokens < self.batch_size:
+            raise ValueError(
+                "a forward computes at least one position per row; got "
+                f"{self.forward_tokens} positions for {self.batch_size} rows"
+            )
+        if self.recomputed_tokens > self.work_tokens:
+            raise ValueError(
+                "an iteration cannot recompute more positions than it forwarded; got "
+                f"{self.recomputed_tokens} of {self.work_tokens}"
+            )
+
+    @property
+    def work_tokens(self) -> int:
+        """Positions this iteration's forward computed, however it was reported.
+
+        An unreported `forward_tokens` is charged one position per row, which is
+        exactly what a decode-only iteration costs and is the shape every caller fed
+        this class before Day 34 gave it a prefill length to carry. So the default is
+        a correct measurement of the common case rather than a placeholder.
+        """
+        return self.forward_tokens if self.forward_tokens else self.batch_size
 
 
 @dataclass
@@ -502,6 +543,15 @@ class ContinuousTiming:
     batch_sizes:    rows forwarded in each iteration, aligned with `step_s`.
     collected:      tokens kept in each iteration, aligned with `step_s`.
     finished_at:    request id to the index of the iteration it finished in.
+    forward_tokens: positions each iteration's forward computed, aligned with
+                    `step_s`. Empty means one per row for every iteration, which is
+                    what a run of pure decodes costs and what a Day-32 timing meant.
+    recomputed:     of those positions, the ones bought a second time. Empty means
+                    zero throughout: nothing was preempted, so nothing was resumed.
+    preempted_at:   request id to the iterations it was evicted in, one entry per
+                    eviction. A request preempted three times appears once with a
+                    list of three, because the cost is per eviction and the identity
+                    is per request.
 
     The shape difference from `BatchTiming` is the result, not an accident of the
     API. There, `finished_at` is a list indexed by row, because a row *is* the
@@ -520,8 +570,19 @@ class ContinuousTiming:
     batch_sizes: list[int] = field(default_factory=list)
     collected: list[int] = field(default_factory=list)
     finished_at: dict[str, int] = field(default_factory=dict)
+    forward_tokens: list[int] = field(default_factory=list)
+    recomputed: list[int] = field(default_factory=list)
+    preempted_at: dict[str, list[int]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        # Fill the Day-34 series before validating them, so every timing ever built
+        # has one entry per iteration and no reader downstream has to branch on
+        # whether preemption was measured. The defaults are measurements and not
+        # placeholders: a forward with no reported length ran one position per row.
+        if not self.forward_tokens:
+            self.forward_tokens = list(self.batch_sizes)
+        if not self.recomputed:
+            self.recomputed = [0] * self.n_iterations
         if self.num_requests < 1:
             raise ValueError(f"a run needs at least one request; got {self.num_requests}")
         if self.max_batch_size < 1:
@@ -551,6 +612,34 @@ class ContinuousTiming:
             raise ValueError(
                 f"a request finished outside the run's {self.n_iterations} "
                 f"iterations; got {self.finished_at}"
+            )
+        if (
+            len(self.forward_tokens) != self.n_iterations
+            or len(self.recomputed) != self.n_iterations
+        ):
+            raise ValueError(
+                "a timing needs one entry per iteration in each series; got "
+                f"{self.n_iterations} times, {len(self.forward_tokens)} forward "
+                f"counts, {len(self.recomputed)} recompute counts"
+            )
+        if any(f < b for f, b in zip(self.forward_tokens, self.batch_sizes)):
+            raise ValueError(
+                "a forward computes at least one position per row; got "
+                f"forward_tokens={self.forward_tokens} over batch_sizes={self.batch_sizes}"
+            )
+        if any(r > f for r, f in zip(self.recomputed, self.forward_tokens)):
+            raise ValueError(
+                "an iteration cannot recompute more positions than it forwarded; got "
+                f"recomputed={self.recomputed} over forward_tokens={self.forward_tokens}"
+            )
+        if any(
+            not 0 <= i < self.n_iterations
+            for iterations in self.preempted_at.values()
+            for i in iterations
+        ):
+            raise ValueError(
+                f"a request was preempted outside the run's {self.n_iterations} "
+                f"iterations; got {self.preempted_at}"
             )
 
     # --- what the clock saw ---------------------------------------------------
@@ -643,6 +732,76 @@ class ContinuousTiming:
         slots = self.max_batch_size * self.forward_iterations
         return self.issued_tokens / slots if slots else 0.0
 
+    # --- what preemption cost -------------------------------------------------
+
+    @property
+    def total_forward_tokens(self) -> int:
+        """Positions the forwards computed across the run: the work denominator.
+
+        Not `issued_tokens`, which counts rows. The two differ by exactly the thing
+        Day 34 exists to expose: a decode row is one position and a prefill row is a
+        whole context, so a resumed request rejoining after an eviction arrives as
+        *one row* carrying dozens of positions. Divide the recompute by rows and a
+        run that bought a fifth of its K/V twice reports a few percent.
+        """
+        return sum(self.forward_tokens)
+
+    @property
+    def recomputed_tokens(self) -> int:
+        """Positions whose K/V was computed, thrown away, and computed again."""
+        return sum(self.recomputed)
+
+    @property
+    def recompute_fraction(self) -> float:
+        """Share of the forward work spent rebuilding K/V that already existed.
+
+        The recompute surcharge, and the number to put next to a claim that
+        incremental allocation raised occupancy. Occupancy went up because the pool
+        stopped holding blocks for text nobody wrote; this is what was paid for it,
+        and a run can trade a very good-looking occupancy for a quarter of its
+        forward spent on work it had already done.
+
+        It is also the honest half of the recompute-versus-swap argument. Swapping a
+        victim's blocks to host memory and back pays PCIe bandwidth instead of FLOPs,
+        so the number it would replace this one with is a transfer, not a forward,
+        and comparing them needs both measured on the same workload rather than one
+        measured and the other asserted.
+        """
+        forwarded = self.total_forward_tokens
+        return self.recomputed_tokens / forwarded if forwarded else 0.0
+
+    @property
+    def num_preemptions(self) -> int:
+        """Evictions in the run, counting a twice-evicted request twice."""
+        return sum(len(iterations) for iterations in self.preempted_at.values())
+
+    def preemptions(self, request_id: str) -> int:
+        """How many times this request was evicted. 0 for one that never was.
+
+        Unlike `latency_s`, an unknown id is not an error here. "Was this request
+        preempted?" has an answer for every request the caller submitted, including
+        the ones that sailed through, and that answer is zero.
+        """
+        return len(self.preempted_at.get(request_id, ()))
+
+    @property
+    def preempted_requests(self) -> tuple[str, ...]:
+        """Ids that were evicted at least once, in order of first eviction."""
+        order = sorted(self.preempted_at.items(), key=lambda kv: (min(kv[1]), kv[0]))
+        return tuple(request_id for request_id, _ in order)
+
+    @property
+    def preemptions_per_request(self) -> float:
+        """Evictions divided by requests submitted: the load-shaped summary.
+
+        A total says how hard the pool was pressed and a per-request rate says what
+        an arriving request should expect, which is the one a caller is entitled to
+        ask about. Both hide the same thing, so `preempted_requests` is next door:
+        one request evicted four times and four evicted once are the same rate and
+        very different services.
+        """
+        return self.num_preemptions / self.num_requests
+
     # --- latency, per request -------------------------------------------------
 
     def latency_s(self, request_id: str) -> float:
@@ -685,6 +844,65 @@ class ContinuousTiming:
         latencies = self.latencies_s
         return max(latencies) if latencies else 0.0
 
+    # --- what preemption cost the caller --------------------------------------
+
+    @property
+    def preempted_latencies_s(self) -> list[float]:
+        """Latency of every finished request that was evicted at least once."""
+        return [
+            self.latency_s(request_id)
+            for request_id in sorted(self.finished_at)
+            if self.preemptions(request_id)
+        ]
+
+    @property
+    def straight_through_latencies_s(self) -> list[float]:
+        """Latency of every finished request that was never evicted: the control."""
+        return [
+            self.latency_s(request_id)
+            for request_id in sorted(self.finished_at)
+            if not self.preemptions(request_id)
+        ]
+
+    @property
+    def mean_preempted_latency_s(self) -> float:
+        latencies = self.preempted_latencies_s
+        return statistics.fmean(latencies) if latencies else 0.0
+
+    @property
+    def mean_straight_through_latency_s(self) -> float:
+        latencies = self.straight_through_latencies_s
+        return statistics.fmean(latencies) if latencies else 0.0
+
+    @property
+    def preemption_latency_penalty(self) -> float:
+        """Mean victim latency over mean straight-through latency: what it felt like.
+
+        The recompute is paid twice and in two currencies. `recompute_fraction` is
+        the engine's half, in forward work, and it is spread across everybody. This
+        is the caller's half, and it lands on one request: its K/V was thrown away,
+        it went back to the queue, and it waited for blocks it used to own. 1.4 means
+        a victim waited 40% longer than a request the scheduler never touched.
+
+        Two guards, and they say different things on purpose. Nothing preempted is
+        1.0: no request was punished, so the multiplier really is one. Nothing left
+        unpreempted is 0.0: there is no control group, and a run in which everybody
+        was a victim cannot say what not being one would have cost. Comparing the
+        victims against themselves would produce 1.0 there and read as "preemption
+        was free", which is the one wrong answer available.
+
+        It is a comparison across requests and not across runs, so it carries their
+        differences: a victim is the youngest running request, and the youngest tends
+        to be the one that was admitted last and would have finished later anyway.
+        The clean version of this number is the same request measured in two pools,
+        which is what `sweep_pool_sizes` is for.
+        """
+        victims = self.mean_preempted_latency_s
+        if not victims:
+            return 1.0
+        control = self.mean_straight_through_latency_s
+        return victims / control if control > 0.0 else 0.0
+
 
 # One timed engine iteration: run it, and say what it did.
 IterationFn = Callable[[], IterationOutcome]
@@ -721,12 +939,18 @@ def time_continuous_run(
     Raises `ValueError` if a request reports finishing twice. That is not a
     harmless duplicate: the second one silently overwrites the first, moving the
     request's latency later, which makes the engine look slower than it is in
-    exactly the direction that would be believed.
+    exactly the direction that would be believed. It raises on an eviction reported
+    for an already finished request for the same reason: a finished request owns
+    nothing to take back, so that is an id mix-up, and it would otherwise land in
+    the per-request counts as a victim that never was.
     """
     step_s: list[float] = []
     batch_sizes: list[int] = []
     collected: list[int] = []
     finished_at: dict[str, int] = {}
+    forward_tokens: list[int] = []
+    recomputed: list[int] = []
+    preempted_at: dict[str, list[int]] = {}
 
     while unfinished_fn():
         if len(step_s) >= max_iterations:
@@ -741,6 +965,15 @@ def time_continuous_run(
         index = len(step_s) - 1
         batch_sizes.append(outcome.batch_size)
         collected.append(outcome.collected)
+        forward_tokens.append(outcome.work_tokens)
+        recomputed.append(outcome.recomputed_tokens)
+        for request_id in outcome.preempted:
+            if request_id in finished_at:
+                raise ValueError(
+                    f"request {request_id!r} was preempted after it finished, at "
+                    f"iterations {finished_at[request_id]} and {index}"
+                )
+            preempted_at.setdefault(request_id, []).append(index)
         for request_id in outcome.finished:
             if request_id in finished_at:
                 raise ValueError(
@@ -756,6 +989,9 @@ def time_continuous_run(
         batch_sizes=batch_sizes,
         collected=collected,
         finished_at=finished_at,
+        forward_tokens=forward_tokens,
+        recomputed=recomputed,
+        preempted_at=preempted_at,
     )
 
 
@@ -1217,6 +1453,11 @@ def build_continuous_run(
         # nobody will backward through would charge one side for bookkeeping the
         # other does not do.
         before = engine.collected_tokens
+        # Deltas rather than totals: the engine counts for the whole run and the
+        # timing wants this iteration, and taking the difference is what lets the
+        # recompute be attributed to the iteration that paid it.
+        before_forward = engine.forward_tokens
+        before_recompute = engine.recomputed_tokens
         with torch.no_grad():
             out = engine.step()
         finished = tuple(rid for rid, r in pending.items() if r.is_finished)
@@ -1226,6 +1467,13 @@ def build_continuous_run(
             batch_size=out.batch_size,
             collected=engine.collected_tokens - before,
             finished=finished,
+            # The scheduler's own victim list, taken from the output rather than
+            # inferred from the states afterwards: a request can be evicted and
+            # re-admitted in later iterations, so "who is waiting now" is not the
+            # same question as "who was evicted this iteration".
+            preempted=tuple(r.request_id for r in out.preempted),
+            forward_tokens=engine.forward_tokens - before_forward,
+            recomputed_tokens=engine.recomputed_tokens - before_recompute,
         )
 
     return ContinuousRun(
@@ -1253,6 +1501,71 @@ def time_model_continuous(
         max_batch_size=run.engine.scheduler.max_batch_size,
         clock=clock,
     )
+
+
+def sweep_pool_sizes(
+    model,
+    prompts: list[list[int]],
+    *,
+    max_new_tokens: int | list[int],
+    pool_sizes: list[int],
+    clock: Clock = time.perf_counter,
+    **build_kwargs,
+) -> list[ContinuousTiming]:
+    """Run one workload through several pool sizes and return a timing for each.
+
+    The preemption dial. Everything else is held fixed (same prompts, same budgets,
+    same slots, same clock) and only the number of blocks moves, so the differences
+    between the timings are the price of memory pressure and nothing else. A roomy
+    pool preempts nobody and reports `recompute_fraction` 0.0; shrink it and the
+    victims, the surcharge and the victims' extra waiting appear together, which is
+    the shape of the Week-9 trade.
+
+    Sweeping downward is the readable order but not a requirement; the sizes are
+    used as given and returned aligned with the timings.
+
+    The sweep checks the one thing that makes the numbers worth quoting: **every pool
+    must have produced the same text**. A recompute that resumes instead of restarts
+    is the whole correctness claim of Day 33, and it fails silently, so a harness that
+    reported a surcharge for a run that generated something else would be quoting the
+    price of a bug. Raises `ValueError` if two pools disagree.
+
+    Also raises for an empty or repeated pool size, and passes through the
+    `KVCacheExhausted` from `add_request` for a pool too small to hold the largest
+    request's worst case, which is a refusal at the door rather than a slow run.
+    """
+    if not pool_sizes:
+        raise ValueError("a pool sweep needs at least one pool size")
+    if len(set(pool_sizes)) != len(pool_sizes):
+        raise ValueError(f"a repeated pool size has two answers to one question; got {pool_sizes}")
+    if any(size < 1 for size in pool_sizes):
+        raise ValueError(f"every pool size must be at least one block; got {pool_sizes}")
+
+    timings: list[ContinuousTiming] = []
+    texts: list[list[int]] | None = None
+    for size in pool_sizes:
+        run = build_continuous_run(
+            model, prompts, max_new_tokens=max_new_tokens, num_blocks=size, **build_kwargs
+        )
+        timings.append(
+            time_continuous_run(
+                run.step_fn,
+                run.unfinished_fn,
+                num_requests=len(prompts),
+                max_batch_size=run.engine.scheduler.max_batch_size,
+                clock=clock,
+            )
+        )
+        generated = [list(request.token_ids) for request in run.requests]
+        if texts is None:
+            texts = generated
+        elif generated != texts:
+            raise ValueError(
+                f"a pool of {size} blocks returned different text from a pool of "
+                f"{pool_sizes[0]}: preemption is only allowed to cost time, so this "
+                "is a recompute that restarted a request instead of resuming it"
+            )
+    return timings
 
 
 def compare_model_batching(
