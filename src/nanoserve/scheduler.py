@@ -401,6 +401,20 @@ class Scheduler:
         """Whether the engine has any reason to run another iteration."""
         return bool(self.waiting or self.running)
 
+    @property
+    def free_slots(self) -> tuple[int, ...]:
+        """Cache rows nobody is occupying, lowest first. Day 35's auditor reads this.
+
+        Sorted rather than in heap order, because the caller wants the set and the
+        heap's internal array order is an implementation detail.
+        """
+        return tuple(sorted(self._free_slots))
+
+    @property
+    def known_ids(self) -> frozenset[str]:
+        """Ids this scheduler will answer to: everything queued and not yet reaped."""
+        return frozenset(self._by_id)
+
     # --- admission ------------------------------------------------------------
 
     def add_request(self, request: Request) -> None:

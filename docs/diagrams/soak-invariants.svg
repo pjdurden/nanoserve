@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">The invariants, checked between every iteration</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Week 9 can take a running request's blocks away and rebuild its K/V later. The failures that policy adds are not wrong answers,</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">they are accumulative: a block that leaves the pool and never comes back changes nothing today and costs capacity forever.</text>
+
+  <!-- ===== left top: the ledger drawn ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">the pool as a closed ledger: 10 blocks, three requests running</text>
+  <text x="50" y="170" font-size="12" fill="#64748b">every block is free, or held by exactly one request. never both, and never neither.</text>
+
+  <rect x="54" y="184" width="34" height="30" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="94" y="184" width="34" height="30" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <rect x="134" y="184" width="34" height="30" rx="5" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="174" y="184" width="34" height="30" rx="5" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="214" y="184" width="34" height="30" rx="5" fill="#ecfdf5" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="254" y="184" width="34" height="30" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.6"/>
+  <rect x="294" y="184" width="34" height="30" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.6"/>
+  <rect x="334" y="184" width="34" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <rect x="374" y="184" width="34" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <rect x="414" y="184" width="34" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="71" y="204" font-size="11" font-weight="700" fill="#4338ca" text-anchor="middle">0</text>
+  <text x="111" y="204" font-size="11" font-weight="700" fill="#4338ca" text-anchor="middle">1</text>
+  <text x="151" y="204" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">2</text>
+  <text x="191" y="204" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">3</text>
+  <text x="231" y="204" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">4</text>
+  <text x="271" y="204" font-size="11" font-weight="700" fill="#c2410c" text-anchor="middle">5</text>
+  <text x="311" y="204" font-size="11" font-weight="700" fill="#c2410c" text-anchor="middle">6</text>
+  <text x="351" y="204" font-size="11" fill="#94a3b8" text-anchor="middle">7</text>
+  <text x="391" y="204" font-size="11" fill="#94a3b8" text-anchor="middle">8</text>
+  <text x="431" y="204" font-size="11" fill="#94a3b8" text-anchor="middle">9</text>
+
+  <text x="91" y="230" font-size="10.5" font-weight="700" fill="#4338ca" text-anchor="middle">r0</text>
+  <text x="191" y="230" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">r1</text>
+  <text x="291" y="230" font-size="10.5" font-weight="700" fill="#c2410c" text-anchor="middle">r2</text>
+  <text x="391" y="230" font-size="10.5" fill="#94a3b8" text-anchor="middle">free</text>
+
+  <rect x="50" y="242" width="510" height="80" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="264" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e1b4b">held == allocated</text>
+  <text x="70" y="286" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e1b4b">held &amp; free == {}</text>
+  <text x="70" y="308" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1e1b4b">held | free == range(10)</text>
+  <text x="290" y="264" font-size="11.5" fill="#475569">nothing is stranded</text>
+  <text x="290" y="286" font-size="11.5" fill="#475569">nothing is sold twice</text>
+  <text x="290" y="308" font-size="11.5" fill="#475569">nothing has gone missing</text>
+
+  <!-- ===== left middle: slots ===== -->
+  <text x="50" y="352" font-size="14" font-weight="700" fill="#334155">a slot is a cache row, so it gets the same rule</text>
+
+  <rect x="50" y="364" width="120" height="54" rx="9" fill="#fdfdff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="64" y="386" font-size="12" font-weight="700" fill="#4338ca">slot 0: r0</text>
+  <text x="64" y="406" font-size="10.5" fill="#64748b">row: [0, 1]</text>
+
+  <rect x="180" y="364" width="120" height="54" rx="9" fill="#fdfdff" stroke="#15803d" stroke-width="1.5"/>
+  <text x="194" y="386" font-size="12" font-weight="700" fill="#15803d">slot 1: r1</text>
+  <text x="194" y="406" font-size="10.5" fill="#64748b">row: [2, 3, 4]</text>
+
+  <rect x="310" y="364" width="120" height="54" rx="9" fill="#fdfdff" stroke="#c2410c" stroke-width="1.5"/>
+  <text x="324" y="386" font-size="12" font-weight="700" fill="#c2410c">slot 2: r2</text>
+  <text x="324" y="406" font-size="10.5" fill="#64748b">row: [5, 6]</text>
+
+  <rect x="440" y="364" width="120" height="54" rx="9" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="454" y="386" font-size="12" font-weight="700" fill="#94a3b8">slot 3: free</text>
+  <text x="454" y="406" font-size="10.5" fill="#64748b">row must be empty</text>
+
+  <!-- ===== left bottom: the slack ===== -->
+  <rect x="50" y="438" width="510" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="462" font-size="13.5" font-weight="700" fill="#334155">two kinds of slack, and both are work in flight</text>
+  <text x="70" y="486" font-size="11.5" fill="#475569">A running request's blocks must cover num_tokens <tspan font-weight="700">minus one</tspan>: between a sample and</text>
+  <text x="70" y="504" font-size="11.5" fill="#475569">the next schedule it holds one token more than its blocks do.</text>
+  <text x="70" y="528" font-size="11.5" fill="#475569">A cache row may be <tspan font-weight="700">one block behind</tspan> its request: the scheduler grows the</text>
+  <text x="70" y="546" font-size="11.5" fill="#475569">request at the top of an iteration, the engine syncs the row before the write.</text>
+  <text x="70" y="572" font-size="11.5" font-weight="700" fill="#1e1b4b">The pool ledger has no slack at all, which is why it is the check that finds things.</text>
+
+  <!-- ===== right top: the leak experiment ===== -->
+  <text x="620" y="150" font-size="14" font-weight="700" fill="#334155">the experiment: lose one block, once, on the third release</text>
+  <text x="620" y="170" font-size="12" fill="#64748b">12 requests, 3 slots, 10 blocks, block_size 4, 8 tokens each</text>
+
+  <rect x="620" y="182" width="530" height="86" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="640" y="206" font-size="13" font-weight="700" fill="#15803d">with the audit between iterations</text>
+  <text x="640" y="230" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">InvariantViolation at iteration 9:</text>
+  <text x="640" y="250" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">block 2 is allocated but no request holds it</text>
+
+  <rect x="620" y="284" width="530" height="122" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="640" y="308" font-size="13" font-weight="700" fill="#b91c1c">without it, the same run</text>
+  <text x="640" y="332" font-size="11.5" fill="#7f1d1d">All 12 requests finish. 32 iterations. Zero preemptions. Every answer is</text>
+  <text x="640" y="350" font-size="11.5" fill="#7f1d1d">identical to the run with no leak in it, so no test of the output can see this.</text>
+  <text x="640" y="374" font-size="11.5" font-weight="700" fill="#7f1d1d">The pool ends the run with 9 blocks of 10, and it never says so.</text>
+  <text x="640" y="394" font-size="11" fill="#7f1d1d">The next workload just preempts more than it should, for no reason anyone can name.</text>
+
+  <!-- ===== right bottom: the soak sweep ===== -->
+  <text x="620" y="440" font-size="14" font-weight="700" fill="#334155">and the soak itself: 6 requests, 3 slots, 9 tokens each</text>
+
+  <line x1="620" y1="452" x2="1150" y2="452" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="472" font-size="11.5" font-weight="700" fill="#94a3b8">pool</text>
+  <text x="800" y="472" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">evictions</text>
+  <text x="910" y="472" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">worst request</text>
+  <text x="1025" y="472" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">recompute</text>
+  <text x="1120" y="472" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">text</text>
+
+  <text x="620" y="498" font-size="12.5" font-weight="700" fill="#15803d">64 blocks</text>
+  <text x="800" y="498" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0</text>
+  <text x="910" y="498" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">never evicted</text>
+  <text x="1025" y="498" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.0%</text>
+  <text x="1120" y="498" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">baseline</text>
+
+  <text x="620" y="524" font-size="12.5" fill="#475569">16 blocks</text>
+  <text x="800" y="524" font-size="12.5" fill="#475569" text-anchor="middle">0</text>
+  <text x="910" y="524" font-size="12.5" fill="#475569" text-anchor="middle">never evicted</text>
+  <text x="1025" y="524" font-size="12.5" fill="#475569" text-anchor="middle">0.0%</text>
+  <text x="1120" y="524" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">same</text>
+
+  <text x="620" y="550" font-size="12.5" fill="#475569">8 blocks</text>
+  <text x="800" y="550" font-size="12.5" fill="#475569" text-anchor="middle">2</text>
+  <text x="910" y="550" font-size="12.5" fill="#475569" text-anchor="middle">evicted once</text>
+  <text x="1025" y="550" font-size="12.5" fill="#475569" text-anchor="middle">23.5%</text>
+  <text x="1120" y="550" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">same</text>
+
+  <text x="620" y="576" font-size="12.5" font-weight="700" fill="#b91c1c">5 blocks</text>
+  <text x="800" y="576" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">5</text>
+  <text x="910" y="576" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">evicted twice</text>
+  <text x="1025" y="576" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">38.6%</text>
+  <text x="1120" y="576" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">same</text>
+
+  <line x1="620" y1="590" x2="1150" y2="590" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="606" width="1100" height="50" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="70" y="628" font-size="14" fill="#1e1b4b">A soak of 10 requests through 4 slots and 6 blocks: 52 iterations, 16 evictions, seven of the ten evicted twice, the oldest never once, and</text>
+  <text x="70" y="648" font-size="14" fill="#1e1b4b">51.3% of the forward spent on K/V bought again. Same text as a pool that never preempts, every block back, every slot back. That is the claim.</text>
+</svg>

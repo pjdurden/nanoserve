@@ -56,6 +56,12 @@ def _tiny_config() -> ModelConfig:
 
 
 def _model() -> tuple[LlamaModel, ModelConfig]:
+    # Seeded, like every other file's model helper. Torch draws its default
+    # generator's seed from the OS at process start, so an unseeded helper makes
+    # these tests a different experiment every run: `_not_invisible` below asks
+    # whether a position gap changes the logits, and about one draw in a hundred
+    # and fifty produces weights where the change is smaller than its tolerance.
+    torch.manual_seed(0)
     cfg = _tiny_config()
     tensors = {name: torch.randn(*shape) for name, shape in expected_shapes(cfg).items()}
     tensors[LM_HEAD] = tensors[EMBED]

@@ -125,6 +125,22 @@ class BlockAllocator:
         """Physical blocks available right now."""
         return len(self._free)
 
+    @property
+    def free_blocks(self) -> tuple[int, ...]:
+        """The free list itself, in the order it will be handed out. Day 35.
+
+        A read-only copy, for the auditor. The count is enough for a scheduling
+        decision and not enough for the invariant, which is about *which* blocks are
+        where: a free list holding the same id twice has the right length and hands
+        one block to two sequences.
+        """
+        return tuple(self._free)
+
+    @property
+    def allocated_blocks(self) -> frozenset[int]:
+        """The other half of the ledger: block ids currently out of the pool. Day 35."""
+        return frozenset(self._allocated)
+
     def blocks_for_length(self, num_tokens: int) -> int:
         """How many blocks a sequence of `num_tokens` needs (ceiling division).
 
