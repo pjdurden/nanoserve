@@ -1609,3 +1609,219 @@ def compare_model_batching(
         model, prompts, max_new_tokens=budgets, clock=clock, **build_kwargs
     )
     return compare_batching(static, continuous)
+
+
+# --- the watermark, measured ----------------------------------------------------
+#
+# Day 30 gave admission a watermark: a share of the pool it refuses to spend, so a
+# newcomer cannot take the last block and be evicted for it one step later. Day 36
+# is the first day that asks whether it works, and the first thing the question
+# turns up is that at this project's scale it has never been switched on, since
+# `int(0.01 * num_blocks)` is 0 for any pool under a hundred blocks.
+#
+# The measurement below has no model in it, on purpose. What a watermark moves is
+# preemptions and iterations, and both are integers the scheduler computes without
+# a tensor in sight, so timing it on a CPU model would add noise to a quantity that
+# has none. This is the same split as the Day-29 timing core: the arithmetic is
+# tested where it can be pinned exactly, and the model-based runners live one layer
+# up. The token the rows are fed is a constant, because what is being measured is
+# who ran when, not what they said.
+
+# The token every row is handed. Any in-vocab id does: nothing here reads it, and a
+# scheduler that behaved differently for different token values would be the bug.
+_SWEEP_TOKEN = 7
+
+
+@dataclass(frozen=True)
+class WatermarkPoint:
+    """One workload through one reserve size: what the brake changed, and what it cost.
+
+    watermark_blocks:    blocks admission held back for this run.
+    num_blocks:          the pool it held them out of.
+    num_requests:        requests submitted.
+    completed:           requests that finished. Anything less is a starved queue,
+                         and the sweep raises rather than reporting it, since a
+                         reserve that hangs is not a reserve with better numbers.
+    iterations:          scheduler iterations to drain. The watermark's price: a
+                         request it holds back is a slot standing idle.
+    admissions:          admissions performed, resumptions included. `admissions -
+                         num_requests` is how many times somebody had to be let in
+                         a second time.
+    preemptions:         evictions over the run.
+    thrashed_admissions: evictions of a request that had not yet filled the block
+                         its admission bought, i.e. one that generated fewer than
+                         `block_size` tokens between being let in and being thrown
+                         out. This is the number the watermark is actually about,
+                         and it is not the same as `preemptions`: evicting a request
+                         that has been running for thirty iterations is the pool
+                         being too small, and no admission policy can help it.
+                         Evicting one that has not filled its first block is a
+                         prefill the engine bought less than a block of progress
+                         with, and that is the thrash a reserve converts into a wait.
+
+                         The window is a block wide rather than one iteration wide
+                         because that is what the measurement showed. A newcomer
+                         does not take the pool's last block and die a step later;
+                         it is admitted with a block that has room left in it, spends
+                         that tail one token per iteration, and runs the pool dry
+                         when it reaches the boundary. The delay between the
+                         admission and the eviction it caused is the tail, not a
+                         step.
+    forward_tokens:      positions the forwards would compute, counted the Day-34
+                         way: every prefilled position, plus one per decode row.
+    recomputed_tokens:   of those, the ones a resumed request had already paid for.
+    """
+
+    watermark_blocks: int
+    num_blocks: int
+    num_requests: int
+    completed: int
+    iterations: int
+    admissions: int
+    preemptions: int
+    thrashed_admissions: int
+    forward_tokens: int
+    recomputed_tokens: int
+
+    @property
+    def resumptions(self) -> int:
+        """Admissions that were not a request's first. Equal to `preemptions` on a drained run."""
+        return self.admissions - self.num_requests
+
+    @property
+    def recompute_fraction(self) -> float:
+        """Share of the forward positions bought a second time. Day 34's number, per reserve."""
+        return self.recomputed_tokens / self.forward_tokens if self.forward_tokens else 0.0
+
+    @property
+    def thrash_fraction(self) -> float:
+        """Share of admissions evicted before they had filled the block they bought."""
+        return self.thrashed_admissions / self.admissions if self.admissions else 0.0
+
+
+def sweep_watermarks(
+    prompts: list[list[int]],
+    *,
+    max_new_tokens: int | list[int],
+    num_blocks: int,
+    block_size: int = 16,
+    max_batch_size: int = 8,
+    watermarks: list[int],
+    max_iterations: int = 10_000,
+) -> list[WatermarkPoint]:
+    """Run one workload through several admission reserves and count what each changed.
+
+    Everything is held fixed except `watermark_blocks`: same prompts, same budgets,
+    same pool, same slots, and a constant token, so the differences between the
+    points are the admission policy and nothing else.
+
+    The reserves are given in blocks rather than as shares, which is the unit the
+    thing is spent in. A share cannot state "one block of ten" without a truncation
+    the caller did not write, and truncation is precisely how the 1% default came to
+    be zero everywhere without anybody noticing.
+
+    Raises for an empty sweep, a repeated reserve (one question with two answers), a
+    reserve the pool cannot hold, or a run that does not drain. That last one is not
+    a timeout dressed up: before Day 36 a large enough reserve really could wedge the
+    scheduler forever, and a sweep whose failure mode is a hung process would have
+    reported that as a very slow run.
+    """
+    from .cache import BlockAllocator
+    from .scheduler import Request, Scheduler
+
+    if not watermarks:
+        raise ValueError("a watermark sweep needs at least one reserve size")
+    if len(set(watermarks)) != len(watermarks):
+        raise ValueError(
+            f"a repeated reserve has two answers to one question; got {watermarks}"
+        )
+    if any(not 0 <= w < num_blocks for w in watermarks):
+        raise ValueError(
+            f"every watermark_blocks must be in [0, {num_blocks}); got {watermarks}"
+        )
+
+    budgets = (
+        [max_new_tokens] * len(prompts) if isinstance(max_new_tokens, int) else list(max_new_tokens)
+    )
+    if len(budgets) != len(prompts):
+        raise ValueError(
+            "a watermark sweep needs one token budget per prompt; got "
+            f"{len(budgets)} for {len(prompts)} prompts"
+        )
+
+    points: list[WatermarkPoint] = []
+    for reserve in watermarks:
+        allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
+        scheduler = Scheduler(
+            allocator, max_batch_size=max_batch_size, watermark_blocks=reserve
+        )
+        requests = [
+            Request(
+                request_id=f"r{i}",
+                prompt_token_ids=list(prompt),
+                max_new_tokens=budget,
+            )
+            for i, (prompt, budget) in enumerate(zip(prompts, budgets))
+        ]
+        for request in requests:
+            scheduler.add_request(request)
+
+        # Length at admission, so an eviction can be charged against the progress
+        # that admission actually bought rather than against wall-clock iterations.
+        admitted_len: dict[str, int] = {}
+        iterations = admissions = preemptions = thrashed = 0
+        forward_tokens = recomputed_tokens = 0
+        while scheduler.has_unfinished():
+            if iterations >= max_iterations:
+                raise RuntimeError(
+                    f"a reserve of {reserve} blocks did not drain in {max_iterations} "
+                    f"iterations: {scheduler.num_running} running, "
+                    f"{scheduler.num_waiting} waiting, {allocator.num_free} blocks free"
+                )
+            out = scheduler.schedule()
+            for request in out.preempted:
+                preemptions += 1
+                # A request that was never admitted cannot be preempted, so the
+                # default is unreachable; it is here so a bookkeeping bug reads as
+                # zero thrash rather than as a KeyError out of a measurement.
+                grown = request.num_tokens - admitted_len.get(request.request_id, 0)
+                if grown < block_size:
+                    thrashed += 1
+            for request in out.admitted:
+                admissions += 1
+                admitted_len[request.request_id] = request.num_tokens
+                # A prefill runs the request's whole current context, which for a
+                # resumed one is the prompt plus everything it had already emitted.
+                forward_tokens += request.num_tokens
+                if request.num_preemptions:
+                    recomputed_tokens += request.num_tokens
+            forward_tokens += len(out.decode)
+            for request in out.scheduled:
+                request.append_token(_SWEEP_TOKEN)
+            iterations += 1
+
+        completed = sum(1 for request in requests if request.is_finished)
+        short = [r.request_id for r in requests if r.num_output_tokens != r.max_new_tokens]
+        if short:
+            raise ValueError(
+                f"a reserve of {reserve} blocks left {short[0]!r} with "
+                f"{next(r for r in requests if r.request_id == short[0]).num_output_tokens} "
+                "tokens instead of its whole budget: preemption is only allowed to cost "
+                "time, so this is a recompute that restarted a request instead of "
+                "resuming it"
+            )
+        points.append(
+            WatermarkPoint(
+                watermark_blocks=reserve,
+                num_blocks=num_blocks,
+                num_requests=len(requests),
+                completed=completed,
+                iterations=iterations,
+                admissions=admissions,
+                preemptions=preemptions,
+                thrashed_admissions=thrashed,
+                forward_tokens=forward_tokens,
+                recomputed_tokens=recomputed_tokens,
+            )
+        )
+    return points

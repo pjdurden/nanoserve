@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">The watermark, measured: a brake that could be a wall</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Admission holds a share of the pool back so a newcomer cannot take the last block and be evicted for it. It has been a 1% default since</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">Day 30 and nobody had ever measured it. Measuring it turned up a deadlock, an inert default, and a mechanism that was described wrong.</text>
+
+  <!-- ===== left: the deadlock ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">the deadlock: a pool of 6 blocks of 4, a reserve of 3, two requests</text>
+  <text x="50" y="170" font-size="12" fill="#64748b">nothing below is misuse. every step is the scheduler doing what it was written to do.</text>
+
+  <rect x="50" y="178" width="520" height="252" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <text x="70" y="204" font-size="13" font-weight="700" fill="#334155">b is admitted</text>
+  <text x="70" y="222" font-size="11" fill="#64748b">one block, well inside what the reserve leaves</text>
+  <rect x="350" y="188" width="30" height="24" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="384" y="188" width="30" height="24" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <rect x="418" y="188" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="452" y="188" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="486" y="188" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="520" y="188" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+
+  <text x="70" y="264" font-size="13" font-weight="700" fill="#334155">b grows to four blocks</text>
+  <text x="70" y="282" font-size="11" fill="#64748b">growth ignores the reserve, on purpose: a running</text>
+  <text x="70" y="298" font-size="11" fill="#64748b">row must never be starved by an accounting rule</text>
+  <rect x="350" y="248" width="30" height="24" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="384" y="248" width="30" height="24" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="418" y="248" width="30" height="24" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <rect x="452" y="248" width="30" height="24" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <rect x="486" y="248" width="30" height="24" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <rect x="520" y="248" width="30" height="24" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+
+  <text x="70" y="324" font-size="13" font-weight="700" fill="#334155">b is preempted</text>
+  <text x="70" y="342" font-size="11" fill="#64748b">blocks back, 13 tokens kept, K/V thrown away</text>
+  <rect x="350" y="308" width="30" height="24" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="384" y="308" width="30" height="24" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="418" y="308" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="452" y="308" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="486" y="308" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="520" y="308" width="30" height="24" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.4"/>
+
+  <text x="70" y="384" font-size="13" font-weight="700" fill="#b91c1c">a finishes, the pool is empty</text>
+  <text x="70" y="402" font-size="11" fill="#7f1d1d">b needs 4 blocks. the reserve leaves 3. refused.</text>
+  <rect x="350" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <rect x="384" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <rect x="418" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <rect x="452" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <rect x="486" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <rect x="520" y="368" width="30" height="24" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+
+  <rect x="50" y="442" width="520" height="56" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="70" y="466" font-size="12" fill="#7f1d1d">The pool is empty, nobody is running, and no future iteration changes any of</text>
+  <text x="70" y="484" font-size="12" font-weight="700" fill="#7f1d1d">those three numbers. Both queues stop. The engine spins forever.</text>
+
+  <rect x="50" y="510" width="520" height="96" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="70" y="534" font-size="13" font-weight="700" fill="#15803d">the fix, and the sentence it enforces</text>
+  <text x="70" y="558" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">reserve = watermark_blocks if need &lt;= admissible_blocks else 0</text>
+  <text x="70" y="580" font-size="12" font-weight="700" fill="#166534">The watermark may delay a request. It may never exclude one.</text>
+  <text x="70" y="597" font-size="11" fill="#166534">It drops the reserve, not the pool: the request still waits for blocks that exist.</text>
+
+  <!-- ===== right top: what the default reserves ===== -->
+  <text x="620" y="150" font-size="14" font-weight="700" fill="#334155">what the 1% default actually holds back</text>
+  <text x="620" y="170" font-size="12" fill="#64748b">int(0.01 * num_blocks), truncated to whole blocks</text>
+
+  <text x="620" y="200" font-size="12.5" fill="#475569">8 blocks</text>
+  <text x="790" y="200" font-size="12.5" font-weight="700" fill="#b91c1c">0 blocks</text>
+  <text x="890" y="200" font-size="11.5" fill="#7f1d1d">switched off</text>
+
+  <text x="620" y="224" font-size="12.5" fill="#475569">64 blocks</text>
+  <text x="790" y="224" font-size="12.5" font-weight="700" fill="#b91c1c">0 blocks</text>
+  <text x="890" y="224" font-size="11.5" fill="#7f1d1d">switched off</text>
+
+  <text x="620" y="248" font-size="12.5" fill="#475569">99 blocks</text>
+  <text x="790" y="248" font-size="12.5" font-weight="700" fill="#b91c1c">0 blocks</text>
+  <text x="890" y="248" font-size="11.5" fill="#7f1d1d">switched off</text>
+
+  <text x="620" y="272" font-size="12.5" fill="#475569">100 blocks</text>
+  <text x="790" y="272" font-size="12.5" font-weight="700" fill="#15803d">1 block</text>
+
+  <text x="620" y="296" font-size="12.5" fill="#475569">4096 blocks</text>
+  <text x="790" y="296" font-size="12.5" font-weight="700" fill="#15803d">40 blocks</text>
+  <text x="890" y="296" font-size="11.5" fill="#64748b">a real deployment</text>
+
+  <text x="620" y="326" font-size="12.5" font-weight="700" fill="#1e1b4b">Every pool this repo runs is under 100 blocks: never on.</text>
+
+  <!-- ===== right bottom: the sweep ===== -->
+  <text x="620" y="366" font-size="14" font-weight="700" fill="#334155">the sweep: 8 requests, 3 slots, 8 blocks of 4, budget 10</text>
+
+  <line x1="620" y1="378" x2="1150" y2="378" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="398" font-size="11.5" font-weight="700" fill="#94a3b8">reserve</text>
+  <text x="800" y="398" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">evictions</text>
+  <text x="920" y="398" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">of those, thrash</text>
+  <text x="1040" y="398" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">iterations</text>
+  <text x="1130" y="398" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">recompute</text>
+
+  <text x="620" y="424" font-size="12.5" font-weight="700" fill="#b91c1c">0 blocks</text>
+  <text x="800" y="424" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">4</text>
+  <text x="920" y="424" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">4</text>
+  <text x="1040" y="424" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">38</text>
+  <text x="1130" y="424" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">23.7%</text>
+
+  <text x="620" y="450" font-size="12.5" fill="#475569">1 block</text>
+  <text x="800" y="450" font-size="12.5" fill="#475569" text-anchor="middle">3</text>
+  <text x="920" y="450" font-size="12.5" fill="#475569" text-anchor="middle">3</text>
+  <text x="1040" y="450" font-size="12.5" fill="#475569" text-anchor="middle">41</text>
+  <text x="1130" y="450" font-size="12.5" fill="#475569" text-anchor="middle">18.8%</text>
+
+  <text x="620" y="476" font-size="12.5" fill="#475569">2 blocks</text>
+  <text x="800" y="476" font-size="12.5" fill="#475569" text-anchor="middle">1</text>
+  <text x="920" y="476" font-size="12.5" fill="#475569" text-anchor="middle">1</text>
+  <text x="1040" y="476" font-size="12.5" fill="#475569" text-anchor="middle">41</text>
+  <text x="1130" y="476" font-size="12.5" fill="#475569" text-anchor="middle">7.0%</text>
+
+  <text x="620" y="502" font-size="12.5" font-weight="700" fill="#15803d">3 blocks</text>
+  <text x="800" y="502" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0</text>
+  <text x="920" y="502" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0</text>
+  <text x="1040" y="502" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">41</text>
+  <text x="1130" y="502" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0.0%</text>
+
+  <line x1="620" y1="516" x2="1150" y2="516" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="540" font-size="12" fill="#475569">Three blocks held back removes the whole recompute bill, for three more iterations.</text>
+  <text x="620" y="558" font-size="12" fill="#475569">The thrash became waiting, which is still time the caller pays.</text>
+  <text x="620" y="580" font-size="12" font-weight="700" fill="#1e1b4b">And the counter-case: on a 16-block pool the same reserve removed</text>
+  <text x="620" y="598" font-size="12" font-weight="700" fill="#1e1b4b">nothing and still cost 4 iterations. A brake is not always what you want.</text>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="618" width="1100" height="46" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="70" y="638" font-size="13.5" fill="#1e1b4b">Every victim was evicted exactly 3 iterations after admission, holding 3 generated tokens. A newcomer does not take the last block and die a</text>
+  <text x="70" y="656" font-size="13.5" fill="#1e1b4b">step later: it spends the free tail of the block its admission bought, and runs the pool dry at the boundary. The thrash window is a block wide.</text>
+</svg>

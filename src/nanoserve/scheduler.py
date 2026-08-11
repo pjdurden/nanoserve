@@ -327,8 +327,11 @@ class Scheduler:
                     tensors, only the block ids that stand for them.
     max_batch_size: how many requests may be in one forward, i.e. how many slots
                     exist. The cache is built with this many rows.
-    watermark:      the share of the pool admission refuses to spend. See
-                    `watermark_blocks`.
+    watermark:      the share of the pool admission refuses to spend, truncated to
+                    whole blocks. See `watermark_blocks`.
+    watermark_blocks: the same reserve named in blocks, overriding the share. The
+                    unit a sweep needs, since `int(share * num_blocks)` is 0 for
+                    any pool under a hundred blocks.
     on_release:     called with a slot index whenever that slot goes back to the
                     free list, whether the request finished or was preempted. The
                     scheduler owns slot lifetime and has no tensors; the engine
@@ -356,6 +359,7 @@ class Scheduler:
         allocator: BlockAllocator,
         max_batch_size: int = 8,
         watermark: float = 0.01,
+        watermark_blocks: int | None = None,
         on_release: Callable[[int], None] | None = None,
     ):
         if max_batch_size < 1:
@@ -366,14 +370,36 @@ class Scheduler:
         self.max_batch_size = max_batch_size
         self.on_release = on_release
         # Blocks admission leaves on the table. A newcomer that takes the pool's
-        # last block is a preemption waiting to happen: the running rows are one
-        # token from a boundary and the newcomer is the youngest, so it is the
-        # first victim, and the engine pays a prefill and a recompute to have
+        # last block is a preemption waiting to happen: it is the youngest, so it is
+        # the first victim, and the engine pays a prefill and a recompute to have
         # changed nothing. A small brake here converts that thrash into a wait.
         # Growth ignores it: it is an admission policy, not a reserve, and a
         # running row must never be starved by an accounting rule. vLLM keeps the
         # same 1% default for the same reason.
-        self.watermark_blocks = int(watermark * allocator.num_blocks)
+        #
+        # Day 36 measured it and corrected the timing in that story. The eviction
+        # does not land a step after the admission; the newcomer is admitted with a
+        # block that still has room, spends that tail one token per iteration, and
+        # runs the pool dry when it reaches the boundary. On a pool of 8 blocks of 4
+        # with 6-token prompts, every victim was evicted exactly 3 iterations after
+        # admission holding 3 generated tokens. So the thrash window is a block wide,
+        # which is why `batchbench.WatermarkPoint` counts it that way.
+        #
+        # Day 36 also measured what the default actually is, which is nothing:
+        # `int(0.01 * num_blocks)` is 0 for every pool smaller than a hundred
+        # blocks, i.e. for every pool this repo has ever run. So the reserve can
+        # also be named in blocks, which is the unit it is spent in and the only
+        # unit a sweep can state exactly. The share is kept as the default because
+        # a real deployment sizes its pool in thousands of blocks, where a
+        # percentage is the portable way to say "a little".
+        if watermark_blocks is None:
+            watermark_blocks = int(watermark * allocator.num_blocks)
+        elif not 0 <= watermark_blocks < allocator.num_blocks:
+            raise ValueError(
+                f"watermark_blocks must be in [0, {allocator.num_blocks}), got "
+                f"{watermark_blocks}: a reserve that swallows the pool admits nothing"
+            )
+        self.watermark_blocks = watermark_blocks
         self.waiting: deque[Request] = deque()
         self.running: list[Request] = []
         # Free slots as a heap so the lowest index is always reused. Any order is
@@ -414,6 +440,16 @@ class Scheduler:
     def known_ids(self) -> frozenset[str]:
         """Ids this scheduler will answer to: everything queued and not yet reaped."""
         return frozenset(self._by_id)
+
+    @property
+    def admissible_blocks(self) -> int:
+        """The largest request admission takes without waiving the watermark. Day 36.
+
+        `num_blocks - watermark_blocks`, and the reason it has a name is that a
+        request needing more than this is the one `_admit` has to make an exception
+        for. See the waiver there: the number is a threshold, not a capacity.
+        """
+        return self.allocator.num_blocks - self.watermark_blocks
 
     # --- admission ------------------------------------------------------------
 
@@ -597,12 +633,31 @@ class Scheduler:
         change and the reason a pool that fit one request now fits four. A resumed
         request pays for its generated tokens here too: it is admitted as a longer
         version of itself.
+
+        **The watermark is waived for a request it would otherwise exclude**, which
+        is Day 36's fix and the invariant behind it is one sentence: the watermark
+        may delay a request, it may never exclude one. Without the waiver it can,
+        and the way it happens is not misuse. A request is admitted holding one
+        block, grows past `admissible_blocks` (growth ignores the watermark, on
+        purpose), and is then preempted. Coming back it needs every one of those
+        blocks at once, and admission subtracts a reserve that leaves fewer. The
+        pool can be completely empty and nothing running, and no future iteration
+        changes any of those three numbers: both queues stop, and the engine spins
+        until something outside it notices. A fresh request whose prompt alone is
+        larger than the reserve leaves hangs the same way, having been told yes at
+        the door.
+
+        The waiver drops the reserve and nothing else, so the request still waits
+        for blocks that really exist. That is what makes it terminate: the oldest
+        running request can never be preempted, so it finishes, so the pool drains,
+        and `add_request` has already proved this request fits an empty one.
         """
         admitted: list[Request] = []
         while self.waiting and self._free_slots:
             request = self.waiting[0]
             need = self.blocks_needed_for(request)
-            if need > self.allocator.num_free - self.watermark_blocks:
+            reserve = self.watermark_blocks if need <= self.admissible_blocks else 0
+            if need > self.allocator.num_free - reserve:
                 break
             self.waiting.popleft()
             request.block_ids = self.allocator.allocate_for(need * self.allocator.block_size)
