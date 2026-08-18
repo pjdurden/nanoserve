@@ -21,9 +21,11 @@ server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+# tests/test_server.py needs the `server` extra too: it exercises the real app.
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    "httpx>=0.27",          # in-process ASGI client for the server tests
 ]
 # triton ships with the linux GPU torch wheel; pin here only if you need a specific version.
 

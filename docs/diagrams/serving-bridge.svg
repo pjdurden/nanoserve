@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowlight" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">An async server over a synchronous GPU loop</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Engine.step() blocks and owns the GPU. An event loop is one thread. So the step runs in a worker thread, and the moment it does, the</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">scheduler has two writers: arrivals go on an inbox the loop drains at the top of a turn, which is the one instant nothing is mid-forward.</text>
+
+  <!-- ===== left: one turn of the loop ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">one turn of the loop, and where the thread boundary is</text>
+
+  <rect x="50" y="164" width="530" height="292" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <!-- handlers -->
+  <rect x="66" y="180" width="150" height="82" rx="8" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="141" y="202" font-size="12.5" font-weight="700" fill="#3730a3" text-anchor="middle">HTTP handlers</text>
+  <text x="141" y="221" font-size="11" fill="#4338ca" text-anchor="middle">one coroutine each,</text>
+  <text x="141" y="237" font-size="11" fill="#4338ca" text-anchor="middle">awaiting one future</text>
+  <text x="141" y="253" font-size="11" fill="#4338ca" text-anchor="middle">submit() . abort()</text>
+
+  <line x1="222" y1="204" x2="268" y2="204" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="245" y="196" font-size="10.5" fill="#64748b" text-anchor="middle">append</text>
+
+  <rect x="272" y="180" width="120" height="42" rx="8" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <text x="332" y="200" font-size="12" font-weight="700" fill="#9a3412" text-anchor="middle">inbox</text>
+  <text x="332" y="215" font-size="10.5" fill="#c2410c" text-anchor="middle">arrivals, aborts</text>
+
+  <line x1="332" y1="226" x2="332" y2="252" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- the turn -->
+  <rect x="240" y="256" width="324" height="24" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="252" y="273" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">1. drain the inbox into add_request()</text>
+
+  <rect x="240" y="284" width="324" height="24" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="252" y="301" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">2. apply queued aborts</text>
+
+  <rect x="240" y="312" width="324" height="24" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="252" y="329" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">3. settle: resolve every finished future</text>
+
+  <rect x="240" y="344" width="324" height="30" rx="5" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="252" y="364" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">4. await to_thread(engine.step)</text>
+
+  <text x="66" y="288" font-size="11" font-weight="700" fill="#475569">no await</text>
+  <text x="66" y="304" font-size="11" font-weight="700" fill="#475569">between 1</text>
+  <text x="66" y="320" font-size="11" font-weight="700" fill="#475569">and 4, so</text>
+  <text x="66" y="336" font-size="11" font-weight="700" fill="#475569">one writer</text>
+  <text x="66" y="352" font-size="11" font-weight="700" fill="#475569">and no lock</text>
+
+  <line x1="228" y1="270" x2="228" y2="368" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  <text x="240" y="396" font-size="11.5" fill="#15803d">the only line that leaves the event loop. while it runs, handlers</text>
+  <text x="240" y="412" font-size="11.5" fill="#15803d">are accepted, futures resolve, sockets are read.</text>
+
+  <line x1="240" y1="424" x2="140" y2="424" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowlight)"/>
+  <text x="66" y="440" font-size="11" fill="#64748b">answer delivered to</text>
+  <text x="240" y="440" font-size="11" fill="#64748b">its own caller, at its own last token</text>
+
+  <rect x="50" y="470" width="530" height="60" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="68" y="492" font-size="12" fill="#1e1b4b">A per-request error inside a shared loop must land on one future.</text>
+  <text x="68" y="512" font-size="12" font-weight="700" fill="#1e1b4b">A refused prompt is one 400. A loop that dies quietly is every socket, forever.</text>
+
+  <rect x="50" y="542" width="530" height="62" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="68" y="564" font-size="12" font-weight="700" fill="#334155">8 concurrent requests, 4 slots, one loop</text>
+  <text x="68" y="586" font-size="12" fill="#475569">18 iterations, against 54 run one at a time. 3.0x, same tokens as solo.</text>
+
+  <!-- ===== right top: the stall measurement ===== -->
+  <text x="620" y="150" font-size="14" font-weight="700" fill="#334155">what the loop gets to do while the GPU is busy</text>
+  <text x="620" y="170" font-size="12" fill="#64748b">a ticker coroutine standing in for handlers, 8 requests through 4 slots</text>
+
+  <line x1="620" y1="182" x2="1150" y2="182" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="202" font-size="11.5" font-weight="700" fill="#94a3b8">where the step runs</text>
+  <text x="920" y="202" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">loop turns</text>
+  <text x="1030" y="202" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">median stall</text>
+  <text x="1150" y="202" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="end">max stall</text>
+
+  <text x="620" y="230" font-size="12.5" font-weight="700" fill="#15803d">worker thread</text>
+  <text x="920" y="230" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">54,362</text>
+  <text x="1030" y="230" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">5 us</text>
+  <text x="1150" y="230" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">0.61 ms</text>
+
+  <text x="620" y="256" font-size="12.5" font-weight="700" fill="#b91c1c">the event loop</text>
+  <text x="920" y="256" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">22</text>
+  <text x="1030" y="256" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">1.35 ms</text>
+  <text x="1150" y="256" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="end">3.05 ms</text>
+
+  <line x1="620" y1="268" x2="1150" y2="268" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="292" font-size="12" fill="#475569">Twenty two chances to do anything else in the whole run, one per step.</text>
+  <text x="620" y="310" font-size="12" fill="#475569">And that is a 1.5 ms step on a tiny CPU model. A real forward is tens of ms.</text>
+
+  <!-- ===== right bottom: the reap tax ===== -->
+  <text x="620" y="352" font-size="14" font-weight="700" fill="#334155">the reap tax: finished is a release event, not a completion event</text>
+  <text x="620" y="372" font-size="12" fill="#64748b">SchedulerOutput.finished reports a request one iteration after its last token</text>
+
+  <line x1="620" y1="384" x2="1150" y2="384" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="404" font-size="11.5" font-weight="700" fill="#94a3b8">budget</text>
+  <text x="800" y="404" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">last token at</text>
+  <text x="950" y="404" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">reported at</text>
+  <text x="1140" y="404" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="end">latency if I waited</text>
+
+  <text x="620" y="430" font-size="12.5" font-weight="700" fill="#b91c1c">4 tokens</text>
+  <text x="800" y="430" font-size="12.5" fill="#475569" text-anchor="middle">step 4</text>
+  <text x="950" y="430" font-size="12.5" fill="#475569" text-anchor="middle">step 5</text>
+  <text x="1140" y="430" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="end">+25%</text>
+
+  <text x="620" y="454" font-size="12.5" fill="#475569">6 tokens</text>
+  <text x="800" y="454" font-size="12.5" fill="#475569" text-anchor="middle">step 6</text>
+  <text x="950" y="454" font-size="12.5" fill="#475569" text-anchor="middle">step 7</text>
+  <text x="1140" y="454" font-size="12.5" fill="#475569" text-anchor="end">+17%</text>
+
+  <text x="620" y="478" font-size="12.5" fill="#475569">12 tokens</text>
+  <text x="800" y="478" font-size="12.5" fill="#475569" text-anchor="middle">step 12</text>
+  <text x="950" y="478" font-size="12.5" fill="#475569" text-anchor="middle">step 13</text>
+  <text x="1140" y="478" font-size="12.5" fill="#475569" text-anchor="end">+8%</text>
+
+  <text x="620" y="502" font-size="12.5" fill="#475569">9 tokens</text>
+  <text x="800" y="502" font-size="12.5" fill="#475569" text-anchor="middle">step 18</text>
+  <text x="950" y="502" font-size="12.5" fill="#475569" text-anchor="middle">step 19</text>
+  <text x="1140" y="502" font-size="12.5" fill="#475569" text-anchor="end">+6%</text>
+
+  <line x1="620" y1="514" x2="1150" y2="514" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="540" font-size="12" fill="#475569">The shortest request pays the most, which is the head-of-line bill Week 8</text>
+  <text x="620" y="558" font-size="12" fill="#475569">removed, one iteration tall. So the loop settles on request.is_finished and</text>
+  <text x="620" y="576" font-size="12" font-weight="700" fill="#1e1b4b">lets the reap happen behind the answer.</text>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="618" width="1100" height="46" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="70" y="638" font-size="13.5" fill="#7f1d1d">Compatible means the fields that change the answer, not the fields that fit. This engine decodes with argmax, so temperature, stream and n are</text>
+  <text x="70" y="656" font-size="13.5" font-weight="700" fill="#7f1d1d">declared in the schema in order to be refused by name. A parameter accepted and ignored is a wrong answer with a 200 on it.</text>
+</svg>
