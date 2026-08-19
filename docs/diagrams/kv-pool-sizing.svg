@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowlight" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="52" font-size="31" font-weight="700" fill="#1e1b4b">How many blocks fit? Sizing the KV pool at boot</text>
+  <text x="50" y="82" font-size="16" fill="#64748b">Every day until now took num_blocks as an argument and believed it. A launcher gets a card and has to turn bytes into an integer.</text>
+  <text x="50" y="104" font-size="16" fill="#64748b">The budget is what is free after the weights land, minus a reserve against the card, minus what the biggest forward transiently wants.</text>
+
+  <!-- ===== left: the byte ladder ===== -->
+  <text x="50" y="150" font-size="14" font-weight="700" fill="#334155">a 24 GiB card, Llama-3.2-1B in bf16, 8 slots x 2048 tokens</text>
+  <text x="50" y="170" font-size="12" fill="#64748b">measured in this order, because free is only honest once the weights are resident</text>
+
+  <rect x="70" y="200" width="120" height="36.4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <rect x="70" y="236.4" width="120" height="9.5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2"/>
+  <rect x="70" y="245.9" width="120" height="105.4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <rect x="70" y="351.3" width="120" height="38" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2"/>
+  <rect x="70" y="389.3" width="120" height="190.5" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+
+  <line x1="196" y1="218" x2="226" y2="218" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#arrowlight)"/>
+  <text x="234" y="215" font-size="12.5" font-weight="700" fill="#3730a3">weights, 2.30 GiB</text>
+  <text x="234" y="231" font-size="11" fill="#64748b">1.24B params, tied lm_head counted once</text>
+
+  <line x1="196" y1="241" x2="226" y2="241" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#arrowlight)"/>
+  <text x="234" y="245" font-size="11.5" fill="#64748b">CUDA context, 0.60 GiB (the driver already subtracted it)</text>
+
+  <line x1="196" y1="298" x2="226" y2="298" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#arrowlight)"/>
+  <text x="234" y="288" font-size="12.5" font-weight="700" fill="#9a3412">activation reserve, 6.66 GiB</text>
+  <text x="234" y="305" font-size="11" fill="#c2410c">the peak of one 8 x 2048 prefill, measured by a profile run</text>
+  <text x="234" y="321" font-size="11" fill="#c2410c">logits 3.91 . scores 2.00 . swiglu 0.75</text>
+  <text x="234" y="337" font-size="11" font-weight="700" fill="#9a3412">bigger than the weights, and 59% of it is thrown away</text>
+
+  <line x1="196" y1="370" x2="226" y2="370" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#arrowlight)"/>
+  <text x="234" y="367" font-size="11.5" fill="#64748b">utilization reserve, 2.40 GiB = (1 - 0.90) x total</text>
+  <text x="234" y="383" font-size="11" fill="#94a3b8">against the card total, not against what is free</text>
+
+  <line x1="196" y1="470" x2="226" y2="470" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="234" y="462" font-size="14" font-weight="700" fill="#166534">KV pool, 12.03 GiB</text>
+  <text x="234" y="482" font-size="12.5" fill="#15803d">12.03 GiB / 512 KiB per block = 24,645 blocks</text>
+  <text x="234" y="500" font-size="12.5" fill="#15803d">24,645 blocks x 16 tokens = 394,320 tokens of K/V</text>
+  <text x="234" y="518" font-size="12.5" font-weight="700" fill="#166534">192 requests at the full 2048, against 8 slots</text>
+  <text x="234" y="540" font-size="11.5" fill="#64748b">so the slots bind first, and Day 33's preemption is not</text>
+  <text x="234" y="556" font-size="11.5" fill="#64748b">what sheds load at this shape. At 4096 it is.</text>
+
+  <!-- ===== right top: what a block costs ===== -->
+  <text x="640" y="150" font-size="14" font-weight="700" fill="#334155">what one block costs, and the factor of four in it</text>
+
+  <rect x="640" y="164" width="510" height="86" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="656" y="188" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">2 * num_hidden_layers * block_size</text>
+  <text x="656" y="208" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">  * num_key_value_heads * head_dim * itemsize</text>
+  <text x="656" y="234" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">2 * 16 * 16 * 8 * 64 * 2  =  512 KiB exactly</text>
+
+  <rect x="640" y="260" width="252" height="72" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="656" y="282" font-size="12" font-weight="700" fill="#166534">num_key_value_heads (8)</text>
+  <text x="656" y="301" font-size="11" fill="#15803d">512 KiB per block</text>
+  <text x="656" y="320" font-size="10.5" fill="#15803d">1 GiB of KV = 2048 blocks = 32,768 tokens</text>
+
+  <rect x="898" y="260" width="252" height="72" rx="9" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="914" y="282" font-size="12" font-weight="700" fill="#7f1d1d">num_attention_heads (32)</text>
+  <text x="914" y="301" font-size="11" fill="#b91c1c">2 MiB per block, 4x too big</text>
+  <text x="914" y="320" font-size="11" fill="#b91c1c">a quarter of the pool, nothing raises</text>
+
+  <text x="640" y="356" font-size="12" fill="#475569">The cache stores what attention reads, and under GQA that is one K/V per group of query</text>
+  <text x="640" y="373" font-size="12" fill="#475569">heads. This is the line where Week 5's saving is either taken or thrown away.</text>
+
+  <!-- ===== right bottom: the sweep ===== -->
+  <text x="640" y="414" font-size="14" font-weight="700" fill="#334155">the two knobs are memory limits, not just admission limits</text>
+
+  <line x1="640" y1="426" x2="1150" y2="426" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="640" y="446" font-size="11.5" font-weight="700" fill="#94a3b8">slots x length</text>
+  <text x="830" y="446" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">reserve</text>
+  <text x="950" y="446" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">KV pool</text>
+  <text x="1150" y="446" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="end">requests at max len</text>
+
+  <text x="640" y="472" font-size="12.5" fill="#475569">4 x 2048</text>
+  <text x="830" y="472" font-size="12.5" fill="#475569" text-anchor="middle">3.33 GiB</text>
+  <text x="950" y="472" font-size="12.5" fill="#475569" text-anchor="middle">15.37 GiB</text>
+  <text x="1150" y="472" font-size="12.5" fill="#475569" text-anchor="end">245</text>
+
+  <text x="640" y="496" font-size="12.5" font-weight="700" fill="#15803d">8 x 2048</text>
+  <text x="830" y="496" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">6.66 GiB</text>
+  <text x="950" y="496" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">12.03 GiB</text>
+  <text x="1150" y="496" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">192</text>
+
+  <text x="640" y="520" font-size="12.5" fill="#475569">16 x 2048</text>
+  <text x="830" y="520" font-size="12.5" fill="#475569" text-anchor="middle">13.33 GiB</text>
+  <text x="950" y="520" font-size="12.5" fill="#475569" text-anchor="middle">5.37 GiB</text>
+  <text x="1150" y="520" font-size="12.5" fill="#475569" text-anchor="end">85</text>
+
+  <text x="640" y="544" font-size="12.5" font-weight="700" fill="#b91c1c">8 x 4096</text>
+  <text x="830" y="544" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">17.33 GiB</text>
+  <text x="950" y="544" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">1.37 GiB</text>
+  <text x="1150" y="544" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="end">10</text>
+
+  <line x1="640" y1="556" x2="1150" y2="556" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="640" y="580" font-size="12" fill="#475569">Doubling the served length doubles the KV a request wants and quadruples the score</text>
+  <text x="640" y="597" font-size="12" font-weight="700" fill="#1e1b4b">rectangle, so the pool collapses 8.8x. The two knobs fight over the same bytes.</text>
+
+  <!-- ===== banner ===== -->
+  <rect x="50" y="618" width="1100" height="46" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="70" y="638" font-size="13.5" fill="#1e1b4b">A pool that cannot hold one request at max_model_len is a server that refuses every completion and answers ok on /health, because</text>
+  <text x="70" y="656" font-size="13.5" font-weight="700" fill="#1e1b4b">Scheduler.add_request rejects anything larger than the whole pool. So the launcher refuses to boot there, and says what it could have served.</text>
+</svg>

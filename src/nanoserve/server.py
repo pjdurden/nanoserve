@@ -125,6 +125,7 @@ def create_app(
     model_name: str = "nanoserve",
     eos_token_id: int | None = None,
     vocab_size: int | None = None,
+    info: dict | None = None,
 ) -> FastAPI:
     """Build the ASGI app around one already-constructed bridge.
 
@@ -136,6 +137,10 @@ def create_app(
                   a property of the model the server loaded, and letting a caller
                   choose it is how you get a request that never stops.
     vocab_size:   when known, token ids outside it are refused at the door.
+    info:         static facts about this process, merged into `/health`. Day 38's
+                  launcher puts the pool it chose here, because the block count is
+                  the one number nothing in the code can be read off and the thing
+                  you want when a server is preempting more than you expected.
 
     The lifespan owns `start`/`stop`, because under uvicorn nobody else can: the
     loop has to exist before the first request and has to be told to leave when
@@ -151,6 +156,7 @@ def create_app(
             await serving.stop()
 
     app = FastAPI(title="nanoserve", lifespan=lifespan)
+    info = dict(info or {})
 
     def _prompt_ids(prompt: str | list[int]) -> list[int]:
         """Token ids for either prompt form, or a 400 explaining which rule broke."""
@@ -215,7 +221,7 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         """Liveness plus what the loop is doing, which is what you want at 3am."""
-        return {"status": "ok", "model": model_name, **serving.stats()}
+        return {"status": "ok", "model": model_name, **info, **serving.stats()}
 
     return app
 
