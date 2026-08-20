@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">A queue per request, and a token that is half a character</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">The queue is the easy half: the loop already settles each request at its own last token, so it pushes at every</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">token instead. The other half is that Llama-3 tokenizes bytes, so decoding one token at a time can print a</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">replacement character where the non-streaming endpoint prints an emoji, from byte-identical ids.</text>
+
+  <!-- ===================== LEFT: the detokenizer ===================== -->
+  <text x="50" y="156" font-size="14" font-weight="700" fill="#334155">a token is a run of bytes, not of characters</text>
+
+  <rect x="50" y="168" width="530" height="166" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+
+  <text x="70" y="194" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">encode(one emoji, 4 bytes)  ->  [76460, 222]</text>
+
+  <rect x="70" y="206" width="142" height="60" rx="8" fill="#ffffff" stroke="#f87171" stroke-width="1.5"/>
+  <text x="141" y="225" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569" text-anchor="middle">id 76460</text>
+  <text x="141" y="241" font-size="10.5" fill="#64748b" text-anchor="middle">bytes f0 9f 98</text>
+  <text x="141" y="259" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">alone -&gt; "&#xfffd;"</text>
+
+  <rect x="222" y="206" width="142" height="60" rx="8" fill="#ffffff" stroke="#f87171" stroke-width="1.5"/>
+  <text x="293" y="225" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569" text-anchor="middle">id 222</text>
+  <text x="293" y="241" font-size="10.5" fill="#64748b" text-anchor="middle">byte 80</text>
+  <text x="293" y="259" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">alone -&gt; "&#xfffd;"</text>
+
+  <rect x="374" y="206" width="186" height="60" rx="8" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="467" y="224" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534" text-anchor="middle">decode([76460, 222])</text>
+  <circle cx="437" cy="246" r="15" fill="#fbbf24" stroke="#b45309" stroke-width="1.4"/>
+  <circle cx="432" cy="242" r="2" fill="#78350f"/>
+  <circle cx="442" cy="242" r="2" fill="#78350f"/>
+  <path d="M430,250 Q437,257 444,250" fill="none" stroke="#78350f" stroke-width="1.8" stroke-linecap="round"/>
+  <text x="500" y="252" font-size="15" font-weight="700" fill="#166534" text-anchor="middle">correct</text>
+
+  <text x="70" y="290" font-size="12.5" fill="#7f1d1d">One 4-byte character, two tokens. Decode per token and the stream</text>
+  <text x="70" y="308" font-size="12.5" fill="#7f1d1d">prints diamonds where the unary endpoint prints the emoji. The bug is</text>
+  <text x="70" y="326" font-size="12.5" font-weight="700" fill="#7f1d1d">only in the incremental path, so no unary test can ever see it.</text>
+
+  <text x="50" y="362" font-size="14" font-weight="700" fill="#334155">the fix: decode a window twice, emit the difference</text>
+
+  <rect x="50" y="374" width="530" height="144" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="70" y="398" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">pre   = decode(ids[prefix_offset:read_offset])</text>
+  <text x="70" y="417" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">whole = decode(ids[prefix_offset:])</text>
+  <text x="70" y="436" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#15803d">delta = whole[len(pre):]</text>
+
+  <line x1="50" y1="450" x2="580" y2="450" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="70" y="470" font-size="12.5" fill="#475569">A delta ending in U+FFFD stops mid-character: emit nothing,</text>
+  <text x="70" y="488" font-size="12.5" fill="#475569">leave the offsets, ask again one token longer.</text>
+  <text x="70" y="508" font-size="12.5" font-weight="700" fill="#1e1b4b">Bounded by 3 tokens. Late, never wrong.</text>
+
+  <text x="50" y="546" font-size="14" font-weight="700" fill="#334155">600 random strings, one generator, two alphabets</text>
+
+  <line x1="50" y1="556" x2="580" y2="556" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="576" font-size="11.5" font-weight="700" fill="#94a3b8">corpus</text>
+  <text x="430" y="576" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="middle">naive</text>
+  <text x="570" y="576" font-size="11.5" font-weight="700" fill="#94a3b8" text-anchor="end">windowed</text>
+
+  <text x="50" y="600" font-size="12.5" fill="#475569">plain English</text>
+  <text x="430" y="600" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">0 wrong</text>
+  <text x="570" y="600" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">0 wrong</text>
+
+  <text x="50" y="624" font-size="12.5" fill="#475569">the same plus emoji, CJK, accents</text>
+  <text x="430" y="624" font-size="15" font-weight="700" fill="#b91c1c" text-anchor="middle">517 wrong</text>
+  <text x="570" y="624" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">0 wrong</text>
+
+  <line x1="50" y1="636" x2="580" y2="636" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="656" font-size="12" fill="#64748b">Zero and 517 from one generator. That is the shape of a bug that ships.</text>
+
+  <!-- ===================== RIGHT TOP: future vs queue ===================== -->
+  <text x="620" y="156" font-size="14" font-weight="700" fill="#334155">the same request, two delivery schedules</text>
+
+  <rect x="620" y="168" width="530" height="190" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <text x="636" y="191" font-size="11.5" font-weight="700" fill="#4338ca">unary: one future, resolved once</text>
+  <rect x="636" y="199" width="418" height="26" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="845" y="216" font-size="11.5" fill="#3730a3" text-anchor="middle">the caller sees nothing for the whole generation</text>
+  <line x1="1056" y1="212" x2="1090" y2="212" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <rect x="1094" y="199" width="40" height="26" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="1114" y="217" font-size="12" font-weight="700" fill="#3730a3" text-anchor="middle">200</text>
+
+  <text x="636" y="253" font-size="11.5" font-weight="700" fill="#334155">Engine.step(), one token each, unchanged by any of this</text>
+  <rect x="636" y="261" width="74" height="28" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="673" y="280" font-size="11" fill="#334155" text-anchor="middle">prefill</text>
+  <rect x="718" y="261" width="74" height="28" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="755" y="280" font-size="11" fill="#334155" text-anchor="middle">decode</text>
+  <rect x="800" y="261" width="74" height="28" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="837" y="280" font-size="11" fill="#334155" text-anchor="middle">decode</text>
+  <rect x="882" y="261" width="74" height="28" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="919" y="280" font-size="11" fill="#334155" text-anchor="middle">decode</text>
+  <rect x="964" y="261" width="170" height="28" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="1049" y="280" font-size="11" fill="#64748b" text-anchor="middle">... to the budget or EOS</text>
+
+  <line x1="673" y1="292" x2="673" y2="312" stroke="#15803d" stroke-width="1.5" marker-end="url(#arrowgreen)"/>
+  <line x1="755" y1="292" x2="755" y2="312" stroke="#15803d" stroke-width="1.5" marker-end="url(#arrowgreen)"/>
+  <line x1="837" y1="292" x2="837" y2="312" stroke="#15803d" stroke-width="1.5" marker-end="url(#arrowgreen)"/>
+  <line x1="919" y1="292" x2="919" y2="312" stroke="#15803d" stroke-width="1.5" marker-end="url(#arrowgreen)"/>
+
+  <rect x="636" y="314" width="498" height="30" rx="5" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="648" y="333" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">stream: _settle() -&gt; waiter.deliver() -&gt; asyncio.Queue, unbounded</text>
+
+  <text x="620" y="378" font-size="12" fill="#475569">Unbounded on purpose: a bound is backpressure, and there is no way to pause one</text>
+  <text x="620" y="396" font-size="12" font-weight="700" fill="#1e1b4b">row of a batch, so one slow reader would set the pace for everybody.</text>
+
+  <!-- ===================== RIGHT BOTTOM: SSE + status code ===================== -->
+  <text x="620" y="432" font-size="14" font-weight="700" fill="#334155">what goes on the wire, and where the status code is decided</text>
+
+  <rect x="620" y="444" width="530" height="154" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <rect x="636" y="458" width="248" height="26" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.6"/>
+  <text x="648" y="476" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#9a3412">await updates.__anext__()</text>
+  <line x1="888" y1="471" x2="916" y2="471" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="924" y="468" font-size="11" font-weight="700" fill="#b91c1c">KVCacheExhausted is</text>
+  <text x="924" y="482" font-size="11" font-weight="700" fill="#b91c1c">still a 400, here only</text>
+
+  <line x1="636" y1="494" x2="1134" y2="494" stroke="#b91c1c" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="636" y="510" font-size="11.5" font-weight="700" fill="#b91c1c">HTTP 200 committed. nothing past this line can be a status code.</text>
+
+  <text x="636" y="534" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">data: {"choices":[{"text":" Paris","finish_reason":null}]}</text>
+  <text x="636" y="550" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#64748b">...</text>
+  <text x="636" y="566" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">data: {"choices":[{"finish_reason":"length"}],"usage":{...}}</text>
+  <text x="636" y="582" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#166534">data: [DONE]</text>
+
+  <!-- ===================== banner ===================== -->
+  <rect x="620" y="612" width="530" height="52" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="638" y="632" font-size="12.5" fill="#3730a3">Real Llama-3.2-1B, CPU, fp32: first token at 1.568s, whole</text>
+  <text x="638" y="652" font-size="12.5" font-weight="700" fill="#3730a3">answer at 5.793s. Same sixteen tokens, same engine.</text>
+</svg>

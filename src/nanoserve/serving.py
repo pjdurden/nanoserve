@@ -1,4 +1,4 @@
-"""The bridge: many HTTP coroutines, one synchronous engine loop. Week 10, Day 37.
+"""The bridge: many HTTP coroutines, one synchronous engine loop. Weeks 10-11.
 
 Every day so far had one caller. `Engine.generate` takes a list of prompts, drives
 `step()` in a `while` loop, and hands back a list; the loop owns the process for
@@ -53,17 +53,29 @@ every open connection hangs forever), a schedule that stops progressing to all o
 them too. `Engine.run_to_completion` answers that last one with a hang guard that
 raises into a script. A server has to answer it by failing sockets.
 
-This object is loop-affine and not thread-safe: `submit` and `abort` must be
-called from the event loop that ran `start`, which is where request handlers run
-anyway. vLLM's `AsyncLLMEngine` is this same shape (a background loop, a queue of
-arrivals, one stream per request); Week 11 turns the single future into that
-stream, which is the only change SSE actually needs.
+**And one future becomes one queue when the caller wants the tokens early.**
+Day 39. `stream` is the same request on a different delivery schedule: the loop
+pushes each new output token onto a queue at the same `_settle` that would have
+resolved the future, and the caller reads them with `async for`. Nothing about
+the engine, the scheduler or the batch changes, which is the property worth
+guarding, because the moment streaming changes a token it has stopped being a
+delivery decision. The queue is unbounded on purpose, and that is the one design
+call here that is not obvious: a bound would make one slow socket the pace of a
+forward pass that a dozen other requests are rows of, and there is no way to
+pause a single row of a batch. So backpressure on a stream would be backpressure
+on everybody, and the tokens wait in memory instead.
+
+This object is loop-affine and not thread-safe: `submit`, `stream` and `abort`
+must be called from the event loop that ran `start`, which is where request
+handlers run anyway. vLLM's `AsyncLLMEngine` is this same shape: a background
+loop, a queue of arrivals, one stream per request.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from .scheduler import Request
@@ -89,18 +101,108 @@ class EngineStuck(RuntimeError):
     """
 
 
+@dataclass(frozen=True)
+class StreamUpdate:
+    """One thing the loop has to say about a streaming request.
+
+    token_id: the token this update is about, or None on the final update. There
+              is exactly one final update per stream and it is always last, so a
+              consumer can treat it as the closing frame without counting.
+    request:  the live `Request`. On the final update it is finished, which is
+              where `finish_reason` and the token counts come from; before that it
+              is a running request being read between iterations, so anything
+              other than "how many tokens so far" is a snapshot.
+
+    Frozen, and the token is a copy rather than an index into the request, because
+    the request keeps mutating after this update is queued. A consumer reading a
+    slow socket must see the token that was current when the update was made, not
+    the one that is current when it gets around to looking.
+    """
+
+    request: Request
+    token_id: int | None = None
+
+    @property
+    def is_final(self) -> bool:
+        return self.token_id is None
+
+
 @dataclass
 class _Waiter:
-    """One in-flight request and the future its caller is parked on.
+    """One in-flight request and whatever its caller is parked on.
+
+    A unary caller has a future, resolved once. A streaming caller has a queue,
+    pushed to at every token. Exactly one of the two is set, and everything below
+    branches on which, because the difference between `/v1/completions` and its
+    `stream=true` twin is entirely this field.
 
     admitted: the loop has handed this request to the engine. Until then it lives
               only in the inbox, which is why an abort that arrives early cannot
               go to `Scheduler.abort`: the scheduler has never heard of it.
+    delivered: output tokens already pushed onto the queue. The stream's cursor,
+              kept here rather than read off the consumer because the loop is the
+              only thread allowed to look at the request at all.
     """
 
     request: Request
-    future: asyncio.Future
+    future: asyncio.Future | None = None
+    queue: asyncio.Queue | None = None
     admitted: bool = False
+    delivered: int = 0
+    closed: bool = False
+
+    @property
+    def streaming(self) -> bool:
+        return self.queue is not None
+
+    @property
+    def abandoned(self) -> bool:
+        """Nobody is on the other end any more, so the request is pure cost."""
+        return self.future is not None and self.future.cancelled()
+
+    def deliver(self) -> None:
+        """Push every output token the consumer has not been shown yet.
+
+        Unbounded, on purpose, and this is the one design decision in streaming
+        that is not obvious. A bounded queue would make a slow reader's socket the
+        pace of a forward pass that three other requests are rows of: there is no
+        way to pause one row of a batch, so backpressure on a stream is
+        backpressure on everybody. The tokens wait in memory instead, which is a
+        few bytes per token for a request that is already holding blocks.
+        """
+        output_ids = self.request.output_token_ids
+        while self.delivered < len(output_ids):
+            self.queue.put_nowait(StreamUpdate(self.request, output_ids[self.delivered]))
+            self.delivered += 1
+
+    def settle(self) -> None:
+        """The request finished: resolve the future, or close the stream."""
+        if self.queue is not None:
+            self.deliver()
+            self.close()
+        elif self.future is not None and not self.future.done():
+            self.future.set_result(self.request)
+
+    def close(self) -> None:
+        """Put the final update on the queue, once, whatever ended the stream."""
+        if self.closed:
+            return
+        self.closed = True
+        self.queue.put_nowait(StreamUpdate(self.request, None))
+
+    def fail(self, exc: BaseException) -> None:
+        """Hand the bad news to whichever kind of caller this is.
+
+        A stream carries the exception *in* the queue rather than raising it into
+        the loop, because the consumer may be several tokens behind: raising
+        immediately would drop tokens that were already produced and paid for.
+        """
+        if self.queue is not None:
+            if not self.closed:
+                self.closed = True
+                self.queue.put_nowait(exc)
+        elif self.future is not None and not self.future.done():
+            self.future.set_exception(exc)
 
 
 @dataclass
@@ -201,6 +303,27 @@ class AsyncEngine:
         it would mean touching the scheduler from the loop thread while a step may
         be running in another. So that refusal comes back later, on this future.
         """
+        waiter = self._accept(
+            prompt_token_ids, max_new_tokens, eos_token_id, request_id, streaming=False
+        )
+        return waiter.future
+
+    def _accept(
+        self,
+        prompt_token_ids: list[int],
+        max_new_tokens: int,
+        eos_token_id: int | None,
+        request_id: str | None,
+        *,
+        streaming: bool,
+    ) -> _Waiter:
+        """Everything `submit` and `stream` share: check, build, queue, wake.
+
+        The only difference between the two is the last line of it, which is
+        whether the caller gets a future or a queue. Everything before that
+        (the loop is alive, the id is free, the `Request` is well formed) is one
+        set of rules, because a streaming caller is not owed weaker ones.
+        """
         if self.failure is not None:
             raise self.failure
         if self._task is None or self._closing:
@@ -214,11 +337,14 @@ class AsyncEngine:
             max_new_tokens=max_new_tokens,
             eos_token_id=eos_token_id,
         )
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._live[request_id] = _Waiter(request, future)
+        if streaming:
+            waiter = _Waiter(request, queue=asyncio.Queue())
+        else:
+            waiter = _Waiter(request, future=asyncio.get_running_loop().create_future())
+        self._live[request_id] = waiter
         self._inbox.append(request_id)
         self._wakeup.set()
-        return future
+        return waiter
 
     async def generate(
         self,
@@ -242,6 +368,53 @@ class AsyncEngine:
         except asyncio.CancelledError:
             self.abort(request_id)
             raise
+
+    async def stream(
+        self,
+        prompt_token_ids: list[int],
+        max_new_tokens: int = 16,
+        eos_token_id: int | None = None,
+        request_id: str | None = None,
+    ) -> AsyncIterator[StreamUpdate]:
+        """Submit one request and yield its tokens as the loop produces them.
+
+        The same request `generate` would run, delivered on a different schedule:
+        one `StreamUpdate` per output token, then exactly one final update
+        carrying the finished request. Nothing about the engine, the scheduler or
+        the batch changes, which is the property the tests hammer, because the
+        moment streaming changes a token it stops being a delivery decision and
+        starts being a different model.
+
+        Two things about the shape are deliberate.
+
+        **The submit happens when this is first iterated, not when it is called.**
+        An async generator's body does not run until `__anext__`, so a caller that
+        builds one and drops it has not queued anything. That also puts admission
+        errors on the first read, which is what lets the HTTP layer choose a
+        status code: no byte of the body has gone out yet, so `KVCacheExhausted`
+        can still be a 400 rather than an error frame inside a 200.
+
+        **The `finally` is the disconnect path and it is not optional.** A stream
+        can end from the consumer's side, by `break`, by `aclose`, or by the whole
+        handler being cancelled when a socket dies, and none of those look like
+        Day 37's `CancelledError` at an await. All of them run this `finally`, and
+        the abort in it is what turns a hung-up client into freed KV instead of a
+        row that keeps generating into a queue nobody will ever read.
+        """
+        waiter = self._accept(
+            prompt_token_ids, max_new_tokens, eos_token_id, request_id, streaming=True
+        )
+        queue = waiter.queue
+        try:
+            while True:
+                item = await queue.get()
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+                if item.is_final:
+                    return
+        finally:
+            self.abort(waiter.request.request_id)
 
     def abort(self, request_id: str) -> None:
         """Ask for a request to stop. Applied at the next iteration boundary.
@@ -341,20 +514,20 @@ class AsyncEngine:
             waiter = self._live.get(request_id)
             if waiter is None:
                 continue
-            if waiter.future.cancelled() or request_id in self._aborted:
+            if waiter.abandoned or request_id in self._aborted:
                 # Cancelled or aborted before the engine ever saw it: it holds no
                 # slot and no blocks, so finishing it is bookkeeping and nothing
                 # else. `Scheduler.abort` could not do this, it has never heard
                 # of the request.
                 self._aborted.discard(request_id)
                 waiter.request.finish("abort")
-                self._resolve(waiter.future, waiter.request)
+                waiter.settle()
                 del self._live[request_id]
                 continue
             try:
                 self.engine.add_request(waiter.request)
             except Exception as exc:  # noqa: BLE001 - one caller's error, not the loop's
-                self._fail(waiter.future, exc)
+                waiter.fail(exc)
                 del self._live[request_id]
                 continue
             waiter.admitted = True
@@ -370,7 +543,7 @@ class AsyncEngine:
                 self.engine.abort(request_id)
 
     def _settle(self) -> None:
-        """Hand every finished request to its own caller.
+        """Hand every new token, and every finished request, to its own caller.
 
         On `is_finished` rather than on the scheduler's `finished` list, so an
         answer is delivered on the step that produced its last token instead of on
@@ -379,27 +552,25 @@ class AsyncEngine:
         request is aborted here instead of being allowed to run to its budget.
         """
         for request_id, waiter in list(self._live.items()):
-            if waiter.future.cancelled():
+            if waiter.abandoned:
                 if waiter.admitted and not waiter.request.is_finished:
                     self.engine.abort(request_id)
                 del self._live[request_id]
-            elif waiter.admitted and waiter.request.is_finished:
-                self._resolve(waiter.future, waiter.request)
+                continue
+            if not waiter.admitted:
+                continue
+            if waiter.streaming:
+                # The one line streaming adds to the loop: push whatever this
+                # request emitted since the last look. Every token goes out on the
+                # step that produced it, which is the whole product.
+                waiter.deliver()
+            if waiter.request.is_finished:
+                waiter.settle()
                 del self._live[request_id]
 
     def _fail_all(self, exc: BaseException) -> None:
         """Give everyone the bad news. A hung socket is worse than an error."""
         for waiter in list(self._live.values()):
-            self._fail(waiter.future, exc)
+            waiter.fail(exc)
         self._live.clear()
         self._inbox.clear()
-
-    @staticmethod
-    def _resolve(future: asyncio.Future, request: Request) -> None:
-        if not future.done():
-            future.set_result(request)
-
-    @staticmethod
-    def _fail(future: asyncio.Future, exc: BaseException) -> None:
-        if not future.done():
-            future.set_exception(exc)

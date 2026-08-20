@@ -208,15 +208,20 @@ def test_health_reports_the_loop_and_the_engine():
 # --- the refusals ---------------------------------------------------------------
 
 
-def test_streaming_is_refused_rather_than_silently_batched():
+def test_streaming_is_no_longer_refused():
+    """Day 37 answered `stream=true` with a 400 that named Week 11. This is that
+    week: the refusal is gone and the same body returns an event stream. What it
+    contains is `tests/test_stream.py`'s business; what matters here is that a
+    parameter stopped being a promise and started being a feature."""
+
     async def scenario():
         serving, app = await _serving()
         async with serving, _client(app) as client:
             return await client.post("/v1/completions", json=_body(stream=True))
 
     response = run(scenario())
-    assert response.status_code == 400
-    assert "stream" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
 
 
 def test_a_sampling_temperature_is_refused_rather_than_ignored():
