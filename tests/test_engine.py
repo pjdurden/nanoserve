@@ -36,6 +36,7 @@ from nanoserve.config import ModelConfig
 from nanoserve.engine import Engine
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes
 from nanoserve.model import LlamaModel
+from nanoserve.sampling import SamplingParams
 from nanoserve.scheduler import Request, Scheduler
 
 from reference import PROMPT_IDS, WEIGHTS_DIR, requires_weights
@@ -63,9 +64,13 @@ def _model(seed: int = 0) -> tuple[LlamaModel, ModelConfig]:
     return LlamaModel(cfg, Weights(tensors, cfg)), cfg
 
 
-def _engine(model, num_blocks=64, block_size=4, max_batch_size=4) -> Engine:
+def _engine(model, num_blocks=64, block_size=4, max_batch_size=4, seed=None) -> Engine:
     return Engine.build(
-        model, num_blocks=num_blocks, block_size=block_size, max_batch_size=max_batch_size
+        model,
+        num_blocks=num_blocks,
+        block_size=block_size,
+        max_batch_size=max_batch_size,
+        seed=seed,
     )
 
 
@@ -427,3 +432,157 @@ def test_the_scheduled_loop_matches_the_static_one_on_llama():
 
     assert engine.generate(prompts, max_new_tokens=4) == static
     assert engine.issued_tokens == 8
+
+
+# --- Day 40: the batch stops agreeing about how to sample -----------------------
+#
+# Every test above this line ran on `argmax`, and every one of them still does,
+# because `SamplingParams()` is greedy and that is what a `Request` gets by
+# default. What is new is that two rows of one forward can now disagree, and the
+# claim is the same one continuous batching has made since Day 31: a request emits
+# the tokens it would have emitted alone. Sampling makes that claim harder,
+# because "alone" now has to survive a shared RNG.
+
+
+def _sampled(request_id, prompt, sampling, max_new_tokens=4) -> Request:
+    return Request(
+        request_id=request_id,
+        prompt_token_ids=list(prompt),
+        max_new_tokens=max_new_tokens,
+        sampling=sampling,
+    )
+
+
+def test_a_request_with_no_sampling_params_is_still_greedy():
+    """Forty days of tests assume argmax. The default has to keep meaning argmax."""
+    model, _ = _model()
+    a = _engine(model)
+    b = _engine(model)
+    assert a.generate([[1, 2, 3]], max_new_tokens=6) == b.generate([[1, 2, 3]], max_new_tokens=6)
+    assert a.sampler.num_generators == 0
+
+
+def test_a_seeded_request_emits_the_same_tokens_alone_and_in_a_crowd():
+    """The property the whole day exists for.
+
+    A seeded request is run by itself, then again as the last of four rows that
+    are all sampling and all drawing from the same engine. Its tokens are
+    identical, which is only true if its randomness belongs to it rather than to
+    whichever batch it landed in.
+    """
+    model, _ = _model()
+    seeded = SamplingParams(temperature=1.5, seed=99)
+
+    solo = _engine(model)
+    x_alone = solo.add_request(_sampled("x", [1, 2, 3], seeded, max_new_tokens=6))
+    solo.run_to_completion()
+
+    crowd = _engine(model)
+    for i in range(3):
+        crowd.add_request(
+            _sampled(f"n{i}", [4, 5, 6], SamplingParams(temperature=1.0), max_new_tokens=6)
+        )
+    x_batched = crowd.add_request(_sampled("x", [1, 2, 3], seeded, max_new_tokens=6))
+    crowd.run_to_completion()
+
+    alone = x_alone.output_token_ids
+    batched = x_batched.output_token_ids
+
+    assert alone == batched
+    assert len(set(alone)) > 1  # it sampled; a stuck generator would give one token
+
+
+def test_a_greedy_row_is_untouched_by_a_sampling_neighbour():
+    """Greedy consumes no randomness, so a hot neighbour cannot move its tokens."""
+    model, _ = _model()
+
+    solo = _engine(model)
+    expected = solo.generate([[1, 2, 3]], max_new_tokens=6)[0]
+
+    mixed = _engine(model)
+    greedy = mixed.add_request(_sampled("g", [1, 2, 3], SamplingParams(), max_new_tokens=6))
+    mixed.add_request(
+        _sampled("s", [4, 5, 6], SamplingParams(temperature=1.2), max_new_tokens=6)
+    )
+    mixed.run_to_completion()
+
+    assert greedy.token_ids == expected
+
+
+def test_preemption_does_not_change_a_sampled_requests_tokens():
+    """Day 33's claim, now that a recompute has to replay an RNG as well as a K/V.
+
+    A preempted request loses its K/V and re-prefills over prompt-plus-generated,
+    which emits exactly one token, the same as the decode it replaced. So it makes
+    the same number of draws in the same order and its generator is at the same
+    state, and the sampled text survives a memory decision the caller never sees.
+    """
+    prompts = [[1, 2, 3], [4, 5], [6, 7, 8, 9]]
+    model, _ = _model()
+    params = [
+        SamplingParams(temperature=1.0, seed=1),
+        SamplingParams(temperature=0.8, top_p=0.9, seed=2),
+        SamplingParams(),
+    ]
+
+    def run(engine):
+        requests = [
+            engine.add_request(_sampled(f"r{i}", prompt, sampling, max_new_tokens=6))
+            for i, (prompt, sampling) in enumerate(zip(prompts, params))
+        ]
+        engine.run_to_completion()
+        return [r.token_ids for r in requests]
+
+    roomy = _engine(model, num_blocks=64, block_size=4, max_batch_size=4)
+    cramped = _engine(model, num_blocks=3, block_size=4, max_batch_size=4)
+
+    expected = run(roomy)
+    got = run(cramped)
+
+    assert cramped.scheduler.num_preemptions > 0, "this pool was supposed to be too small"
+    assert got == expected
+
+
+def test_a_finished_requests_generator_is_released():
+    """A generator per live request is fine. A generator per request ever served is a leak."""
+    model, _ = _model()
+    engine = _engine(model)
+    for i in range(4):
+        engine.add_request(
+            _sampled(f"r{i}", [1, 2, 3], SamplingParams(temperature=1.0, seed=i))
+        )
+    engine.step()
+    assert engine.sampler.num_generators == 4
+
+    engine.run_to_completion()
+    assert engine.sampler.num_generators == 0
+
+
+def test_an_aborted_requests_generator_is_released_too():
+    """The disconnect path frees blocks and a slot; it has to free this as well."""
+    model, _ = _model()
+    engine = _engine(model)
+    engine.add_request(
+        _sampled("a", [1, 2, 3], SamplingParams(temperature=1.0, seed=5), max_new_tokens=64)
+    )
+    engine.step()
+    assert engine.sampler.num_generators == 1
+
+    engine.abort("a")
+    engine.step()
+    assert engine.sampler.num_generators == 0
+
+
+def test_the_engine_seed_makes_an_unseeded_run_repeatable():
+    """No per-request seed, but a fixed batch: the shared generator is enough."""
+    model, _ = _model()
+    runs = []
+    for _ in range(2):
+        engine = _engine(model, seed=4321)
+        requests = [
+            engine.add_request(_sampled("a", [1, 2, 3], SamplingParams(temperature=1.0))),
+            engine.add_request(_sampled("b", [4, 5, 6], SamplingParams(temperature=1.0))),
+        ]
+        engine.run_to_completion()
+        runs.append([r.token_ids for r in requests])
+    assert runs[0] == runs[1]

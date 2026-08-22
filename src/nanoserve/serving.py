@@ -78,6 +78,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
+from .sampling import SamplingParams
 from .scheduler import Request
 
 
@@ -288,6 +289,7 @@ class AsyncEngine:
         max_new_tokens: int = 16,
         eos_token_id: int | None = None,
         request_id: str | None = None,
+        sampling: SamplingParams | None = None,
     ) -> asyncio.Future:
         """Queue a request and return the future its answer will arrive on.
 
@@ -304,7 +306,12 @@ class AsyncEngine:
         be running in another. So that refusal comes back later, on this future.
         """
         waiter = self._accept(
-            prompt_token_ids, max_new_tokens, eos_token_id, request_id, streaming=False
+            prompt_token_ids,
+            max_new_tokens,
+            eos_token_id,
+            request_id,
+            sampling,
+            streaming=False,
         )
         return waiter.future
 
@@ -314,6 +321,7 @@ class AsyncEngine:
         max_new_tokens: int,
         eos_token_id: int | None,
         request_id: str | None,
+        sampling: SamplingParams | None = None,
         *,
         streaming: bool,
     ) -> _Waiter:
@@ -336,6 +344,10 @@ class AsyncEngine:
             prompt_token_ids=list(prompt_token_ids),
             max_new_tokens=max_new_tokens,
             eos_token_id=eos_token_id,
+            # Day 40. The params are validated where they were parsed, in the HTTP
+            # layer, so a bad `top_p` is a 400 with a name in it rather than a
+            # `ValueError` raised on the loop thread with nobody to hand it to.
+            sampling=sampling or SamplingParams(),
         )
         if streaming:
             waiter = _Waiter(request, queue=asyncio.Queue())
@@ -352,6 +364,7 @@ class AsyncEngine:
         max_new_tokens: int = 16,
         eos_token_id: int | None = None,
         request_id: str | None = None,
+        sampling: SamplingParams | None = None,
     ) -> Request:
         """Submit and await one request. The coroutine an HTTP handler is.
 
@@ -362,7 +375,9 @@ class AsyncEngine:
         what turns a closed socket into freed KV.
         """
         request_id = self._new_id() if request_id is None else request_id
-        future = self.submit(prompt_token_ids, max_new_tokens, eos_token_id, request_id)
+        future = self.submit(
+            prompt_token_ids, max_new_tokens, eos_token_id, request_id, sampling
+        )
         try:
             return await future
         except asyncio.CancelledError:
@@ -375,6 +390,7 @@ class AsyncEngine:
         max_new_tokens: int = 16,
         eos_token_id: int | None = None,
         request_id: str | None = None,
+        sampling: SamplingParams | None = None,
     ) -> AsyncIterator[StreamUpdate]:
         """Submit one request and yield its tokens as the loop produces them.
 
@@ -402,7 +418,12 @@ class AsyncEngine:
         row that keeps generating into a queue nobody will ever read.
         """
         waiter = self._accept(
-            prompt_token_ids, max_new_tokens, eos_token_id, request_id, streaming=True
+            prompt_token_ids,
+            max_new_tokens,
+            eos_token_id,
+            request_id,
+            sampling,
+            streaming=True,
         )
         queue = waiter.queue
         try:

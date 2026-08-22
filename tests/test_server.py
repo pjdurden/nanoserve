@@ -7,11 +7,13 @@ are the part worth testing, because every one of them is a decision about what a
 server owes a caller it cannot serve.
 
 The rule this file enforces everywhere: **a parameter that would change the answer
-is either honoured or refused, never accepted and ignored.** The engine samples
-with `argmax` and nothing else, so `temperature=0.7` cannot be served; accepting
-it would hand back greedy tokens under a name that promises otherwise, which is a
-wrong answer with a 200 on it. Week 11 adds sampling and streaming and turns two
-of these 400s into features. Until then they are 400s, and each one says so.
+is either honoured or refused, never accepted and ignored.** Day 37 wrote that rule
+with `temperature=0.7` as its example, because an engine that only knows `argmax`
+cannot serve it and a 200 that pretends otherwise is a wrong answer with a good
+status code on it. Day 39 turned `stream` into a feature and Day 40 turns
+`temperature`, `top_k`, `top_p` and `seed` into features, so what is left of the
+rule here is the shape of the refusals that remain: `n`, an unknown model, a token
+id outside the vocab, and a sampling parameter whose *value* is nonsense.
 
 Nothing here needs `./weights`: the tiny random model from the engine tests, plus
 a 64-symbol byte tokenizer, which is enough to prove that what comes out of the
@@ -224,21 +226,33 @@ def test_streaming_is_no_longer_refused():
     assert response.headers["content-type"].startswith("text/event-stream")
 
 
-def test_a_sampling_temperature_is_refused_rather_than_ignored():
-    """The engine is greedy. Serving `temperature=0.7` as argmax is a wrong answer
-    with a 200 on it, which is worse than an error."""
+def test_a_sampling_temperature_is_no_longer_refused():
+    """Day 37 made this a 400 that named itself. Day 40 is when it stops being one.
+
+    Both halves are asserted: the request is served, and it is actually *sampled*.
+    A 200 that quietly returned argmax tokens would be the exact failure the 400
+    was protecting against, so the test compares five seeds against the greedy
+    answer and demands that they are not all the same text.
+    """
 
     async def scenario():
         serving, app = await _serving()
         async with serving, _client(app) as client:
-            hot = await client.post("/v1/completions", json=_body(temperature=0.7))
-            cold = await client.post("/v1/completions", json=_body(temperature=0.0))
-            return hot, cold
+            cold = await client.post("/v1/completions", json=_body(max_tokens=8))
+            hot = [
+                await client.post(
+                    "/v1/completions",
+                    json=_body(max_tokens=8, temperature=2.0, seed=seed),
+                )
+                for seed in range(5)
+            ]
+            return cold, hot
 
-    hot, cold = run(scenario())
-    assert hot.status_code == 400
-    assert "temperature" in hot.json()["detail"]
+    cold, hot = run(scenario())
     assert cold.status_code == 200
+    assert all(r.status_code == 200 for r in hot)
+    greedy = cold.json()["choices"][0]["text"]
+    assert any(r.json()["choices"][0]["text"] != greedy for r in hot)
 
 
 def test_more_than_one_choice_is_refused():
@@ -378,3 +392,110 @@ def test_the_lifespan_starts_and_stops_the_loop():
         assert serving.running
         assert client.post("/v1/completions", json=_body()).status_code == 200
     assert not serving.running
+
+
+# --- Day 40: the sampling parameters, honoured and policed ----------------------
+
+
+def test_the_same_seed_gives_the_same_completion_twice():
+    """What a seed is for, and the only reason a sampled endpoint is testable."""
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            body = _body(max_tokens=8, temperature=1.5, top_p=0.9, seed=1234)
+            first = await client.post("/v1/completions", json=body)
+            second = await client.post("/v1/completions", json=body)
+            return first, second
+
+    first, second = run(scenario())
+    assert first.status_code == 200
+    assert first.json()["choices"][0]["text"] == second.json()["choices"][0]["text"]
+
+
+def test_different_seeds_give_different_completions():
+    """The converse, stated over several seeds so one collision cannot pass it."""
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return [
+                await client.post(
+                    "/v1/completions",
+                    json=_body(max_tokens=8, temperature=1.5, seed=seed),
+                )
+                for seed in range(6)
+            ]
+
+    texts = {r.json()["choices"][0]["text"] for r in run(scenario())}
+    assert len(texts) > 1
+
+
+def test_a_negative_temperature_is_a_400_that_names_it():
+    """A refusal is only useful if the caller can tell which field broke."""
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return await client.post("/v1/completions", json=_body(temperature=-1.0))
+
+    response = run(scenario())
+    assert response.status_code == 400
+    assert "temperature" in response.json()["detail"]
+
+
+def test_top_p_outside_its_range_is_a_400_that_names_it():
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return [
+                await client.post("/v1/completions", json=_body(top_p=bad))
+                for bad in (0.0, 1.5)
+            ]
+
+    for response in run(scenario()):
+        assert response.status_code == 400
+        assert "top_p" in response.json()["detail"]
+
+
+def test_a_negative_top_k_is_a_400_that_names_it():
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return await client.post("/v1/completions", json=_body(top_k=-3))
+
+    response = run(scenario())
+    assert response.status_code == 400
+    assert "top_k" in response.json()["detail"]
+
+
+def test_a_body_with_no_sampling_fields_is_still_greedy():
+    """Forty days of clients that send nothing but `prompt` keep their answers."""
+    expected = TOKENIZER.decode(_offline([1, 2, 3], 6))
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return await client.post("/v1/completions", json=_body(max_tokens=6))
+
+    assert run(scenario()).json()["choices"][0]["text"] == expected
+
+
+def test_top_k_one_is_greedy_by_another_road():
+    """A useful sanity check on the whole path: with one candidate the draw is forced.
+
+    `top_k=1` masks everything but the argmax, so the multinomial has exactly one
+    outcome whatever the temperature and whatever the seed. If this does not match
+    the greedy answer, the filters are being applied to the wrong rows.
+    """
+    expected = TOKENIZER.decode(_offline([1, 2, 3], 6))
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving, _client(app) as client:
+            return await client.post(
+                "/v1/completions",
+                json=_body(max_tokens=6, temperature=1.7, top_k=1),
+            )
+
+    assert run(scenario()).json()["choices"][0]["text"] == expected

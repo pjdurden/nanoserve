@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">One logits tensor, four callers who do not agree</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Continuous batching puts four requests in one forward, and after today they no longer sample the same way. The</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">tensor is homogeneous and the parameters are not. Greedy rows leave through their own door, rows that share a</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">filter setting are filtered together, and the draw itself is per row, because a seed belongs to a request.</text>
+
+  <!-- ===================== LEFT: the batch splits ===================== -->
+  <text x="50" y="156" font-size="14" font-weight="700" fill="#334155">one [4, vocab] tensor, three paths through it</text>
+
+  <rect x="50" y="168" width="530" height="216" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <rect x="66" y="182" width="150" height="26" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="141" y="200" font-size="11.5" font-weight="700" fill="#3730a3" text-anchor="middle">row 0  greedy</text>
+  <rect x="66" y="212" width="150" height="26" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="141" y="230" font-size="11" fill="#9a3412" text-anchor="middle">row 1  t=0.8 p=0.9</text>
+  <rect x="66" y="242" width="150" height="26" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="141" y="260" font-size="11" fill="#9a3412" text-anchor="middle">row 2  t=1.4 p=0.9</text>
+  <rect x="66" y="272" width="150" height="26" rx="5" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="141" y="290" font-size="11" fill="#166534" text-anchor="middle">row 3  t=1.0 k=40</text>
+
+  <line x1="222" y1="195" x2="266" y2="195" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="222" y1="238" x2="266" y2="248" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="222" y1="258" x2="266" y2="252" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="222" y1="285" x2="266" y2="305" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="272" y="180" width="290" height="34" rx="6" fill="#eef2ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="286" y="202" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#3730a3">argmax over the greedy rows, no RNG</text>
+
+  <rect x="272" y="224" width="290" height="52" rx="6" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <text x="286" y="243" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#9a3412">group (k=0, p=0.9): one filter call,</text>
+  <text x="286" y="259" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#9a3412">temperature as a [2, 1] column divide</text>
+  <text x="286" y="272" font-size="10" fill="#c2410c">two rows, two temperatures, one sort</text>
+
+  <rect x="272" y="286" width="290" height="34" rx="6" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="286" y="308" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">group (k=40, p=1.0): its own filter call</text>
+
+  <line x1="417" y1="322" x2="417" y2="340" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="272" y="342" width="290" height="30" rx="6" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="286" y="362" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">multinomial, one row at a time</text>
+
+  <text x="66" y="342" font-size="11.5" font-weight="700" fill="#475569">A batch has a few</text>
+  <text x="66" y="358" font-size="11.5" font-weight="700" fill="#475569">distinct settings,</text>
+  <text x="66" y="374" font-size="11.5" font-weight="700" fill="#475569">not one per row.</text>
+
+  <!-- ===================== LEFT BOTTOM: the cost ===================== -->
+  <text x="50" y="418" font-size="14" font-weight="700" fill="#334155">32 rows x 128256 vocab, cpu fp32, ms per step</text>
+
+  <line x1="50" y1="428" x2="580" y2="428" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="450" font-size="12.5" fill="#475569">argmax over the block (all greedy)</text>
+  <text x="570" y="450" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">4.5</text>
+
+  <text x="50" y="474" font-size="12.5" fill="#475569">top_p = 0.9 filter, which is a full sort</text>
+  <text x="570" y="474" font-size="15" font-weight="700" fill="#b91c1c" text-anchor="end">91.4</text>
+
+  <text x="50" y="498" font-size="12.5" fill="#475569">one batched multinomial (the version rejected)</text>
+  <text x="570" y="498" font-size="12.5" font-weight="700" fill="#475569" text-anchor="end">91.7</text>
+
+  <text x="50" y="522" font-size="12.5" font-weight="700" fill="#1e1b4b">32 separate per-row draws (the version shipped)</text>
+  <text x="570" y="522" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">96.1</text>
+
+  <line x1="50" y1="534" x2="580" y2="534" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="556" font-size="12.5" fill="#64748b">Un-batching the draw costs 4.5 ms of 96, because a multinomial over</text>
+  <text x="50" y="574" font-size="12.5" fill="#64748b">128k probabilities is a cumulative sum you pay per row either way.</text>
+  <text x="50" y="596" font-size="12.5" font-weight="700" fill="#1e1b4b">The expensive part of sampling is not the randomness. It is the sort.</text>
+
+  <!-- ===================== RIGHT TOP: whose randomness is it ===================== -->
+  <text x="620" y="156" font-size="14" font-weight="700" fill="#334155">whose randomness is it: one request, four different batches</text>
+
+  <rect x="620" y="168" width="256" height="150" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="636" y="191" font-size="12" font-weight="700" fill="#7f1d1d">one shared generator</text>
+  <text x="636" y="214" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">alone           -&gt; A</text>
+  <text x="636" y="232" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">with 1 neighbour -&gt; B</text>
+  <text x="636" y="250" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">with 2 neighbours -&gt; C</text>
+  <text x="636" y="268" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">with 3 neighbours -&gt; D</text>
+  <text x="636" y="294" font-size="15" font-weight="700" fill="#b91c1c">4 distinct answers</text>
+  <text x="636" y="310" font-size="11" fill="#7f1d1d">one per batch composition</text>
+
+  <rect x="894" y="168" width="256" height="150" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="910" y="191" font-size="12" font-weight="700" fill="#166534">a generator per request, seeded</text>
+  <text x="910" y="214" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">alone           -&gt; A</text>
+  <text x="910" y="232" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">with 1 neighbour -&gt; A</text>
+  <text x="910" y="250" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">with 2 neighbours -&gt; A</text>
+  <text x="910" y="268" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534">with 3 neighbours -&gt; A</text>
+  <text x="910" y="294" font-size="15" font-weight="700" fill="#15803d">1 distinct answer</text>
+  <text x="910" y="310" font-size="11" fill="#166534">a seed that means something</text>
+
+  <text x="620" y="340" font-size="12" fill="#475569">Measured, 40 runs. Without a seed a caller's tokens are a function of who else</text>
+  <text x="620" y="358" font-size="12" font-weight="700" fill="#1e1b4b">happened to post at the same moment, which is the one thing a seed exists to stop.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the two traps ===================== -->
+  <text x="620" y="396" font-size="14" font-weight="700" fill="#334155">two ways to write this that look right</text>
+
+  <rect x="620" y="408" width="530" height="72" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="636" y="430" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">greedy = temperature 0</text>
+  <line x1="836" y1="425" x2="864" y2="425" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="872" y="429" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#b91c1c">logits/0 -&gt; inf -&gt; nan</text>
+  <text x="636" y="452" font-size="11.5" fill="#7f1d1d">In floating point it is not a limit, it is a divide by zero. Greedy is a branch:</text>
+  <text x="636" y="470" font-size="11.5" font-weight="700" fill="#7f1d1d">one argmax and no draw, so a greedy neighbour cannot move another row's token.</text>
+
+  <rect x="620" y="490" width="530" height="72" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="636" y="512" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7f1d1d">Generator().manual_seed(seed) per step</text>
+  <line x1="936" y1="507" x2="964" y2="507" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="972" y="511" font-size="11.5" font-weight="700" fill="#b91c1c">same token forever</text>
+  <text x="636" y="534" font-size="11.5" fill="#7f1d1d">Seed once at the request and keep the state, in a dict the sampler owns. Drop it</text>
+  <text x="636" y="552" font-size="11.5" font-weight="700" fill="#7f1d1d">when the request finishes: one generator per request ever served is a leak.</text>
+
+  <!-- ===================== banner ===================== -->
+  <rect x="620" y="574" width="530" height="72" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="638" y="596" font-size="12" fill="#3730a3">Real Llama-3.2-1B, cpu fp32, t=0.8 p=0.9, "The capital of France is"</text>
+  <text x="638" y="616" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#3730a3">seed 0 alone      -&gt; " Paris. It is a very beautiful city."</text>
+  <text x="638" y="634" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#3730a3">seed 0 with 3 more -&gt; " Paris. It is a very beautiful city."</text>
+</svg>

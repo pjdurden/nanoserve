@@ -618,16 +618,38 @@ def test_a_bad_model_is_still_a_404_when_streaming():
     assert status == 404
 
 
-def test_temperature_is_still_refused_when_streaming():
-    """Streaming is a delivery schedule. It does not make a lie about sampling
-    into the truth."""
+def test_a_bad_sampling_parameter_is_still_a_400_when_streaming():
+    """Day 40 serves `temperature`; it does not serve nonsense.
+
+    The refusal has to land before the first byte, which is the whole reason the
+    check runs in the handler rather than on the loop thread. Once a frame is out
+    the status line is spent and a bad `top_p` could only be reported inside a
+    body that already claims 200.
+    """
     serving = AsyncEngine(_engine())
     status, _, body = _stream_body(
         _app(serving),
-        {"model": "nanoserve", "prompt": "abc", "temperature": 0.7, "stream": True},
+        {"model": "nanoserve", "prompt": "abc", "top_p": 1.5, "stream": True},
     )
     assert status == 400
-    assert "temperature" in body
+    assert "top_p" in body
+
+
+def test_a_seeded_stream_is_reproducible():
+    """A seed is what makes a sampled stream mean anything twice."""
+    payload = {
+        "model": "nanoserve",
+        "prompt": "abc",
+        "max_tokens": 6,
+        "temperature": 1.2,
+        "seed": 4,
+        "stream": True,
+    }
+    bodies = [
+        "".join(c["choices"][0]["text"] for c in _chunks(_stream_body(_app(AsyncEngine(_engine())), payload)[2]))
+        for _ in range(2)
+    ]
+    assert bodies[0] == bodies[1]
 
 
 def test_a_failure_after_the_first_chunk_becomes_an_error_frame():

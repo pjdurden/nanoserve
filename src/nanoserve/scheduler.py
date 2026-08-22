@@ -88,6 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .cache import BlockAllocator, KVCacheExhausted
+from .sampling import SamplingParams
 
 
 class RequestState(Enum):
@@ -142,6 +143,13 @@ class Request:
                       since the reservation is sized by what the request *could*
                       still emit rather than what it will.
     eos_token_id:     stop token, or None to always run the full budget.
+    sampling:         Day 40's `SamplingParams`: what this request asked the
+                      sampler for. Defaults to greedy, which is what every
+                      request in Weeks 7-10 was, so nothing above this line
+                      changes. It is pure data (three numbers and an optional
+                      seed) and holds no `torch.Generator`, which is what keeps
+                      this module free of tensors and of RNG state: the
+                      generators live in the engine's `BatchedSampler`.
 
     Mutable, unlike the frozen `PaddedBatch` of Day 27, and for the opposite
     reason. A padded batch describes one forward pass and the next step builds a
@@ -153,6 +161,7 @@ class Request:
     prompt_token_ids: list[int]
     max_new_tokens: int = 16
     eos_token_id: int | None = None
+    sampling: SamplingParams = field(default_factory=SamplingParams)
     state: RequestState = RequestState.WAITING
     output_token_ids: list[int] = field(default_factory=list)
     # Assigned at admission, returned at finish or at preemption. `slot` is the row

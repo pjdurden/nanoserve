@@ -572,3 +572,74 @@ def test_stats_report_what_the_loop_has_done():
     assert stats["waiting"] == 0
     assert stats["idle_waits"] == 1
     assert stats["parked"] is True
+
+
+# --- Day 40: the sampling parameters cross the bridge ---------------------------
+
+
+def test_a_seeded_request_through_the_bridge_matches_its_offline_run():
+    """The bridge is a delivery mechanism, and a seed has to survive it.
+
+    Same prompt, same seed, one run offline and one through the loop, and the
+    loop's run shares its steps with three other sampled requests. Identical
+    tokens, because the seed makes the draw a property of the request rather than
+    of the batch it landed in.
+    """
+    from nanoserve.sampling import SamplingParams
+
+    seeded = SamplingParams(temperature=1.3, seed=2024)
+    model = _model()
+    offline = Engine.build(model, num_blocks=64, block_size=4, max_batch_size=4)
+    expected = offline.generate([[1, 2, 3]], max_new_tokens=6, sampling=seeded)[0]
+
+    async def scenario():
+        serving = AsyncEngine(
+            Engine.build(model, num_blocks=64, block_size=4, max_batch_size=4)
+        )
+        async with serving:
+            noise = [
+                serving.generate(
+                    [4, 5, 6],
+                    max_new_tokens=6,
+                    sampling=SamplingParams(temperature=1.0),
+                )
+                for _ in range(3)
+            ]
+            mine = serving.generate([1, 2, 3], max_new_tokens=6, sampling=seeded)
+            done = await asyncio.gather(mine, *noise)
+            return done[0]
+
+    assert run(scenario()).token_ids == expected
+
+
+def test_a_stream_and_a_unary_request_with_the_same_seed_agree():
+    """Streaming is a delivery schedule. A seed does not know which one it got."""
+    from nanoserve.sampling import SamplingParams
+
+    seeded = SamplingParams(temperature=1.2, top_p=0.95, seed=77)
+
+    async def scenario():
+        serving = AsyncEngine(_engine())
+        async with serving:
+            unary = await serving.generate([1, 2, 3], max_new_tokens=5, sampling=seeded)
+            streamed = []
+            async for update in serving.stream(
+                [1, 2, 3], max_new_tokens=5, sampling=seeded
+            ):
+                if not update.is_final:
+                    streamed.append(update.token_id)
+            return unary.output_token_ids, streamed
+
+    tokens, streamed = run(scenario())
+    assert tokens == streamed
+
+
+def test_a_request_with_no_sampling_params_is_greedy_over_the_bridge():
+    """The default has to stay argmax on this path too, or Day 37's tests lie."""
+
+    async def scenario():
+        serving = AsyncEngine(_engine())
+        async with serving:
+            return await serving.generate([1, 2, 3], max_new_tokens=4)
+
+    assert run(scenario()).token_ids == _offline([1, 2, 3], 4)

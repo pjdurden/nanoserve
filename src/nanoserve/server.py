@@ -11,15 +11,23 @@ Two decisions are worth more than the code.
 
 **Compatible means the fields that change the answer, not the fields that fit.**
 It is easy to accept OpenAI's whole schema and honour the third of it that is
-implemented, and it produces a server that looks compatible and lies. The engine
-samples with `argmax`; a request that asks for `temperature=0.7` and gets greedy
-tokens back with a 200 has been given a wrong answer dressed as a right one, and
-nothing downstream can tell. So every parameter here is either honoured or
-refused with a 400 that names it and says when it lands. Day 39 turned the first
-of those refusals into a feature: `stream=true` is served. `temperature` and `n`
-are still 400s, and they stay 400s until the sampler exists. A 400 is a bug
-report the caller can act on; a silently ignored parameter is one they will find
-in production.
+implemented, and it produces a server that looks compatible and lies. Day 37
+wrote the rule with `temperature=0.7` as its example: an engine that only knows
+`argmax` cannot serve it, and handing back greedy tokens with a 200 is a wrong
+answer dressed as a right one that nothing downstream can tell. So every
+parameter here is either honoured or refused with a 400 that names it and says
+when it lands. Two of those refusals are now features. Day 39 served
+`stream=true`; Day 40 serves `temperature`, `top_k`, `top_p` and `seed`, which
+leaves `n` as the last of them. A 400 is a bug report the caller can act on; a
+silently ignored parameter is one they will find in production.
+
+**Serving a parameter and policing its value are the same job.** `top_p=1.5` is
+not a nucleus, and `temperature=-1` is a distribution turned inside out. Those
+are refused here, by constructing the request's `SamplingParams` in the handler
+and turning its `ValueError` into a 400 that carries the field name. Building it
+in the handler rather than on the loop thread is what makes the refusal cheap and
+attributable: it costs its own caller a status code before the engine has spent
+an iteration on it, and no other row of the batch ever hears about it.
 
 **The status code is a claim about whose fault it is.** A prompt that carries a
 token id the model does not have is a 400, because without the check it is an
@@ -51,9 +59,8 @@ one choice, a finish reason, a usage block. Streamed text comes from
 correctness requirement and not a nicety: on a byte-level tokenizer the naive
 version prints replacement characters where the unary endpoint prints emoji.
 
-Not here yet, on purpose: sampling parameters, `/v1/chat/completions` and its
-template, `logprobs`, multiple prompts per request, and any authentication at
-all. This is a localhost server for a single-GPU engine, and pretending otherwise
+Not here yet, on purpose: `/v1/chat/completions` and its template, `logprobs`,
+`stop` strings, multiple prompts per request, and any authentication at all. This is a localhost server for a single-GPU engine, and pretending otherwise
 would be its own kind of lie.
 """
 
@@ -71,6 +78,7 @@ from pydantic import BaseModel, Field
 
 from .cache import KVCacheExhausted
 from .detokenizer import IncrementalDetokenizer
+from .sampling import SamplingParams
 from .scheduler import Request
 from .serving import AsyncEngine, EngineStopped, StreamUpdate
 
@@ -98,7 +106,14 @@ class CompletionRequest(BaseModel):
     prompt: str | list[int]
     max_tokens: int = Field(default=16, ge=1)
     stream: bool = False
+    # Day 40. `temperature` defaults to 0, which is greedy, which is what every
+    # client of this server got before today: a body that names none of these
+    # fields keeps the answer it has always had. `top_k` is not in OpenAI's schema
+    # and is in vLLM's, and it is here because the sampler has had it since Week 6.
     temperature: float = 0.0
+    top_k: int = 0
+    top_p: float = 1.0
+    seed: int | None = None
     n: int = 1
 
 
@@ -224,17 +239,29 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail=f"model {body.model!r} is not served here"
             )
-        if body.temperature != 0.0:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "temperature is not implemented yet: this engine decodes "
-                    "greedily, so serving a non-zero temperature would return "
-                    "argmax tokens under a name that promises otherwise"
-                ),
-            )
         if body.n != 1:
             raise HTTPException(status_code=400, detail="n must be 1")
+
+    def _sampling(body: CompletionRequest) -> SamplingParams:
+        """The request's sampling parameters, or a 400 naming the one that is wrong.
+
+        The validation lives in `SamplingParams.__post_init__`, which is where the
+        rules are, and this turns its `ValueError` into a status code. Doing it
+        here and not on the loop thread is what makes the refusal cheap and
+        attributable: a bad `top_p` costs its own caller a 400 before the engine
+        has spent an iteration on it, and no other request in the batch ever hears
+        about it. The message carries the field name because a 400 a caller cannot
+        act on is barely better than a 500.
+        """
+        try:
+            return SamplingParams(
+                temperature=body.temperature,
+                top_k=body.top_k,
+                top_p=body.top_p,
+                seed=body.seed,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/completions", response_model=CompletionResponse)
     async def completions(body: CompletionRequest) -> Any:
@@ -252,12 +279,16 @@ def create_app(
         unary body only.
         """
         _check(body)
+        sampling = _sampling(body)
         prompt_ids = _prompt_ids(body.prompt)
         if body.stream:
-            return await _stream_completion(body, prompt_ids)
+            return await _stream_completion(body, prompt_ids, sampling)
         try:
             request = await serving.generate(
-                prompt_ids, max_new_tokens=body.max_tokens, eos_token_id=eos_token_id
+                prompt_ids,
+                max_new_tokens=body.max_tokens,
+                eos_token_id=eos_token_id,
+                sampling=sampling,
             )
         except KVCacheExhausted as exc:
             # The caller asked for more than the pool can ever hold. Their error,
@@ -268,7 +299,7 @@ def create_app(
         return _as_response(request, model_name, tokenizer, eos_token_id)
 
     async def _stream_completion(
-        body: CompletionRequest, prompt_ids: list[int]
+        body: CompletionRequest, prompt_ids: list[int], sampling: SamplingParams
     ) -> Response:
         """Turn one bridge stream into an SSE body, after choosing the status code.
 
@@ -284,7 +315,10 @@ def create_app(
         headers leave at the instant the caller had something to read anyway.
         """
         stream = serving.stream(
-            prompt_ids, max_new_tokens=body.max_tokens, eos_token_id=eos_token_id
+            prompt_ids,
+            max_new_tokens=body.max_tokens,
+            eos_token_id=eos_token_id,
+            sampling=sampling,
         )
         updates = stream.__aiter__()
         try:

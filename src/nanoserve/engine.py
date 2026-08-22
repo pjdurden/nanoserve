@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
 
 
@@ -88,6 +89,12 @@ class Engine:
                allocator the scheduler admits against. Same pool, one bookkeeper.
     pad_id:    filler for the prefill rectangle. Never attended to and never
                written to the cache, so any in-vocab id works.
+    seed:      seeds the sampler's *shared* generator, the one requests that gave
+               no seed of their own draw from. It makes a fixed set of requests
+               repeatable; it cannot make one request repeatable, because with a
+               shared generator that request's draw depends on how many of its
+               batchmates drew before it in the same step. Per-request `seed` in
+               `SamplingParams` is what buys that.
 
     The two objects are deliberately not merged. The scheduler is pure bookkeeping
     and stays testable without a GPU, a model, or a tensor; this class is the only
@@ -101,6 +108,7 @@ class Engine:
         scheduler: Scheduler,
         cache: BatchedPagedKVCache,
         pad_id: int = 0,
+        seed: int | None = None,
     ):
         if cache.batch_size != scheduler.max_batch_size:
             raise ValueError(
@@ -117,6 +125,11 @@ class Engine:
         self.scheduler = scheduler
         self.cache = cache
         self.pad_id = pad_id
+        # Day 40. The rows of one forward no longer agree about how to sample, and
+        # this is what holds the disagreement: per-request parameters come in on
+        # the `Request`, per-request RNG state lives here, keyed by request id and
+        # dropped when the request finishes.
+        self.sampler = BatchedSampler(seed=seed)
         # The scheduler owns slot lifetime and has no tensors; this is the tensor
         # half of releasing one. Installed rather than passed to the constructor so
         # a caller who built the pair by hand cannot forget it, and because the
@@ -140,6 +153,7 @@ class Engine:
         block_size: int = 16,
         max_batch_size: int = 8,
         pad_id: int = 0,
+        seed: int | None = None,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool."""
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
@@ -148,6 +162,7 @@ class Engine:
             Scheduler(allocator, max_batch_size=max_batch_size),
             BatchedPagedKVCache(model.config, allocator, batch_size=max_batch_size),
             pad_id=pad_id,
+            seed=seed,
         )
 
     @property
@@ -190,6 +205,14 @@ class Engine:
         prefill) is a real optimisation and a later one.
         """
         out = self.scheduler.schedule()
+        # Whatever the schedule just reaped is done drawing: finished, or aborted,
+        # which arrives here as finished too. Preempted requests are deliberately
+        # not in this list, because they come back and their generator has to be
+        # where they left it. Dropping the rest is not tidiness: a server that
+        # keeps one `torch.Generator` per request it has ever served leaks for as
+        # long as it runs.
+        for request in out.finished:
+            self.sampler.release(request.request_id)
         if out.is_empty:
             return out
 
@@ -241,7 +264,7 @@ class Engine:
         self.prefill_slots += batch.batch_size * batch.max_length
         self.prefill_tokens += int(batch.lengths.sum().item())
         self.prefill_rows += batch.batch_size
-        self._collect(requests, last_token_logits(logits, batch).argmax(dim=-1))
+        self._collect(requests, self._sample(requests, last_token_logits(logits, batch)))
 
     def _decode(self, requests) -> None:
         """Run one token for every already-running row.
@@ -264,7 +287,7 @@ class Engine:
             device=device,
         )
         logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
-        self._collect(requests, logits[:, -1].argmax(dim=-1))
+        self._collect(requests, self._sample(requests, logits[:, -1]))
 
     def _sync_rows(self, requests) -> None:
         """Copy any block the scheduler added this iteration into the row's table.
@@ -282,9 +305,23 @@ class Engine:
             if held < len(request.block_ids):
                 self.cache.extend_row(request.slot, request.block_ids[held:])
 
-    def _collect(self, requests, tokens: torch.Tensor) -> None:
+    def _sample(self, requests, logits: torch.Tensor) -> list[int]:
+        """One token per row, each under the params its own request asked for.
+
+        Until Day 40 this line was `.argmax(dim=-1)` and it was the same call for
+        every row, because every row was greedy. Now the rows of one `[rows,
+        vocab]` tensor can disagree: greedy, `top_p=0.9`, `temperature=1.4` with a
+        seed. What is handed down is a request id per row as well as its params,
+        because the RNG state is keyed by id and has to survive from this step to
+        the next one, and across a preemption that puts the row back in a prefill.
+        """
+        return self.sampler.sample_batch(
+            logits, [(r.request_id, r.sampling) for r in requests]
+        )
+
+    def _collect(self, requests, tokens: list[int]) -> None:
         """Hand each row its sampled token. `append_token` applies the stop rules."""
-        for request, token in zip(requests, tokens.tolist()):
+        for request, token in zip(requests, tokens):
             request.append_token(int(token))
             self.collected_tokens += 1
 
@@ -321,6 +358,7 @@ class Engine:
         prompts: list[list[int]],
         max_new_tokens: int,
         eos_id: int | None = None,
+        sampling: SamplingParams | None = None,
     ) -> list[list[int]]:
         """Offline convenience: submit N prompts, drain, return prompt+generation.
 
@@ -336,6 +374,7 @@ class Engine:
                     prompt_token_ids=list(prompt),
                     max_new_tokens=max_new_tokens,
                     eos_token_id=eos_id,
+                    sampling=sampling or SamplingParams(),
                 )
             )
             for prompt in prompts

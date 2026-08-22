@@ -32,11 +32,21 @@ do not reinvent the convention.
 
 The filters operate on the last dim, so they work on a single `[vocab]` vector
 or a `[batch, vocab]` batch unchanged. `sample` itself takes one `[vocab]` vector
-(one sequence's next-token logits) and returns a Python int; ragged batched
-sampling is a scheduler concern for later phases.
+(one sequence's next-token logits) and returns a Python int.
+
+**Week 11, Day 40** adds the half a server needs. `SamplingParams` is what one
+request asked for, and `BatchedSampler` turns a whole `[rows, vocab]` tensor into
+one token per row when the rows disagree: one greedy, one at `top_p=0.9`, one at
+`temperature=1.4` with its own seed, all columns of the same forward. The three
+rules it is built on are that greedy is a branch and not a zero temperature, that
+rows sharing a filter setting are filtered together, and that the draw itself is
+per row because a seed belongs to a request rather than to a batch.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 import torch
 
@@ -120,3 +130,192 @@ def sample(
     logits = top_p_filter(logits, top_p)
     probs = logits.softmax(dim=-1)
     return int(torch.multinomial(probs, num_samples=1, generator=generator))
+
+
+# --- one tensor, many callers: Week 11, Day 40 ---------------------------------
+
+
+@dataclass(frozen=True)
+class SamplingParams:
+    """What one request asked the sampler for. Pure data, no tensors, no RNG.
+
+    temperature: `0.0` means greedy and is the default, so every `Request` built
+                 before today keeps the behaviour it had. Anything positive
+                 sharpens (`< 1`) or flattens (`> 1`) before the filters run.
+    top_k:       keep the k most likely tokens; `0` is off.
+    top_p:       keep the smallest nucleus reaching mass p; `1.0` is off.
+    seed:        this request's own RNG seed, or None to share the engine's.
+
+    Frozen for the same reason `PaddedBatch` is: a request may not change what it
+    asked for halfway through its own generation, or two halves of one answer come
+    from two different distributions and nothing downstream can tell.
+
+    It carries no `torch.Generator`, deliberately. A generator is mutable state
+    that advances with every draw, and hanging it off the request would put RNG
+    state inside the scheduler, which is the one module in this engine that owns
+    no tensors. The state lives in `BatchedSampler` instead, keyed by request id,
+    which also gives it somewhere to be released from when the request finishes.
+    """
+
+    temperature: float = 0.0
+    top_k: int = 0
+    top_p: float = 1.0
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.temperature < 0.0:
+            raise ValueError(f"temperature must be >= 0, got {self.temperature}")
+        if self.top_k < 0:
+            raise ValueError(f"top_k must be >= 0 (0 means off), got {self.top_k}")
+        if not 0.0 < self.top_p <= 1.0:
+            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
+
+    @property
+    def is_greedy(self) -> bool:
+        """Greedy is a branch, not a limit. See `BatchedSampler.sample_batch`."""
+        return self.temperature == 0.0
+
+    @property
+    def filter_key(self) -> tuple[int, float]:
+        """What two rows must agree on to be filtered in one call.
+
+        Temperature does not appear here: it is a per-row divide and vectorises
+        against a `[rows, 1]` column whatever the values are. `top_k` and `top_p`
+        do, because their thresholds are computed *inside* the filter from a
+        scalar, so rows with different k or p have to be different calls.
+        """
+        return (self.top_k, self.top_p)
+
+
+# The default every request gets, and the behaviour every day before this one had.
+GREEDY = SamplingParams()
+
+
+class BatchedSampler:
+    """Turn one `[rows, vocab]` logits tensor into one token per row. Day 40.
+
+    Under continuous batching the rows of a single forward belong to different
+    callers, and after today they no longer agree on how to sample. One row wants
+    the argmax, the next wants `top_p=0.9` at `temperature=1.2` with its own seed,
+    and they are columns of the same tensor. Three rules make that work.
+
+    **Greedy is a branch, not `temperature=0`.** Dividing logits by zero gives
+    `inf`, whose softmax is `nan`, and a draw over `nan` is an exception or a lie.
+    Greedy rows are pulled out and answered with one batched `argmax`, which is
+    also the *only* way a greedy row can be bit-identical to what it would get
+    alone. And they consume no randomness, so adding a greedy neighbour to a batch
+    cannot move anybody else's draw.
+
+    **Sampled rows are grouped by `filter_key`, not run one at a time.** Every row
+    in a group shares `top_k` and `top_p`, so the two filters run once for the
+    whole group, and temperature is a per-row `[m, 1]` divide inside it. A server
+    sees a handful of distinct filter settings across a batch, not one per
+    request, so this is a few kernel launches per step rather than one per row.
+    vLLM vectorises the whole thing with per-row k and p tensors; the grouping
+    here is the same idea with less machinery and the same answers.
+
+    **The draw itself cannot be batched, because a seed is per request.** One
+    `torch.multinomial` over `[m, vocab]` advances one generator once for the
+    whole block, which makes every row's token a function of who else was in the
+    block. That is exactly the coupling a seed exists to remove, so a seeded row
+    draws from its own generator, alone, one row at a time. It costs one
+    `multinomial` over a `[vocab]` vector per sampled row per step, against a
+    forward pass measured in tens of milliseconds.
+
+    The generators are kept here, in a dict keyed by request id, and `release`
+    drops one when its request finishes. Both halves matter: a generator rebuilt
+    each step would redraw from the same state forever, and a generator never
+    dropped is a per-request leak in a process meant to run for weeks.
+    """
+
+    def __init__(self, seed: int | None = None):
+        """`seed` seeds the *shared* generator, used by requests that gave none.
+
+        A request without a seed is not promised reproducibility, and it does not
+        get it: it draws from this one generator, so its tokens depend on how many
+        other unseeded rows drew before it in the same step. Seeding the engine
+        makes a whole run repeatable when the batch composition is also repeatable,
+        which is what the benchmarks want and what a live server never has.
+        """
+        self._shared = torch.Generator()
+        if seed is not None:
+            self._shared.manual_seed(seed)
+        self._generators: dict[str, torch.Generator] = {}
+
+    @property
+    def num_generators(self) -> int:
+        """Live per-request generators. Should track the sampled requests in flight."""
+        return len(self._generators)
+
+    def release(self, request_id: str) -> None:
+        """Drop a finished request's generator. A no-op for one that never had any."""
+        self._generators.pop(request_id, None)
+
+    def _generator_for(self, request_id: str, params: SamplingParams) -> torch.Generator:
+        """This request's generator, created on its first draw and kept after it.
+
+        Created here rather than at admission because a greedy request never needs
+        one, and because this is the only place that knows a draw is about to
+        happen. Kept because the state has to advance: seeding per step would draw
+        the same token from the same distribution every step.
+        """
+        if params.seed is None:
+            return self._shared
+        generator = self._generators.get(request_id)
+        if generator is None:
+            generator = torch.Generator()
+            generator.manual_seed(params.seed)
+            self._generators[request_id] = generator
+        return generator
+
+    def sample_batch(
+        self,
+        logits: torch.Tensor,
+        rows: Sequence[tuple[str, SamplingParams]],
+    ) -> list[int]:
+        """One token per row of `[rows, vocab]` logits, each under its own params.
+
+        `rows` pairs each row with the request id and params that own it, as one
+        sequence rather than two parallel lists: a length mismatch between ids and
+        params would hand one caller another caller's distribution, and that is a
+        bug no shape check catches.
+
+        Returns plain ints in row order, which is what `Request.append_token`
+        wants and what keeps the engine's collect loop unchanged.
+        """
+        if logits.shape[0] != len(rows):
+            raise ValueError(
+                f"the logits have {logits.shape[0]} rows but {len(rows)} requests "
+                "were given: a row is a request, so they must line up"
+            )
+        tokens = [0] * len(rows)
+
+        greedy = [i for i, (_, p) in enumerate(rows) if p.is_greedy]
+        if greedy:
+            # One argmax for every greedy row in the batch, and no RNG at all.
+            for i, token in zip(greedy, logits[greedy].argmax(dim=-1).tolist()):
+                tokens[i] = int(token)
+
+        groups: dict[tuple[int, float], list[int]] = {}
+        for i, (_, params) in enumerate(rows):
+            if not params.is_greedy:
+                groups.setdefault(params.filter_key, []).append(i)
+
+        for (top_k, top_p), members in groups.items():
+            block = logits[members]
+            temperatures = torch.tensor(
+                [rows[i][1].temperature for i in members],
+                dtype=block.dtype,
+                device=block.device,
+            ).unsqueeze(1)
+            block = block / temperatures
+            block = top_k_filter(block, top_k)
+            block = top_p_filter(block, top_p)
+            probs = block.softmax(dim=-1)
+            for offset, i in enumerate(members):
+                request_id, params = rows[i]
+                generator = self._generator_for(request_id, params)
+                tokens[i] = int(
+                    torch.multinomial(probs[offset], num_samples=1, generator=generator)
+                )
+        return tokens
