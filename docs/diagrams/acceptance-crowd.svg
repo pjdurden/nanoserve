@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The acceptance test, and the caller nobody heard leave</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">A real uvicorn on a real port, twelve concurrent clients, and one comparison: every request run alone, then all of</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">them together, byte for byte. It passed. What it also found is that four days of disconnect tests had been running</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">through a transport where a client cannot actually vanish, so the unary abort had never once been triggered.</text>
+
+  <!-- ===================== LEFT: the crowd ===================== -->
+  <text x="50" y="156" font-size="14" font-weight="700" fill="#334155">the crowd: 12 clients, 3 slots, 48 tokens of KV</text>
+
+  <rect x="50" y="168" width="500" height="164" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <rect x="66" y="182" width="140" height="24" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="136" y="199" font-size="10.5" font-weight="700" fill="#3730a3" text-anchor="middle">6 streaming SSE</text>
+  <rect x="66" y="210" width="140" height="24" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="136" y="227" font-size="10.5" font-weight="700" fill="#3730a3" text-anchor="middle">6 unary</text>
+  <rect x="66" y="238" width="140" height="24" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="136" y="255" font-size="10.5" fill="#9a3412" text-anchor="middle">8 sampled, 4 greedy</text>
+  <rect x="66" y="266" width="140" height="24" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+  <text x="136" y="283" font-size="10.5" fill="#7f1d1d" text-anchor="middle">3 hang up halfway</text>
+  <text x="66" y="312" font-size="10.5" fill="#64748b">prompts 2 / 4 / 8 tokens</text>
+  <text x="66" y="326" font-size="10.5" fill="#64748b">budgets 4 / 12 / 24</text>
+
+  <line x1="212" y1="222" x2="252" y2="240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="258" y="182" width="276" height="60" rx="6" fill="#ffffff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="272" y="203" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#3730a3">uvicorn, 127.0.0.1:&lt;ephemeral&gt;</text>
+  <text x="272" y="221" font-size="11" fill="#475569">real TCP, real HTTP parser, real chunked</text>
+  <text x="272" y="236" font-size="11" fill="#475569">bodies, and clients that really close</text>
+
+  <line x1="396" y1="244" x2="396" y2="262" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="258" y="264" width="276" height="56" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="272" y="284" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#334155">peak_active 12, peak_running 3</text>
+  <text x="272" y="302" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#b91c1c">37 positions recomputed</text>
+  <text x="272" y="316" font-size="10" fill="#64748b">evicted and replayed, sockets open</text>
+
+  <!-- ===================== LEFT: the four claims ===================== -->
+  <text x="50" y="366" font-size="14" font-weight="700" fill="#334155">four claims, each with the number that proves it</text>
+  <line x1="50" y1="376" x2="550" y2="376" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="398" font-size="12.5" fill="#475569">1. nobody got anybody else's tokens</text>
+  <text x="540" y="398" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">9 of 9 identical to solo</text>
+
+  <text x="50" y="422" font-size="12.5" fill="#475569">2. a seed means the same in a crowd</text>
+  <text x="540" y="422" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">8 sampled, 8 identical</text>
+
+  <text x="50" y="446" font-size="12.5" fill="#475569">3. the pool came back</text>
+  <text x="540" y="446" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">12 of 12 blocks, 3 of 3 slots</text>
+
+  <text x="50" y="470" font-size="12.5" fill="#475569">4. the process survived the disconnects</text>
+  <text x="540" y="470" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">0 collateral failures</text>
+
+  <line x1="50" y1="482" x2="550" y2="482" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="504" font-size="12.5" fill="#64748b">Claim 1 is one comparison, not a checklist: run each plan alone on this</text>
+  <text x="50" y="522" font-size="12.5" fill="#64748b">server, run them all together, require the same bytes. Crosstalk, a</text>
+  <text x="50" y="540" font-size="12.5" fill="#64748b">mis-indexed row, a shared generator and a cache row pointing at the</text>
+  <text x="50" y="558" font-size="12.5" font-weight="700" fill="#1e1b4b">wrong block table all fail it, including the ones nobody thought of.</text>
+
+  <rect x="50" y="576" width="500" height="70" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="68" y="598" font-size="12" fill="#3730a3">Real Llama-3.2-1B, cpu fp32, 4 clients on one socket, alone then together</text>
+  <text x="68" y="618" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#3730a3">greedy, seed 0, seed 1, top_k=40 -&gt; 4 of 4 byte identical</text>
+  <text x="68" y="636" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#3730a3">solo pass 19.0s, crowd pass 13.6s, peak_running 4</text>
+
+  <!-- ===================== RIGHT TOP: the two transports ===================== -->
+  <text x="620" y="156" font-size="14" font-weight="700" fill="#334155">what "the client hung up" delivers, on each transport</text>
+
+  <rect x="620" y="168" width="256" height="128" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="636" y="190" font-size="12" font-weight="700" fill="#166534">httpx.ASGITransport (days 37-40)</text>
+  <text x="636" y="212" font-size="11" fill="#166534">the app is a coroutine, and the</text>
+  <text x="636" y="228" font-size="11" fill="#166534">client cancelling cancels it</text>
+  <text x="636" y="252" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#166534">CancelledError -&gt; abort</text>
+  <text x="636" y="276" font-size="11" fill="#166534">the test passed, and the premise</text>
+  <text x="636" y="290" font-size="11" fill="#166534">was never true off this transport</text>
+
+  <rect x="894" y="168" width="256" height="128" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="910" y="190" font-size="12" font-weight="700" fill="#7f1d1d">a real socket (day 41)</text>
+  <text x="910" y="212" font-size="11" fill="#7f1d1d">uvicorn turns the FIN into a</text>
+  <text x="910" y="228" font-size="11" fill="#7f1d1d">message on receive()</text>
+  <text x="910" y="252" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#b91c1c">http.disconnect -&gt; nobody</text>
+  <text x="910" y="276" font-size="11" fill="#7f1d1d">a handler parked on a future is</text>
+  <text x="910" y="290" font-size="11" fill="#7f1d1d">not reading messages</text>
+
+  <text x="620" y="318" font-size="12" fill="#475569">Streaming was never affected: Starlette watches for the disconnect itself while</text>
+  <text x="620" y="336" font-size="12" font-weight="700" fill="#1e1b4b">it produces a body. The loud path was right, and that is why the quiet one lived.</text>
+
+  <!-- ===================== RIGHT MIDDLE: the fix ===================== -->
+  <text x="620" y="374" font-size="14" font-weight="700" fill="#334155">the fix: race the generation against a watcher on receive</text>
+
+  <rect x="620" y="386" width="530" height="98" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <rect x="636" y="400" width="228" height="30" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="650" y="420" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#3730a3">serving.generate(...)</text>
+  <rect x="636" y="436" width="228" height="30" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="650" y="456" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#9a3412">await_client_disconnect(recv)</text>
+
+  <line x1="870" y1="415" x2="898" y2="415" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <text x="906" y="412" font-size="11" font-weight="700" fill="#15803d">200, or the 400 the</text>
+  <text x="906" y="426" font-size="11" font-weight="700" fill="#15803d">pool raised, unchanged</text>
+
+  <line x1="870" y1="451" x2="898" y2="451" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="906" y="448" font-size="11" font-weight="700" fill="#b91c1c">cancel, await it, 499</text>
+  <text x="906" y="462" font-size="11" fill="#7f1d1d">awaited: the abort is</text>
+  <text x="906" y="475" font-size="11" fill="#7f1d1d">inside except Cancelled</text>
+
+  <!-- ===================== RIGHT BOTTOM: the bill ===================== -->
+  <text x="620" y="514" font-size="14" font-weight="700" fill="#334155">the bill, for a caller who is already gone</text>
+  <line x1="620" y1="524" x2="1150" y2="524" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="546" font-size="12.5" fill="#475569">tiny model, asks 800, leaves at 0.2s: before</text>
+  <text x="1140" y="546" font-size="15" font-weight="700" fill="#b91c1c" text-anchor="end">800 tokens</text>
+  <text x="620" y="570" font-size="12.5" font-weight="700" fill="#1e1b4b">tiny model, asks 800, leaves at 0.2s: after</text>
+  <text x="1140" y="570" font-size="15" font-weight="700" fill="#15803d" text-anchor="end">146 tokens</text>
+  <text x="620" y="594" font-size="12.5" fill="#475569">real 1B, asks 128, leaves at 1.0s: after</text>
+  <text x="1140" y="594" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="end">1 token, idle at 1.6s</text>
+
+  <line x1="620" y1="606" x2="1150" y2="606" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="628" font-size="12.5" fill="#64748b">Those 128 tokens cost 37.9s of cpu when the client stays. Before today a</text>
+  <text x="620" y="646" font-size="12.5" font-weight="700" fill="#1e1b4b">client who left after one second still paid for all of them, and so did the queue.</text>
+</svg>

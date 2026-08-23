@@ -23,17 +23,24 @@ socket is exactly what the offline engine emits for the same prompt.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
 import torch
 from fastapi.testclient import TestClient
 
+from nanoserve.cache import KVCacheExhausted
 from nanoserve.config import ModelConfig
 from nanoserve.engine import Engine
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes
 from nanoserve.model import LlamaModel
-from nanoserve.server import create_app
+from nanoserve.server import (
+    ClientGone,
+    await_client_disconnect,
+    create_app,
+    run_until_client_leaves,
+)
 from nanoserve.serving import AsyncEngine
 
 # --- the same tiny model, plus a tokenizer small enough to fit its vocab --------
@@ -499,3 +506,240 @@ def test_top_k_one_is_greedy_by_another_road():
             )
 
     assert run(scenario()).json()["choices"][0]["text"] == expected
+
+
+# --- the disconnect a unary caller makes, which Day 41 found the server missing --
+
+
+class _Receiver:
+    """An ASGI `receive` a test can drive, because uvicorn's cannot be reached here.
+
+    A real disconnect is a FIN that uvicorn turns into an `http.disconnect` message
+    delivered on `receive`. `ASGITransport` never produces one, which is exactly how
+    Day 37's cancel path passed its tests for four days while doing nothing on a
+    real socket. So the message is injected instead: this blocks the way uvicorn's
+    does, on a body that is already complete, until the test says the caller left.
+    """
+
+    def __init__(self, messages=()):
+        self._queue = list(messages)
+        self._event = asyncio.Event()
+
+    def push(self, message: dict) -> None:
+        self._queue.append(message)
+        self._event.set()
+
+    def disconnect(self) -> None:
+        self.push({"type": "http.disconnect"})
+
+    async def __call__(self) -> dict:
+        while not self._queue:
+            self._event.clear()
+            await self._event.wait()
+        return self._queue.pop(0)
+
+
+def test_await_client_disconnect_returns_when_the_connection_closes():
+    async def scenario():
+        receiver = _Receiver()
+        watcher = asyncio.create_task(await_client_disconnect(receiver))
+        await asyncio.sleep(0)
+        assert not watcher.done()
+        receiver.disconnect()
+        await watcher
+
+    run(scenario())
+
+
+def test_await_client_disconnect_keeps_waiting_through_other_messages():
+    """A pipelined request on the same connection is not a disconnect.
+
+    uvicorn's `receive` returns `http.request` for anything that arrives on the
+    socket, so a watcher that resolves on the first message it sees would report
+    every keep-alive client as gone and abort their request mid-generation.
+    """
+
+    async def scenario():
+        receiver = _Receiver([{"type": "http.request", "body": b"", "more_body": False}])
+        watcher = asyncio.create_task(await_client_disconnect(receiver))
+        await asyncio.sleep(0)
+        assert not watcher.done()
+        receiver.disconnect()
+        await watcher
+
+    run(scenario())
+
+
+def test_run_until_client_leaves_returns_the_answer_when_nobody_leaves():
+    async def scenario():
+        async def work():
+            return "the answer"
+
+        return await run_until_client_leaves(work(), _Receiver())
+
+    assert run(scenario()) == "the answer"
+
+
+def test_run_until_client_leaves_lets_the_works_own_failure_through():
+    """A 400 must stay a 400. The race must not turn an admission error into a 499."""
+
+    async def scenario():
+        async def work():
+            raise KVCacheExhausted("too big for the pool")
+
+        with pytest.raises(KVCacheExhausted):
+            await run_until_client_leaves(work(), _Receiver())
+
+    run(scenario())
+
+
+def test_run_until_client_leaves_cancels_the_work_when_the_client_goes():
+    """The point of the whole thing: the generation is cancelled, not merely ignored.
+
+    Ignoring it is what the server did before Day 41. The coroutine kept running, the
+    request kept a slot and its blocks, and the engine spent a row of every forward
+    on a caller who had closed the socket, right up to `max_tokens`.
+    """
+
+    async def scenario():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def work():
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        receiver = _Receiver()
+        task = asyncio.create_task(run_until_client_leaves(work(), receiver))
+        await started.wait()
+        receiver.disconnect()
+        with pytest.raises(ClientGone):
+            await task
+        assert cancelled.is_set()
+
+    run(scenario())
+
+
+def test_run_until_client_leaves_waits_for_the_cancellation_to_land():
+    """The abort has to have happened before this returns, not eventually.
+
+    `AsyncEngine.generate` frees the request inside its own `except CancelledError`,
+    which only runs once the cancellation is *delivered*. Cancelling the task and
+    returning would leave the handler finished and the request still running, which
+    is the same leak with a shorter window.
+    """
+
+    async def scenario():
+        freed = []
+
+        async def work():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0)
+                freed.append("aborted")
+                raise
+
+        receiver = _Receiver()
+        task = asyncio.create_task(run_until_client_leaves(work(), receiver))
+        await asyncio.sleep(0.01)
+        receiver.disconnect()
+        with pytest.raises(ClientGone):
+            await task
+        assert freed == ["aborted"]
+
+    run(scenario())
+
+
+def _scope(body: bytes) -> dict:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/completions",
+        "raw_path": b"/v1/completions",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"nanoserve"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+        "client": ("127.0.0.1", 51234),
+        "server": ("127.0.0.1", 8000),
+    }
+
+
+async def _call_asgi(app, body: dict, receiver: _Receiver) -> list[dict]:
+    """Call the app as the ASGI callable it is, so the test owns `receive`.
+
+    `ASGITransport` would be easier and is the thing that cannot express this test:
+    it drives the app with a receive that only ever yields the body. Speaking ASGI
+    directly is the smallest way to hand the handler a caller that goes away.
+    """
+    raw = json.dumps(body).encode()
+    receiver.push({"type": "http.request", "body": raw, "more_body": False})
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    await app(_scope(raw), receiver, send)
+    return sent
+
+
+def test_a_unary_caller_that_disconnects_gets_its_request_aborted():
+    """End of the story, at the ASGI seam: the request is gone before its budget is.
+
+    `max_tokens=64` on an engine nobody else is using would run 64 iterations. The
+    assertion is that it did not, which is the whole difference between a server
+    that notices a dropped connection and one that finds out when the budget runs
+    out.
+    """
+
+    async def scenario():
+        engine = _engine()
+        serving, app = await _serving(engine)
+        receiver = _Receiver()
+        async with serving:
+            task = asyncio.create_task(
+                _call_asgi(app, _body(max_tokens=64), receiver)
+            )
+            while engine.collected_tokens < 2:
+                await asyncio.sleep(0.001)
+            receiver.disconnect()
+            sent = await task
+            while serving.num_active or engine.scheduler.num_running:
+                await asyncio.sleep(0.001)
+        return engine, sent
+
+    engine, sent = run(scenario())
+    assert engine.collected_tokens < 64
+    assert engine.scheduler.num_running == 0
+    assert engine.allocator.num_free == engine.allocator.num_blocks
+    assert sent[0]["status"] == 499
+
+
+def test_a_unary_caller_that_stays_is_untouched_by_the_watcher():
+    """The other half: a connection that never closes must still get its 200.
+
+    A watcher that resolved early, or a race decided the wrong way under load, would
+    turn every slow completion into a 499, and this is the assertion that would see
+    it.
+    """
+    expected = TOKENIZER.decode(_offline([1, 2, 3], 6))
+
+    async def scenario():
+        serving, app = await _serving()
+        async with serving:
+            return await _call_asgi(app, _body(max_tokens=6), _Receiver())
+
+    sent = run(scenario())
+    assert sent[0]["status"] == 200
+    payload = json.loads(b"".join(m.get("body", b"") for m in sent[1:]))
+    assert payload["choices"][0]["text"] == expected

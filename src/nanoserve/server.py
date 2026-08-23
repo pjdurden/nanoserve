@@ -51,6 +51,21 @@ is left after that (a step that raises, a loop that dies) becomes an error frame
 followed by `[DONE]`, because the alternative is a body that simply stops and is
 indistinguishable from a complete one.
 
+**A unary caller who leaves is only heard from if somebody listens.** Day 41.
+Day 37 wrote the disconnect path as `AsyncEngine.generate` aborting inside its own
+`except CancelledError`, and tested it through `httpx.ASGITransport`, where the
+client cancelling a request cancels the handler's coroutine directly. Over a real
+socket nothing does that. uvicorn turns a closed connection into an
+`http.disconnect` *message*, delivered on `receive`, and a handler parked on
+`await serving.generate(...)` never calls `receive`, so it never finds out: the
+request keeps its slot, keeps its blocks, and spends a row of every forward until
+`max_tokens` runs out, for a caller who left. The acceptance run measured it at
+800 tokens generated for a client that hung up after two. So the handler races the
+generation against a watcher on `receive`, and a caller who leaves cancels their
+own request. Streaming was never affected, because Starlette watches for the
+disconnect itself while a response body is being produced, and that difference is
+the whole reason this bug could live under a green test suite.
+
 `prompt` accepts a string or a list of token ids, both of which the OpenAI schema
 allows, and the id form is what lets a caller drive this server without agreeing
 with it about a tokenizer. Everything else in the response is the standard shape:
@@ -66,13 +81,16 @@ would be its own kind of lie.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Response
+from fastapi import Request as HTTPRequest  # not `scheduler.Request`, which is the engine's
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -89,6 +107,75 @@ class Tokenizer(Protocol):
     def encode(self, text: str) -> list[int]: ...
 
     def decode(self, token_ids: Sequence[int]) -> str: ...
+
+
+# nginx's code for a connection the caller closed before a response was sent. Not
+# in the IANA registry and universally understood, which is the useful kind of
+# non-standard: it puts "this caller left" in the access log without claiming a
+# success or blaming the server.
+CLIENT_CLOSED_REQUEST = 499
+
+
+class ClientGone(Exception):
+    """The caller's connection closed before their answer was ready. Day 41.
+
+    Not an error condition of the server and not of the request: it is the normal
+    end of a request nobody is waiting for any more. It exists as an exception
+    rather than a sentinel return so that the cancellation and the reporting are
+    the same control flow, and so a handler cannot accidentally treat "the client
+    left" as "here is the answer".
+    """
+
+
+async def await_client_disconnect(receive) -> None:
+    """Resolve when the ASGI connection reports the client has gone. Day 41.
+
+    The loop is the whole subtlety. uvicorn's `receive` returns `http.request` for
+    anything that arrives on the socket, including the tail of a body and a
+    pipelined follow-up on a keep-alive connection, and it blocks on an event that
+    is set either by new data or by `connection_lost`. A watcher that resolved on
+    the first message it saw would call every ordinary client gone and abort their
+    request mid-generation, so only `http.disconnect` counts.
+    """
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return
+
+
+async def run_until_client_leaves(work: Awaitable, receive) -> Any:
+    """Await `work`, cancelling it if the caller disconnects first. Day 41.
+
+    The generation and the disconnect watcher are two tasks and the first one to
+    finish decides. If it is the work, its result (or its exception, which is how a
+    `KVCacheExhausted` stays a 400) comes straight back. If it is the watcher, the
+    work is cancelled and `ClientGone` is raised.
+
+    Two details are load-bearing.
+
+    **The cancelled task is awaited, not merely cancelled.** `AsyncEngine.generate`
+    frees its request inside `except CancelledError`, and that only runs when the
+    cancellation is actually delivered. Returning without awaiting would leave the
+    handler finished and the request still running: the same leak with a shorter
+    window and a much harder test.
+
+    **The `finally` covers the handler being cancelled too.** Starlette cancels
+    handlers on shutdown, and a watcher left polling `receive` on a connection that
+    is going away is a task that outlives its request.
+    """
+    generation = asyncio.ensure_future(work)
+    watcher = asyncio.ensure_future(await_client_disconnect(receive))
+    try:
+        await asyncio.wait({generation, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if generation.done():
+            return generation.result()
+        raise ClientGone("the client disconnected before its answer was ready")
+    finally:
+        for task in (generation, watcher):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
 
 
 # --- the wire schema ------------------------------------------------------------
@@ -264,15 +351,25 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/completions", response_model=CompletionResponse)
-    async def completions(body: CompletionRequest) -> Any:
+    async def completions(body: CompletionRequest, http_request: HTTPRequest) -> Any:
         """One request, one answer, delivered when *this* request finishes.
 
         The `await` here is the whole serving layer in one line: the handler is
         suspended, the loop keeps stepping a batch this request is one row of, and
-        the coroutine is resumed with its own tokens. If the client hangs up
-        first, this coroutine is cancelled and `AsyncEngine.generate` aborts the
-        request on the way out, which is what stops a dead socket from holding a
-        slot until its budget runs out.
+        the coroutine is resumed with its own tokens.
+
+        `http_request` is here for one reason and it is Day 41's: it carries the
+        `receive` this handler has to listen on to find out that its caller left.
+        Nothing cancels an ASGI handler when a connection drops; the disconnect is
+        a message, and a coroutine parked on a future is not reading messages. So
+        the generation is raced against a watcher, and a client that hangs up
+        cancels its own request, which is what stops a dead socket from holding a
+        slot and its blocks until `max_tokens` runs out.
+
+        The status code for that is 499, nginx's "client closed request", written
+        to a socket nobody is reading. It exists for the access log, which is the
+        only place it can ever be seen, and it is a real number rather than a 200
+        because a log line saying this request succeeded would be false.
 
         `stream=true` takes the other road and returns a `StreamingResponse`,
         which FastAPI hands back untouched, so `response_model` describes the
@@ -284,12 +381,17 @@ def create_app(
         if body.stream:
             return await _stream_completion(body, prompt_ids, sampling)
         try:
-            request = await serving.generate(
-                prompt_ids,
-                max_new_tokens=body.max_tokens,
-                eos_token_id=eos_token_id,
-                sampling=sampling,
+            request = await run_until_client_leaves(
+                serving.generate(
+                    prompt_ids,
+                    max_new_tokens=body.max_tokens,
+                    eos_token_id=eos_token_id,
+                    sampling=sampling,
+                ),
+                http_request.receive,
             )
+        except ClientGone:
+            return Response(status_code=CLIENT_CLOSED_REQUEST)
         except KVCacheExhausted as exc:
             # The caller asked for more than the pool can ever hold. Their error,
             # decided inside a loop that a dozen other requests are sharing.
