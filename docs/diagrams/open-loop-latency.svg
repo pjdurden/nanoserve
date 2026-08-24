@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The benchmark, and the queue a closed loop cannot see</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">A closed loop keeps N clients busy, so the load it offers falls exactly when the server slows down: the queue never</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">forms and the TTFT it reports is a service time. An open loop sends on a schedule that does not care. Same eight</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">requests, same server, same two slots: identical throughput, and 9.8x the tail latency.</text>
+
+  <!-- ===================== LEFT TOP: the two generators ===================== -->
+  <text x="50" y="156" font-size="14" font-weight="700" fill="#334155">two ways to offer load, and what each does when the server slows</text>
+
+  <rect x="50" y="168" width="244" height="150" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="66" y="190" font-size="12" font-weight="700" fill="#7f1d1d">closed loop: N busy clients</text>
+  <rect x="66" y="202" width="90" height="26" rx="5" fill="#ffffff" stroke="#b91c1c" stroke-width="1.3"/>
+  <text x="111" y="219" font-size="10.5" fill="#7f1d1d" text-anchor="middle">client</text>
+  <line x1="158" y1="215" x2="188" y2="215" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arrowred)"/>
+  <rect x="190" y="202" width="88" height="26" rx="5" fill="#ffffff" stroke="#b91c1c" stroke-width="1.3"/>
+  <text x="234" y="219" font-size="10.5" fill="#7f1d1d" text-anchor="middle">server</text>
+  <path d="M234,230 L234,244 L111,244 L111,232" fill="none" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arrowred)"/>
+  <text x="66" y="264" font-size="10.5" fill="#7f1d1d">the next request waits for the last</text>
+  <text x="66" y="280" font-size="10.5" fill="#7f1d1d">answer, so slower service means</text>
+  <text x="66" y="296" font-size="10.5" font-weight="700" fill="#b91c1c">fewer arrivals: no queue can form</text>
+  <text x="66" y="312" font-size="10.5" fill="#7f1d1d">send lag is 0 by construction</text>
+
+  <rect x="306" y="168" width="244" height="150" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="322" y="190" font-size="12" font-weight="700" fill="#166534">open loop: an arrival schedule</text>
+  <rect x="322" y="202" width="90" height="26" rx="5" fill="#ffffff" stroke="#15803d" stroke-width="1.3"/>
+  <text x="367" y="219" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#166534" text-anchor="middle">t=0,1/r,2/r</text>
+  <line x1="414" y1="215" x2="444" y2="215" stroke="#15803d" stroke-width="1.5" marker-end="url(#arrowgreen)"/>
+  <rect x="446" y="202" width="88" height="26" rx="5" fill="#ffffff" stroke="#15803d" stroke-width="1.3"/>
+  <text x="490" y="219" font-size="10.5" fill="#166534" text-anchor="middle">server</text>
+  <rect x="446" y="234" width="88" height="18" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.2"/>
+  <text x="490" y="247" font-size="9.5" fill="#9a3412" text-anchor="middle">queue grows</text>
+  <text x="322" y="272" font-size="10.5" fill="#166534">arrivals do not care what the</text>
+  <text x="322" y="288" font-size="10.5" font-weight="700" fill="#15803d">server is doing, so the queue is real</text>
+  <text x="322" y="304" font-size="10.5" fill="#166534">and TTFT contains it</text>
+
+  <!-- ===================== LEFT BOTTOM: the comparison ===================== -->
+  <text x="50" y="372" font-size="14" font-weight="700" fill="#334155">8 requests, 2 slots, real Llama-3.2-1B on cpu fp32, driven both ways</text>
+  <line x1="50" y1="382" x2="550" y2="382" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="404" font-size="12" font-weight="700" fill="#64748b">driver</text>
+  <text x="330" y="404" font-size="12" font-weight="700" fill="#64748b" text-anchor="end">throughput</text>
+  <text x="430" y="404" font-size="12" font-weight="700" fill="#64748b" text-anchor="end">TTFT p50</text>
+  <text x="540" y="404" font-size="12" font-weight="700" fill="#64748b" text-anchor="end">TTFT p99</text>
+
+  <text x="50" y="430" font-size="12.5" fill="#b91c1c">closed loop, 2 clients</text>
+  <text x="330" y="430" font-size="12.5" fill="#475569" text-anchor="end">2.6 tok/s</text>
+  <text x="430" y="430" font-size="12.5" fill="#475569" text-anchor="end">2.34 s</text>
+  <text x="540" y="430" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="end">3.79 s</text>
+
+  <text x="50" y="456" font-size="12.5" font-weight="700" fill="#15803d">open loop, all 8 at once</text>
+  <text x="330" y="456" font-size="12.5" fill="#475569" text-anchor="end">2.8 tok/s</text>
+  <text x="430" y="456" font-size="12.5" fill="#475569" text-anchor="end">14.20 s</text>
+  <text x="540" y="456" font-size="13.5" font-weight="700" fill="#15803d" text-anchor="end">37.02 s</text>
+
+  <line x1="50" y1="470" x2="550" y2="470" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="492" font-size="12.5" fill="#64748b">The throughput is the same because both drivers kept the two slots</text>
+  <text x="50" y="510" font-size="12.5" fill="#64748b">busy, and two slots is all there is. The closed loop would have shipped</text>
+  <text x="50" y="528" font-size="12.5" font-weight="700" fill="#1e1b4b">"answers in under 4 seconds" for a server whose callers wait 37.</text>
+
+  <rect x="50" y="546" width="500" height="100" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="68" y="570" font-size="12" font-weight="700" fill="#3730a3">what is actually in that wait</text>
+  <text x="68" y="592" font-size="11.5" fill="#3730a3">one client, no queue: prefill plus the first decode</text>
+  <text x="532" y="592" font-size="12" font-weight="700" fill="#3730a3" text-anchor="end">1.64 s</text>
+  <text x="68" y="612" font-size="11.5" fill="#3730a3">the same request at 0.8 rps offered</text>
+  <text x="532" y="612" font-size="12" font-weight="700" fill="#3730a3" text-anchor="end">22.26 s</text>
+  <text x="68" y="636" font-size="12" font-weight="700" fill="#1e1b4b">93% of the wait at overload is the wait for a slot, not prefill</text>
+
+  <!-- ===================== RIGHT TOP: the rate sweep ===================== -->
+  <text x="620" y="156" font-size="14" font-weight="700" fill="#334155">the sweep: three columns saturate, one keeps climbing</text>
+
+  <rect x="620" y="168" width="530" height="186" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="638" y="192" font-size="11.5" font-weight="700" fill="#64748b">offered</text>
+  <text x="770" y="192" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">achieved</text>
+  <text x="880" y="192" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">tok/s</text>
+  <text x="1010" y="192" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">TTFT p50</text>
+  <text x="1132" y="192" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">ITL p50</text>
+  <line x1="638" y1="200" x2="1132" y2="200" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="638" y="224" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569">0.1 rps</text>
+  <text x="770" y="224" font-size="12" fill="#15803d" text-anchor="end">0.11</text>
+  <text x="880" y="224" font-size="12" fill="#475569" text-anchor="end">1.8</text>
+  <text x="1010" y="224" font-size="12" fill="#15803d" text-anchor="end">2.42 s</text>
+  <text x="1132" y="224" font-size="12" fill="#475569" text-anchor="end">610 ms</text>
+
+  <text x="638" y="252" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569">0.2 rps</text>
+  <text x="770" y="252" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">0.16</text>
+  <text x="880" y="252" font-size="12" fill="#475569" text-anchor="end">2.5</text>
+  <text x="1010" y="252" font-size="12" fill="#c2410c" text-anchor="end">5.23 s</text>
+  <text x="1132" y="252" font-size="12" fill="#475569" text-anchor="end">610 ms</text>
+
+  <text x="638" y="280" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569">0.4 rps</text>
+  <text x="770" y="280" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">0.16</text>
+  <text x="880" y="280" font-size="12" fill="#475569" text-anchor="end">2.5</text>
+  <text x="1010" y="280" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">17.49 s</text>
+  <text x="1132" y="280" font-size="12" fill="#475569" text-anchor="end">611 ms</text>
+
+  <text x="638" y="308" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#475569">0.8 rps</text>
+  <text x="770" y="308" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">0.16</text>
+  <text x="880" y="308" font-size="12" fill="#475569" text-anchor="end">2.5</text>
+  <text x="1010" y="308" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">22.26 s</text>
+  <text x="1132" y="308" font-size="12" fill="#475569" text-anchor="end">609 ms</text>
+
+  <line x1="638" y1="320" x2="1132" y2="320" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="638" y="342" font-size="11.5" fill="#64748b">the knee is between 0.1 and 0.2: past it, only TTFT still moves</text>
+
+  <text x="620" y="382" font-size="12.5" fill="#475569">ITL is flat at 610ms even where the server is drowning, because the batch is</text>
+  <text x="620" y="400" font-size="12.5" fill="#475569">capped at two slots: a request that is already running has the neighbours it</text>
+  <text x="620" y="418" font-size="12.5" font-weight="700" fill="#1e1b4b">would have had at any rate. All the pain is before the first token.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the definitions ===================== -->
+  <text x="620" y="456" font-size="14" font-weight="700" fill="#334155">the two denominators, and the two checks</text>
+  <line x1="620" y1="466" x2="1150" y2="466" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <rect x="620" y="478" width="256" height="82" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="636" y="500" font-size="11.5" font-weight="700" fill="#334155">throughput divides by the run</text>
+  <text x="636" y="518" font-size="11" fill="#475569">40 tokens from 4 concurrent requests</text>
+  <text x="636" y="534" font-size="11" fill="#475569">in 1s is 40 tok/s. Dividing by their</text>
+  <text x="636" y="550" font-size="11" font-weight="700" fill="#b91c1c">summed 3.6s reports 11: one request</text>
+
+  <rect x="894" y="478" width="256" height="82" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="910" y="500" font-size="11.5" font-weight="700" fill="#334155">a frame is not a token</text>
+  <text x="910" y="518" font-size="11" fill="#475569">the detokenizer holds back half a</text>
+  <text x="910" y="534" font-size="11" fill="#475569">character, so frames &lt; tokens and the</text>
+  <text x="910" y="550" font-size="11" font-weight="700" fill="#b91c1c">screen cadence is not the decode one</text>
+
+  <rect x="620" y="568" width="530" height="84" rx="8" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+  <text x="636" y="590" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#9a3412">check_offered_load</text>
+  <text x="636" y="606" font-size="11" fill="#9a3412">mean requests in flight, by Little's law. A run that held 1.0 measured the model.</text>
+  <text x="636" y="626" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#9a3412">check_schedule_kept</text>
+  <text x="636" y="642" font-size="11" fill="#9a3412">worst send lag was 56ms over a 90s schedule. A late generator is a closed loop again.</text>
+</svg>
