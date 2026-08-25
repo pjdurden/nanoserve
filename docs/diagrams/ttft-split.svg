@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowamber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The time to first token, taken apart from the inside</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Day 42 split TTFT by subtracting an unloaded run from a loaded one. That guesses the prefill and cannot see anything</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">that happens before the scheduler has heard of the request. Every request now carries a timeline stamped on the state</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">machine it already had, and TTFT comes out as five named parts that sum to it exactly.</text>
+
+  <!-- ===================== LEFT TOP: the timeline ===================== -->
+  <text x="50" y="158" font-size="14" font-weight="700" fill="#334155">one request's life, and the four stamps that are already state changes</text>
+
+  <rect x="50" y="172" width="500" height="132" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <rect x="66" y="196" width="52" height="30" rx="5" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="92" y="216" font-size="10" fill="#3730a3" text-anchor="middle">inbox</text>
+  <rect x="122" y="196" width="150" height="30" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.3"/>
+  <text x="197" y="216" font-size="10.5" font-weight="700" fill="#9a3412" text-anchor="middle">queue_wait</text>
+  <rect x="276" y="196" width="58" height="30" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.3"/>
+  <text x="305" y="212" font-size="9" fill="#7f1d1d" text-anchor="middle">requeue</text>
+  <text x="305" y="222" font-size="9" fill="#7f1d1d" text-anchor="middle">+ lost</text>
+  <rect x="338" y="196" width="100" height="30" rx="5" fill="#f0fdf4" stroke="#15803d" stroke-width="1.3"/>
+  <text x="388" y="216" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">prefill</text>
+  <line x1="442" y1="211" x2="470" y2="211" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="510" y="208" font-size="10.5" font-weight="700" fill="#1e1b4b" text-anchor="middle">first</text>
+  <text x="510" y="221" font-size="10.5" font-weight="700" fill="#1e1b4b" text-anchor="middle">token</text>
+
+  <line x1="66" y1="188" x2="66" y2="234" stroke="#94a3b8" stroke-width="1"/>
+  <line x1="122" y1="188" x2="122" y2="234" stroke="#94a3b8" stroke-width="1"/>
+  <line x1="276" y1="188" x2="276" y2="234" stroke="#94a3b8" stroke-width="1"/>
+  <text x="66" y="248" font-size="9" fill="#64748b">created</text>
+  <text x="122" y="248" font-size="9" fill="#64748b">queued</text>
+  <text x="266" y="248" font-size="9" fill="#64748b">admitted</text>
+
+  <path d="M334,236 L334,258 L200,258 L200,240" fill="none" stroke="#b45309" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrowamber)"/>
+  <text x="352" y="262" font-size="9.5" fill="#b45309">preempted before it spoke: back to the queue,</text>
+  <text x="352" y="274" font-size="9.5" fill="#b45309">and that prefill no longer exists</text>
+
+  <text x="66" y="292" font-size="11" font-weight="700" fill="#1e1b4b">inbox + queue_wait + requeue + lost_prefill + prefill = ttft, exactly, in every path</text>
+
+  <!-- ===================== LEFT BOTTOM: the table ===================== -->
+  <text x="50" y="342" font-size="14" font-weight="700" fill="#334155">real Llama-3.2-1B, cpu fp32, 11-token prompts, measured server-side</text>
+  <line x1="50" y1="352" x2="550" y2="352" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="374" font-size="11.5" font-weight="700" fill="#64748b">run</text>
+  <text x="330" y="374" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">mean TTFT</text>
+  <text x="440" y="374" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">queue</text>
+  <text x="550" y="374" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">prefill</text>
+
+  <text x="50" y="398" font-size="12" fill="#475569">1 request alone, 2 slots</text>
+  <text x="330" y="398" font-size="12" fill="#475569" text-anchor="end">2.33 s</text>
+  <text x="440" y="398" font-size="12" fill="#475569" text-anchor="end">0.0%</text>
+  <text x="550" y="398" font-size="12" font-weight="700" fill="#15803d" text-anchor="end">100.0%</text>
+
+  <text x="50" y="422" font-size="12" fill="#475569">burst of 8, 4 slots</text>
+  <text x="330" y="422" font-size="12" fill="#475569" text-anchor="end">12.20 s</text>
+  <text x="440" y="422" font-size="12" fill="#475569" text-anchor="end">74.9%</text>
+  <text x="550" y="422" font-size="12" fill="#475569" text-anchor="end">25.1%</text>
+
+  <text x="50" y="446" font-size="12" fill="#475569">burst of 8, 2 slots</text>
+  <text x="330" y="446" font-size="12" fill="#475569" text-anchor="end">21.62 s</text>
+  <text x="440" y="446" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">85.8%</text>
+  <text x="550" y="446" font-size="12" fill="#475569" text-anchor="end">14.1%</text>
+
+  <text x="50" y="470" font-size="12" fill="#475569">6 arrivals 1s apart, 2 slots</text>
+  <text x="330" y="470" font-size="12" fill="#475569" text-anchor="end">9.78 s</text>
+  <text x="440" y="470" font-size="12" fill="#475569" text-anchor="end">75.6%</text>
+  <text x="550" y="470" font-size="12" fill="#475569" text-anchor="end">19.8%</text>
+  <text x="50" y="490" font-size="10.5" fill="#3730a3">the missing 4.6% of that last row is the inbox: mean 452ms, worst 1241ms</text>
+
+  <rect x="50" y="506" width="500" height="66" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="66" y="528" font-size="11.5" font-weight="700" fill="#3730a3">the inbox is a whole forward pass wide, and invisible from outside</text>
+  <text x="66" y="546" font-size="10.5" fill="#3730a3">Arrivals are drained at the top of an iteration, so a request that lands mid-step waits</text>
+  <text x="66" y="562" font-size="10.5" fill="#3730a3">for the step. From a client it is indistinguishable from model time. It is not model time.</text>
+
+  <rect x="50" y="588" width="500" height="52" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="66" y="610" font-size="11.5" font-weight="700" fill="#166534">there is no "first decode" in TTFT</text>
+  <text x="66" y="628" font-size="10.5" fill="#166534">The prefill samples the first token from the last prompt position. Alone: 100.0% prefill.</text>
+
+  <!-- ===================== RIGHT TOP: stacked bars ===================== -->
+  <text x="620" y="158" font-size="14" font-weight="700" fill="#334155">where the mean TTFT went, 8 requests arriving at once</text>
+  <line x1="620" y1="168" x2="1150" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="196" font-size="11.5" fill="#475569">2 slots</text>
+  <rect x="620" y="204" width="4" height="34" fill="#4338ca"/>
+  <rect x="624" y="204" width="425" height="34" fill="#fdba74" stroke="#c2410c" stroke-width="1"/>
+  <rect x="1049" y="204" width="70" height="34" fill="#86efac" stroke="#15803d" stroke-width="1"/>
+  <text x="836" y="226" font-size="12" font-weight="700" fill="#7c2d12" text-anchor="middle">queue 18.55 s</text>
+  <text x="1084" y="226" font-size="10" fill="#14532d" text-anchor="middle">3.05 s</text>
+  <text x="1131" y="226" font-size="11" fill="#64748b">21.6 s</text>
+
+  <text x="620" y="270" font-size="11.5" fill="#475569">4 slots</text>
+  <rect x="620" y="278" width="209" height="34" fill="#fdba74" stroke="#c2410c" stroke-width="1"/>
+  <rect x="829" y="278" width="70" height="34" fill="#86efac" stroke="#15803d" stroke-width="1"/>
+  <text x="724" y="300" font-size="12" font-weight="700" fill="#7c2d12" text-anchor="middle">queue 9.14 s</text>
+  <text x="864" y="300" font-size="10" fill="#14532d" text-anchor="middle">3.06 s</text>
+  <text x="911" y="300" font-size="11" fill="#64748b">12.2 s</text>
+
+  <text x="620" y="336" font-size="10.5" fill="#64748b">Doubling the slots halved the queue and left the prefill alone: 3.05 s against 3.06 s. The</text>
+  <text x="620" y="352" font-size="10.5" fill="#64748b">work did not get faster, the wait for a row got shorter. Mean decode went 8.9 s to 14.4 s,</text>
+  <text x="620" y="368" font-size="10.5" fill="#64748b">which is the batching tax this cpu box pays and never earns back.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the two rules ===================== -->
+  <rect x="620" y="392" width="530" height="88" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="636" y="414" font-size="11.5" font-weight="700" fill="#9a3412">means decompose, percentiles do not</text>
+  <text x="636" y="432" font-size="10.5" fill="#9a3412">The p99 of a sum is not the sum of the p99s: the request holding the worst queue wait is</text>
+  <text x="636" y="448" font-size="10.5" fill="#9a3412">not the one holding the worst prefill. So the report prints percentiles for the whole TTFT,</text>
+  <text x="636" y="464" font-size="10.5" fill="#9a3412">which somebody experienced, and means for the five parts, which is the only split that adds.</text>
+
+  <rect x="620" y="492" width="530" height="80" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+  <text x="636" y="514" font-size="11.5" font-weight="700" fill="#334155">two of the five parts measured exactly zero, and that is a proof</text>
+  <text x="636" y="532" font-size="10.5" fill="#475569">Admission and prefill happen in the same iteration, so nothing can be evicted between them:</text>
+  <text x="636" y="548" font-size="10.5" fill="#475569">requeue and lost_prefill are structurally 0 today. Chunked prefill splits a prefill across</text>
+  <text x="636" y="564" font-size="10.5" fill="#475569">iterations and makes them real, which is why they were built before they could be observed.</text>
+
+  <rect x="620" y="584" width="530" height="56" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="636" y="606" font-size="11.5" font-weight="700" fill="#3730a3">the share is what decides the work</text>
+  <text x="636" y="624" font-size="10.5" fill="#3730a3">85.8% queue buys more slots. 100.0% prefill buys a faster forward. Unrelated engineering.</text>
+
+  <text x="50" y="662" font-size="10.5" fill="#94a3b8">nanoserve day 43 · latency.py, RequestTimeline stamped on the scheduler's own state machine · 794 tests green</text>
+</svg>

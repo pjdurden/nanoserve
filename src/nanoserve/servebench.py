@@ -78,7 +78,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import math
 import random
 import statistics
 import time
@@ -88,6 +87,13 @@ from dataclasses import dataclass
 import httpx
 
 from .acceptance import ClientPlan
+
+# Day 43 moved `percentile` down into `latency.py`, which needs the same
+# nearest-rank rule for the server-side split. It had to move rather than be
+# shared from here, because the split is stamped by the scheduler and the
+# scheduler cannot import a benchmark module that imports an HTTP client. It is
+# re-exported by this import: `servebench.percentile` still resolves.
+from .latency import percentile
 
 Clock = Callable[[], float]
 
@@ -107,25 +113,8 @@ class MeasurementUnsound(AssertionError):
 # --- the percentile definition ------------------------------------------------------
 
 
-def percentile(values: Sequence[float], q: float) -> float:
-    """The nearest-rank percentile: `ceil(q/100 * n)`-th smallest, 1-indexed.
-
-    Nearest rank rather than linear interpolation, for one reason: every number
-    this returns is a latency some request really had. An interpolated p99 of
-    1.47s can be a value no client experienced, which is fine for a distribution
-    and misleading in a report whose job is to describe what happened to callers.
-
-    p0 is the minimum and p100 the maximum. An empty sequence is 0.0 rather than an
-    exception, because a run in which every request failed should print a report
-    rather than raise inside the printer, and `n_ok` is right there saying why.
-    """
-    if not 0.0 <= q <= 100.0:
-        raise ValueError(f"a percentile is between 0 and 100; got {q}")
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    rank = math.ceil(q / 100.0 * len(ordered))
-    return ordered[max(rank - 1, 0)]
+# `percentile` is imported at the top of this file rather than defined here: see
+# the note there. Every report below still reads it as `percentile`.
 
 
 # --- one request, as the client saw it ----------------------------------------------

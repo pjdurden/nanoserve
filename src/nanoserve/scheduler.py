@@ -88,6 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .cache import BlockAllocator, KVCacheExhausted
+from .latency import RequestTimeline
 from .sampling import SamplingParams
 
 
@@ -174,6 +175,12 @@ class Request:
     # admitted first and, inverted, who is preempted first.
     arrival: int | None = None
     num_preemptions: int = 0
+    # Day 43. `arrival` is an ordinal and answers "who is older"; this answers "how
+    # long has this taken, and which part of the engine took it". It is stamped by
+    # the transitions below rather than by the scheduler, because every moment
+    # worth timing is already an edge of the state machine, and a stamp that lives
+    # anywhere else is a stamp somebody can forget to take on a new code path.
+    timeline: RequestTimeline = field(default_factory=RequestTimeline)
 
     def __post_init__(self) -> None:
         if not self.prompt_token_ids:
@@ -223,12 +230,26 @@ class Request:
     # --- transitions ----------------------------------------------------------
 
     def transition_to(self, state: RequestState) -> None:
-        """Move to `state`, or raise if that edge does not exist."""
+        """Move to `state`, or raise if that edge does not exist.
+
+        Day 43 hangs the clock off this method. Three of the five parts of TTFT are
+        the durations of the three states, so the edges are exactly the moments
+        worth stamping, and stamping them here means a future scheduling policy
+        cannot introduce a path that quietly stops being measured. The stamp is
+        taken *before* the assignment, so `self.state` is still the state being
+        left and the timeline can tell an admission from a resumption.
+        """
         if state not in _LEGAL_TRANSITIONS[self.state]:
             raise IllegalTransition(
                 f"request {self.request_id!r} cannot go {self.state.value} -> "
                 f"{state.value}"
             )
+        if state is RequestState.RUNNING:
+            self.timeline.on_admitted()
+        elif state is RequestState.WAITING:
+            self.timeline.on_preempted()
+        else:
+            self.timeline.on_finished()
         self.state = state
 
     def finish(self, reason: str) -> None:
@@ -273,6 +294,13 @@ class Request:
                 f"{self.state.value}, not running"
             )
         self.output_token_ids.append(token_id)
+        if self.num_output_tokens == 1:
+            # The one part of the timeline that is not a state change: the caller's
+            # wait ends at this token, not at the end of the forward that produced
+            # it and not at the reap. Stamped before the stopping rules below, so a
+            # one-token request has a first-token moment that precedes its finish
+            # rather than coinciding with a `finish` that has already happened.
+            self.timeline.on_first_token()
         if self.eos_token_id is not None and token_id == self.eos_token_id:
             self.finish("stop")
         elif self.num_output_tokens >= self.max_new_tokens:
@@ -487,6 +515,10 @@ class Scheduler:
             )
         request.arrival = self._arrivals
         self._arrivals += 1
+        # The clock starts on the queue here, and the gap back to the request's own
+        # creation is the inbox: time the caller spent waiting for this loop to look
+        # at its arrival, which is real latency and belongs to no forward pass.
+        request.timeline.on_queued()
         self._by_id[request.request_id] = request
         self.waiting.append(request)
 

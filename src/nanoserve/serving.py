@@ -78,6 +78,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
+from .latency import LatencyReport, RequestTimeline, summarize
 from .sampling import SamplingParams
 from .scheduler import Request
 
@@ -221,6 +222,15 @@ class AsyncEngine:
 
     engine: object
     max_idle_schedules: int = 256
+    latency_window: int = 1024
+
+    #: Day 43. The timeline of every request this bridge has answered, newest last,
+    #: bounded because a server is a process that runs for months and an unbounded
+    #: list of one dataclass per request is a leak with a report attached. The
+    #: window is what `/health` describes, so it is deliberately recent rather than
+    #: cumulative: "what is this server doing now" is the question at 3am, and a
+    #: mean over every request since boot answers a different one.
+    latencies: deque = field(default_factory=deque, init=False, repr=False)
 
     _inbox: deque = field(default_factory=deque, init=False, repr=False)
     _live: dict = field(default_factory=dict, init=False, repr=False)
@@ -244,6 +254,8 @@ class AsyncEngine:
         """Start the loop task. Idempotent, because a lifespan can be re-entered."""
         if self._task is not None:
             return
+        if self.latencies.maxlen != self.latency_window:
+            self.latencies = deque(self.latencies, maxlen=self.latency_window)
         self._closing = False
         self._wakeup = asyncio.Event()
         self._task = asyncio.get_running_loop().create_task(self._run())
@@ -454,6 +466,7 @@ class AsyncEngine:
     def stats(self) -> dict:
         """What a health endpoint reports: the loop's work and the engine's."""
         scheduler = self.engine.scheduler
+        latency = self.latency_report()
         return {
             "iterations": self.engine.iterations,
             "steps": self.steps,
@@ -463,6 +476,15 @@ class AsyncEngine:
             "waiting": scheduler.num_waiting,
             "parked": self.parked,
             "loop_running": self.running,
+            # Day 43. Four numbers rather than the whole report, because this dict
+            # is what `/health` returns and a health endpoint that prints a latency
+            # budget is a dashboard. The share is the one that decides what to do:
+            # a slow server whose time is queue buys more slots, a slow server whose
+            # time is prefill buys a faster forward, and they are unrelated work.
+            "answered": latency.n_answered,
+            "ttft_p50_s": latency.ttft_p50_s,
+            "ttft_p99_s": latency.ttft_p99_s,
+            "queue_share": latency.queue_share,
         }
 
     def _new_id(self) -> str:
@@ -587,7 +609,27 @@ class AsyncEngine:
                 waiter.deliver()
             if waiter.request.is_finished:
                 waiter.settle()
+                self._record(waiter.request.timeline)
                 del self._live[request_id]
+
+    def _record(self, timeline: RequestTimeline) -> None:
+        """Keep one finished request's timeline for the report.
+
+        Called at the settle rather than at the reap, on the same step that
+        delivered the answer, for the same reason the answer itself is: the reap is
+        one iteration later and would put every recorded finish a forward pass in
+        the future of the finish the caller saw.
+        """
+        self.latencies.append(timeline)
+
+    def latency_report(self) -> LatencyReport:
+        """Where the recent requests' time went, split by the part of the server.
+
+        Read from the event loop thread, over a window the loop thread is the only
+        writer of, so there is no lock here and no need for one: `_settle` appends
+        and this reads, both on the loop, and `summarize` copies before it sorts.
+        """
+        return summarize(self.latencies)
 
     def _fail_all(self, exc: BaseException) -> None:
         """Give everyone the bad news. A hung socket is worse than an error."""
