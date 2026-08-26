@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowamber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The outside baseline, and what a speedup is made of</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Week 12 has measured this engine against itself for three days. Today it is measured against HuggingFace `generate`:</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">same weights, same box, greedy on both sides, and the pairing is refused unless the two produced the same tokens.</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">A throughput ratio is one number. It factorises into two, exactly, and they move in opposite directions.</text>
+
+  <!-- ===================== LEFT TOP: the identity ===================== -->
+  <text x="50" y="158" font-size="14" font-weight="700" fill="#334155">one throughput, two exact factorisations</text>
+
+  <rect x="50" y="172" width="500" height="152" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <rect x="66" y="192" width="76" height="44" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.3"/>
+  <text x="104" y="211" font-size="10" fill="#9a3412" text-anchor="middle">waiting</text>
+  <text x="104" y="226" font-size="10" fill="#9a3412" text-anchor="middle">queue</text>
+  <line x1="146" y1="214" x2="172" y2="214" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="176" y="192" width="90" height="44" rx="5" fill="#f0fdf4" stroke="#15803d" stroke-width="1.3"/>
+  <text x="221" y="211" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">slots</text>
+  <text x="221" y="226" font-size="10" fill="#166534" text-anchor="middle">one forward</text>
+  <line x1="270" y1="214" x2="296" y2="214" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="336" y="211" font-size="10.5" font-weight="700" fill="#1e1b4b" text-anchor="middle">tokens</text>
+  <text x="336" y="226" font-size="10" fill="#64748b" text-anchor="middle">out</text>
+
+  <text x="66" y="184" font-size="9" fill="#64748b">request-seconds</text>
+  <text x="176" y="184" font-size="9" fill="#64748b">slot-seconds</text>
+
+  <text x="66" y="268" font-size="11.5" font-weight="700" fill="#166534">throughput = batch occupancy  x  tokens per slot-second</text>
+  <text x="66" y="286" font-size="10.5" fill="#166534">what the hardware did. The only pair a batching claim may be quoted from.</text>
+  <text x="66" y="304" font-size="11.5" font-weight="700" fill="#9a3412">throughput = system occupancy x  tokens per request-second</text>
+  <text x="66" y="320" font-size="10.5" fill="#9a3412">what the caller got. Inflated by the queue, so never a batching claim.</text>
+
+  <!-- ===================== LEFT MIDDLE: the gotcha ===================== -->
+  <rect x="50" y="340" width="500" height="104" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="66" y="362" font-size="11.5" font-weight="700" fill="#9a3412">occupancy is not batch size, and that was this module's own first bug</text>
+  <text x="66" y="380" font-size="10.5" fill="#9a3412">An offline run hands over every prompt before the first step, so a request is "in the system"</text>
+  <text x="66" y="396" font-size="10.5" fill="#9a3412">while it sits on the queue doing nothing. Measured, 8 requests against ONE slot:</text>
+  <text x="66" y="418" font-size="11.5" font-weight="700" fill="#7c2d12">system occupancy 4.89   ·   batch occupancy 1.00   ·   80% of it queue</text>
+  <text x="66" y="436" font-size="10.5" fill="#9a3412">The identity still holds either way. Read wrong, it credits the scheduler with a queue.</text>
+
+  <!-- ===================== LEFT BOTTOM: the gate ===================== -->
+  <text x="50" y="480" font-size="14" font-weight="700" fill="#334155">`compare` exists to refuse: four ways to look fast without being fast</text>
+  <line x1="50" y1="490" x2="550" y2="490" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="50" y="512" font-size="11" fill="#475569">1.  fewer requests</text>
+  <text x="50" y="532" font-size="11" fill="#475569">2.  shorter prompts, so less prefill</text>
+  <text x="50" y="552" font-size="11" fill="#475569">3.  fewer generated tokens, which is not generating faster</text>
+  <text x="50" y="572" font-size="11" font-weight="700" fill="#b91c1c">4.  different generated tokens: the run completes and the number is beautiful</text>
+
+  <rect x="50" y="588" width="500" height="52" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="66" y="610" font-size="11.5" font-weight="700" fill="#166534">greedy on both sides makes agreement an equality, not a judgement call</text>
+  <text x="66" y="628" font-size="10.5" fill="#166534">8 requests x 16 tokens, at 1, 2, 4 and 8 slots: identical ids to HF every time.</text>
+
+  <!-- ===================== RIGHT TOP: the sweep ===================== -->
+  <text x="620" y="158" font-size="14" font-weight="700" fill="#334155">Llama-3.2-1B, cpu fp32, 8 requests x 16 tokens, 6-token prompt</text>
+  <line x1="620" y1="168" x2="1150" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="190" font-size="11.5" font-weight="700" fill="#64748b">slots</text>
+  <text x="790" y="190" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">tok/s</text>
+  <text x="890" y="190" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">speedup</text>
+  <text x="1000" y="190" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">batch</text>
+  <text x="1150" y="190" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">per slot-second</text>
+
+  <text x="620" y="222" font-size="12" fill="#475569">hf-generate</text>
+  <text x="790" y="222" font-size="12" fill="#475569" text-anchor="end">2.44</text>
+  <text x="890" y="222" font-size="12" fill="#94a3b8" text-anchor="end">1.00x</text>
+  <text x="1000" y="222" font-size="12" fill="#475569" text-anchor="end">1.00</text>
+  <text x="1150" y="222" font-size="12" fill="#94a3b8" text-anchor="end">1.00x</text>
+
+  <text x="620" y="248" font-size="12" fill="#475569">nanoserve, 1</text>
+  <text x="790" y="248" font-size="12" fill="#475569" text-anchor="end">2.44</text>
+  <text x="890" y="248" font-size="12" fill="#475569" text-anchor="end">1.00x</text>
+  <text x="1000" y="248" font-size="12" fill="#475569" text-anchor="end">1.00</text>
+  <text x="1150" y="248" font-size="12" fill="#475569" text-anchor="end">1.00x</text>
+
+  <text x="620" y="274" font-size="12" fill="#475569">nanoserve, 2</text>
+  <text x="790" y="274" font-size="12" fill="#475569" text-anchor="end">3.38</text>
+  <text x="890" y="274" font-size="12" fill="#475569" text-anchor="end">1.38x</text>
+  <text x="1000" y="274" font-size="12" fill="#475569" text-anchor="end">2.00</text>
+  <text x="1150" y="274" font-size="12" fill="#c2410c" text-anchor="end">0.69x</text>
+
+  <text x="620" y="300" font-size="12" font-weight="700" fill="#166534">nanoserve, 4</text>
+  <text x="790" y="300" font-size="12" font-weight="700" fill="#166534" text-anchor="end">4.01</text>
+  <text x="890" y="300" font-size="12" font-weight="700" fill="#166534" text-anchor="end">1.64x</text>
+  <text x="1000" y="300" font-size="12" font-weight="700" fill="#166534" text-anchor="end">4.00</text>
+  <text x="1150" y="300" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">0.41x</text>
+
+  <text x="620" y="326" font-size="12" fill="#475569">nanoserve, 8</text>
+  <text x="790" y="326" font-size="12" fill="#475569" text-anchor="end">3.62</text>
+  <text x="890" y="326" font-size="12" fill="#b91c1c" text-anchor="end">1.48x</text>
+  <text x="1000" y="326" font-size="12" fill="#475569" text-anchor="end">8.00</text>
+  <text x="1150" y="326" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">0.19x</text>
+
+  <text x="620" y="352" font-size="10.5" fill="#64748b">Eight times the batch, and less throughput than four. The knee is at 4 slots, and the whole</text>
+  <text x="620" y="368" font-size="10.5" fill="#64748b">win is 1.64x, because every row this box adds makes every other row slower.</text>
+
+  <!-- ===================== RIGHT MIDDLE: the two factors as bars ===================== -->
+  <text x="620" y="404" font-size="14" font-weight="700" fill="#334155">the same speedup, split: batch x what one row produced</text>
+  <line x1="620" y1="414" x2="1150" y2="414" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="440" font-size="11" fill="#475569">4 slots</text>
+  <rect x="690" y="428" width="264" height="20" fill="#86efac" stroke="#15803d" stroke-width="1"/>
+  <text x="822" y="443" font-size="11" font-weight="700" fill="#14532d" text-anchor="middle">batch 4.00x</text>
+  <rect x="954" y="428" width="27" height="20" fill="#fdba74" stroke="#c2410c" stroke-width="1"/>
+  <text x="992" y="443" font-size="10.5" font-weight="700" fill="#9a3412">x 0.41  =  1.64x</text>
+
+  <text x="620" y="474" font-size="11" fill="#475569">8 slots</text>
+  <rect x="690" y="462" width="440" height="20" fill="#86efac" stroke="#15803d" stroke-width="1"/>
+  <text x="910" y="477" font-size="11" font-weight="700" fill="#14532d" text-anchor="middle">batch 8.00x</text>
+  <rect x="1130" y="462" width="12" height="20" fill="#fdba74" stroke="#c2410c" stroke-width="1"/>
+  <text x="620" y="502" font-size="10.5" fill="#9a3412">x 0.19  =  1.48x. The second factor ate six sevenths of the first, so the wider batch lost.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the hardware note ===================== -->
+  <rect x="620" y="520" width="530" height="120" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="636" y="544" font-size="11.5" font-weight="700" fill="#3730a3">the second factor is a hardware number, not a scheduler number</text>
+  <text x="636" y="564" font-size="10.5" fill="#3730a3">CPU fp32 GEMMs are compute-bound, so a row added to the batch is arithmetic nobody was</text>
+  <text x="636" y="580" font-size="10.5" fill="#3730a3">doing before, and this factor collapses. On a card, the decode step reads the whole weight</text>
+  <text x="636" y="596" font-size="10.5" fill="#3730a3">matrix out of HBM whether one row rides along or thirty-two, so it stays near 1.0 and the</text>
+  <text x="636" y="612" font-size="10.5" fill="#3730a3">batch gain flows through almost undiluted. That is where vLLM's published multiples come from.</text>
+  <text x="636" y="632" font-size="10.5" font-weight="700" fill="#3730a3">The scheduler works. This box cannot pay for it.</text>
+
+  <text x="50" y="662" font-size="10.5" fill="#94a3b8">nanoserve day 44 · baseline.py, the gate and the two factorisations · hfbench.py · 845 tests green</text>
+</svg>
