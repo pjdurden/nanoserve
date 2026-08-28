@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowamber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The latency-throughput curve, and the knee as arithmetic</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Week 12 measured four days of tables and drew none of them. Day 42 swept the offered rate through a socket, Day 44 swept</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">the slot count offline. Two knobs, two experiments, and both produce output tok/s against seconds, so both fit on one pair of axes.</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">Both axes are outputs. The knob is on neither of them, which is why the curve is allowed to bend backwards, and why it does.</text>
+
+  <!-- ===================== LEFT: the plot ===================== -->
+  <text x="50" y="158" font-size="14" font-weight="700" fill="#334155">achieved output tok/s across, p50 TTFT up, Llama-3.2-1B on cpu fp32</text>
+  <line x1="50" y1="168" x2="560" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <!-- axes -->
+  <line x1="70" y1="195" x2="70" y2="430" stroke="#94a3b8" stroke-width="1.4"/>
+  <line x1="70" y1="430" x2="560" y2="430" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="62" y="434" font-size="10" fill="#94a3b8" text-anchor="end">0</text>
+  <text x="62" y="319" font-size="10" fill="#94a3b8" text-anchor="end">14s</text>
+  <text x="62" y="204" font-size="10" fill="#94a3b8" text-anchor="end">28s</text>
+  <text x="70" y="446" font-size="10" fill="#94a3b8" text-anchor="middle">0</text>
+  <text x="305" y="446" font-size="10" fill="#94a3b8" text-anchor="middle">2.10</text>
+  <text x="540" y="446" font-size="10" fill="#94a3b8" text-anchor="middle">4.20 tok/s</text>
+
+  <!-- the SLO line -->
+  <line x1="70" y1="389" x2="560" y2="389" stroke="#4338ca" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="558" y="384" font-size="9.5" font-weight="700" fill="#4338ca" text-anchor="end">5s TTFT budget</text>
+
+  <!-- rate sweep: offered load up, TTFT up, throughput stalls -->
+  <polyline points="269,410 351,387 355,286 354,247" fill="none" stroke="#c2410c" stroke-width="1.6" marker-end="url(#arrowamber)"/>
+  <circle cx="269" cy="410" r="5.5" fill="#fdba74" stroke="#c2410c" stroke-width="1.6"/>
+  <circle cx="351" cy="387" r="5.5" fill="#fdba74" stroke="#c2410c" stroke-width="1.6"/>
+  <circle cx="355" cy="286" r="5.5" fill="#fdba74" stroke="#c2410c" stroke-width="1.6"/>
+  <circle cx="354" cy="247" r="5.5" fill="#ffffff" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="258" y="425" font-size="9.5" fill="#9a3412" text-anchor="end">0.1 rps</text>
+  <text x="366" y="378" font-size="9.5" fill="#9a3412">0.2</text>
+  <text x="364" y="284" font-size="9.5" font-weight="700" fill="#9a3412">0.4  peak</text>
+  <text x="364" y="245" font-size="9.5" font-weight="700" fill="#b91c1c">0.8  dominated</text>
+
+  <!-- slot sweep: residency up, TTFT down, throughput peaks then falls -->
+  <polyline points="343,204 448,294 519,347 475,406" fill="none" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <rect x="338" y="199" width="10" height="10" fill="#86efac" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="443" y="289" width="10" height="10" fill="#86efac" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="514" y="342" width="10" height="10" fill="#86efac" stroke="#15803d" stroke-width="1.6"/>
+  <rect x="470" y="401" width="10" height="10" fill="#86efac" stroke="#15803d" stroke-width="1.6"/>
+  <text x="332" y="203" font-size="9.5" fill="#b91c1c" text-anchor="end">1 slot  dominated</text>
+  <text x="437" y="293" font-size="9.5" fill="#b91c1c" text-anchor="end">2  dominated</text>
+  <text x="528" y="340" font-size="9.5" font-weight="700" fill="#166534">4  peak</text>
+  <text x="463" y="410" font-size="9.5" font-weight="700" fill="#166534" text-anchor="end">8 slots</text>
+
+  <!-- the knees -->
+  <circle cx="269" cy="410" r="9.5" fill="none" stroke="#4338ca" stroke-width="1.8"/>
+  <circle cx="475" cy="406" r="9.5" fill="none" stroke="#4338ca" stroke-width="1.8"/>
+  <text x="269" y="392" font-size="9.5" font-weight="700" fill="#3730a3" text-anchor="middle">knee</text>
+  <text x="490" y="411" font-size="9.5" font-weight="700" fill="#3730a3">knee</text>
+
+  <text x="130" y="222" font-size="10.5" font-weight="700" fill="#c2410c">rate sweep: more offered load</text>
+  <text x="130" y="238" font-size="10.5" fill="#c2410c">fills the queue, so TTFT climbs</text>
+  <text x="130" y="254" font-size="10.5" fill="#c2410c">and throughput stops at 2.55</text>
+  <text x="130" y="290" font-size="10.5" font-weight="700" fill="#15803d">slot sweep: more residency</text>
+  <text x="130" y="306" font-size="10.5" fill="#15803d">drains the same burst, so TTFT</text>
+  <text x="130" y="322" font-size="10.5" fill="#15803d">falls, until 8 slots loses tok/s</text>
+  <text x="130" y="352" font-size="10.5" font-weight="700" fill="#334155">Same axes, same engine,</text>
+  <text x="130" y="368" font-size="10.5" font-weight="700" fill="#334155">opposite slope. Neither is wrong.</text>
+
+  <!-- LEFT BOTTOM: the reading -->
+  <rect x="50" y="466" width="510" height="86" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="66" y="488" font-size="11.5" font-weight="700" fill="#166534">what a 5s TTFT budget actually buys on this box</text>
+  <text x="66" y="508" font-size="10.5" fill="#166534">rate sweep    1.78 tok/s at 0.1 rps (2.42s)   ·   70% of its own peak</text>
+  <text x="66" y="526" font-size="10.5" fill="#166534">slot sweep    3.62 tok/s at 8 slots (2.96s)   ·   90% of its own peak</text>
+  <text x="66" y="544" font-size="10.5" fill="#166534">The peak is what the box can do. This is what it can do while keeping a promise.</text>
+
+  <rect x="50" y="564" width="510" height="76" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="66" y="586" font-size="11.5" font-weight="700" fill="#9a3412">two ways to lie with a correct dataset</text>
+  <text x="66" y="605" font-size="10.5" fill="#9a3412">Plot the offered load instead of the achieved throughput and the wall becomes a slope:</text>
+  <text x="66" y="621" font-size="10.5" fill="#9a3412">0.4 and 0.8 rps both achieved 0.159 req/s. Start an axis anywhere but zero and 4% of</text>
+  <text x="66" y="637" font-size="10.5" fill="#9a3412">throughput fills half the picture. `cell_for` puts the origin in the arithmetic.</text>
+
+  <!-- ===================== RIGHT TOP: the ordering ===================== -->
+  <text x="620" y="158" font-size="14" font-weight="700" fill="#334155">dominance is the only ordering there is</text>
+  <line x1="620" y1="168" x2="1150" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="620" y="190" font-size="11.5" font-weight="700" fill="#475569">b dominates a  =  at least as many tok/s, no more latency, strictly better on one</text>
+  <text x="620" y="210" font-size="10.5" fill="#475569">A dominated setting is not a taste, a budget or a tradeoff. Something else on the same sweep</text>
+  <text x="620" y="226" font-size="10.5" fill="#475569">was better on both axes at once, so nobody would ever run it. What is left is the frontier,</text>
+  <text x="620" y="242" font-size="10.5" fill="#475569">and the frontier is the entire menu. It is a partial order on purpose: two settings where one</text>
+  <text x="620" y="258" font-size="10.5" fill="#475569">is faster and the other snappier are incomparable, and that is the tradeoff the curve is named for.</text>
+
+  <rect x="620" y="272" width="530" height="80" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="636" y="294" font-size="11.5" font-weight="700" fill="#3730a3">the knee is argmax (throughput / latency), and it needs no threshold</text>
+  <text x="636" y="313" font-size="10.5" fill="#3730a3">Kleinrock's power. Before the bend, latency is flat and the ratio climbs; after it, throughput is</text>
+  <text x="636" y="329" font-size="10.5" fill="#3730a3">flat and the ratio falls. For an M/M/1 queue it peaks at exactly half the service rate whatever</text>
+  <text x="636" y="345" font-size="10.5" fill="#3730a3">the rate is, so the finder is tested against a curve whose answer is known before the code runs.</text>
+
+  <!-- ===================== RIGHT MIDDLE: the knee moves ===================== -->
+  <text x="620" y="386" font-size="14" font-weight="700" fill="#334155">the knee is not a property of the engine: it moves with the y axis</text>
+  <line x1="620" y1="396" x2="1150" y2="396" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="418" font-size="11.5" font-weight="700" fill="#64748b">latency on y</text>
+  <text x="900" y="418" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">rate sweep knee</text>
+  <text x="1080" y="418" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">slot sweep knee</text>
+
+  <text x="620" y="442" font-size="12" fill="#475569">p50 TTFT</text>
+  <text x="900" y="442" font-size="12" fill="#475569" text-anchor="end">0.1 rps</text>
+  <text x="1080" y="442" font-size="12" font-weight="700" fill="#166534" text-anchor="end">8 slots</text>
+  <text x="620" y="466" font-size="12" fill="#475569">p50 end to end</text>
+  <text x="900" y="466" font-size="12" fill="#475569" text-anchor="end">0.2 rps</text>
+  <text x="1080" y="466" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">4 slots</text>
+
+  <text x="620" y="492" font-size="10.5" fill="#64748b">Same runs, same definition, different question. In an offline burst TTFT is mostly queue, so the</text>
+  <text x="620" y="508" font-size="10.5" fill="#64748b">eighth slot removes a wait it was itself creating; end to end pays for that slot in every step</text>
+  <text x="620" y="524" font-size="10.5" fill="#64748b">after the first, and 4 slots wins, agreeing with Day 44's throughput-only reading.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the two gates ===================== -->
+  <rect x="620" y="544" width="530" height="96" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="636" y="566" font-size="11.5" font-weight="700" fill="#9a3412">two ways a sweep answers a question it never asked</text>
+  <text x="636" y="586" font-size="10.5" fill="#9a3412">no dominated setting  ·  the curve never bent back, so the peak is the largest number tried,</text>
+  <text x="636" y="602" font-size="10.5" fill="#9a3412">not a capacity. `check_swept_to_saturation` refuses it. Both of mine pass.</text>
+  <text x="636" y="622" font-size="10.5" fill="#9a3412">knee on an end point  ·  the maximum was never bracketed, so the real knee is outside the sweep.</text>
+  <text x="636" y="638" font-size="10.5" font-weight="700" fill="#7c2d12">Both of mine fail this one, in opposite directions. The picture says "at least this far".</text>
+
+  <text x="50" y="662" font-size="10.5" fill="#94a3b8">nanoserve day 45 · curve.py, dominance, power and the two gates · curvebench.py over Day 42 and Day 44 · 911 tests green</text>
+</svg>

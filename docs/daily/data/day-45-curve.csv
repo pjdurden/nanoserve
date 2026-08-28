@@ -1,0 +1,17 @@
+curve,latency_name,knob,knob_value,label,throughput_tps,latency_s,power,verdict,dominated_by,d_throughput,d_latency,latency_per_tps
+rate sweep,ttft_p50,offered_rps,0.1,0.1 rps,1.7800,2.4201,0.7355,frontier+knee,,,,
+rate sweep,ttft_p50,offered_rps,0.2,0.2 rps,2.5100,5.2290,0.4800,frontier,,+0.7300,+2.8089,3.8478
+rate sweep,ttft_p50,offered_rps,0.4,0.4 rps,2.5500,17.4887,0.1458,frontier+peak,,+0.0400,+12.2597,306.4925
+rate sweep,ttft_p50,offered_rps,0.8,0.8 rps,2.5400,22.2576,0.1141,dominated,0.4 rps,-0.0100,+4.7689,inf
+slot sweep,ttft_p50,slots,1,1 slot,2.4350,27.5692,0.0883,dominated,2 slots,,,
+slot sweep,ttft_p50,slots,2,2 slots,3.3810,16.5307,0.2045,dominated,4 slots,+0.9460,-11.0385,free
+slot sweep,ttft_p50,slots,4,4 slots,4.0090,10.1367,0.3955,frontier+peak,,+0.6280,-6.3940,free
+slot sweep,ttft_p50,slots,8,8 slots,3.6200,2.9600,1.2230,frontier+knee,,-0.3890,-7.1767,inf
+rate sweep,e2e_p50,offered_rps,0.1,0.1 rps,1.7800,12.3150,0.1445,frontier,,,,
+rate sweep,e2e_p50,offered_rps,0.2,0.2 rps,2.5100,15.7380,0.1595,frontier+knee,,+0.7300,+3.4230,4.6890
+rate sweep,e2e_p50,offered_rps,0.4,0.4 rps,2.5500,28.0120,0.0910,frontier+peak,,+0.0400,+12.2740,306.8500
+rate sweep,e2e_p50,offered_rps,0.8,0.8 rps,2.5400,32.8010,0.0774,dominated,0.4 rps,-0.0100,+4.7890,inf
+slot sweep,e2e_p50,slots,1,1 slot,2.4350,32.1325,0.0758,dominated,2 slots,,,
+slot sweep,e2e_p50,slots,2,2 slots,3.3810,23.9104,0.1414,dominated,4 slots,+0.9460,-8.2221,free
+slot sweep,e2e_p50,slots,4,4 slots,4.0090,23.8967,0.1678,frontier+knee+peak,,+0.6280,-0.0137,free
+slot sweep,e2e_p50,slots,8,8 slots,3.6200,35.3583,0.1024,dominated,4 slots,-0.3890,+11.4616,inf
