@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <pattern id="idle" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="#fca5a5" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">One decode step, taken apart: two clocks and a bubble</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Week 12 timed this engine from the request boundary and drew the curve. That says how fast it is and cannot say</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">why, because a step is opaque from outside. `Engine.step` now carries a recorder: six named phases, each with the</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">host time Python spent in it and the device time its kernels took. The difference is not arithmetic, and it is the target.</text>
+
+  <!-- ===================== LEFT TOP: the step timeline ===================== -->
+  <text x="50" y="158" font-size="14" font-weight="700" fill="#334155">six phases, and the two clocks that are not the same clock</text>
+
+  <rect x="50" y="172" width="510" height="158" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="198" font-size="10.5" font-weight="700" fill="#64748b">host</text>
+  <rect x="60" y="206" width="45" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="82" y="225" font-size="8.5" fill="#3730a3" text-anchor="middle">sched</text>
+  <rect x="105" y="206" width="18" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <rect x="123" y="206" width="50" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="148" y="225" font-size="8.5" fill="#3730a3" text-anchor="middle">inputs</text>
+  <rect x="173" y="206" width="200" height="30" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="273" y="226" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">forward</text>
+  <rect x="373" y="206" width="140" height="30" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="443" y="226" font-size="11" font-weight="700" fill="#9a3412" text-anchor="middle">sample</text>
+  <rect x="513" y="206" width="30" height="30" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+
+  <text x="66" y="250" font-size="10.5" font-weight="700" fill="#64748b">device</text>
+  <rect x="60" y="254" width="160" height="26" fill="url(#idle)" stroke="#fca5a5" stroke-width="1"/>
+  <rect x="220" y="254" width="150" height="26" rx="4" fill="#15803d"/>
+  <text x="295" y="271" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">kernels</text>
+  <rect x="370" y="254" width="30" height="26" fill="url(#idle)" stroke="#fca5a5" stroke-width="1"/>
+  <rect x="400" y="254" width="30" height="26" rx="4" fill="#15803d"/>
+  <rect x="430" y="254" width="113" height="26" fill="url(#idle)" stroke="#fca5a5" stroke-width="1"/>
+
+  <line x1="513" y1="242" x2="513" y2="290" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="509" y="302" font-size="9.5" font-weight="700" fill="#b91c1c" text-anchor="end">sample returns list[int]: the host stops here, every step</text>
+
+  <text x="66" y="322" font-size="11" font-weight="700" fill="#1e1b4b">overhead = host - device. The hatching is a GPU with nothing queued yet.</text>
+
+  <!-- ===================== LEFT BOTTOM: the measurement ===================== -->
+  <text x="50" y="364" font-size="14" font-weight="700" fill="#334155">measured: Llama-3.2-1B, cpu fp32, 4 x 12 tokens, warmup dropped</text>
+  <line x1="50" y1="374" x2="560" y2="374" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="396" font-size="11.5" font-weight="700" fill="#64748b">slots</text>
+  <text x="180" y="396" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">step</text>
+  <text x="280" y="396" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">forward</text>
+  <text x="370" y="396" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">loop</text>
+  <text x="465" y="396" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">loop/token</text>
+  <text x="560" y="396" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">loop share</text>
+
+  <text x="50" y="420" font-size="12" fill="#475569">1 slot</text>
+  <text x="180" y="420" font-size="12" fill="#475569" text-anchor="end">307.885 ms</text>
+  <text x="280" y="420" font-size="12" fill="#475569" text-anchor="end">307.234</text>
+  <text x="370" y="420" font-size="12" fill="#475569" text-anchor="end">0.577</text>
+  <text x="465" y="420" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">0.577 ms</text>
+  <text x="560" y="420" font-size="12" fill="#475569" text-anchor="end">0.19%</text>
+
+  <text x="50" y="442" font-size="12" fill="#475569">2 slots</text>
+  <text x="180" y="442" font-size="12" fill="#475569" text-anchor="end">535.164 ms</text>
+  <text x="280" y="442" font-size="12" fill="#475569" text-anchor="end">534.227</text>
+  <text x="370" y="442" font-size="12" fill="#475569" text-anchor="end">0.807</text>
+  <text x="465" y="442" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">0.404 ms</text>
+  <text x="560" y="442" font-size="12" fill="#475569" text-anchor="end">0.15%</text>
+
+  <text x="50" y="464" font-size="12" fill="#475569">4 slots</text>
+  <text x="180" y="464" font-size="12" fill="#475569" text-anchor="end">984.047 ms</text>
+  <text x="280" y="464" font-size="12" fill="#475569" text-anchor="end">982.756</text>
+  <text x="370" y="464" font-size="12" fill="#475569" text-anchor="end">1.161</text>
+  <text x="465" y="464" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">0.290 ms</text>
+  <text x="560" y="464" font-size="12" fill="#475569" text-anchor="end">0.12%</text>
+
+  <rect x="50" y="482" width="510" height="68" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="66" y="503" font-size="11.5" font-weight="700" fill="#166534">the loop is nearly flat in the batch</text>
+  <text x="66" y="522" font-size="10.5" fill="#166534">Four times the rows cost twice the loop, 0.577 to 1.161 ms: it runs once per</text>
+  <text x="66" y="538" font-size="10.5" fill="#166534">step whatever the batch. Per token, 0.577 down to 0.290. Day 44, from inside.</text>
+
+  <rect x="50" y="558" width="510" height="84" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="66" y="579" font-size="11.5" font-weight="700" fill="#3730a3">this box cannot price the optimisation, and the module says so</text>
+  <text x="66" y="598" font-size="10.5" fill="#3730a3">No GPU means no second clock: every phase records zero device time, so the</text>
+  <text x="66" y="614" font-size="10.5" fill="#3730a3">whole step counts as overhead and the ceiling comes out infinite.</text>
+  <text x="66" y="632" font-size="10.5" font-weight="700" fill="#3730a3">A 2 ms forward in this measured loop is a 2.577 ms step, 22% of it Python.</text>
+
+  <!-- ===================== RIGHT TOP: the two models ===================== -->
+  <text x="620" y="158" font-size="14" font-weight="700" fill="#334155">whether the overhead costs anything is a fact about the code</text>
+  <line x1="620" y1="168" x2="1150" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="192" font-size="11.5" font-weight="700" fill="#15803d">overlapped: nothing reads back, the host runs ahead</text>
+  <rect x="620" y="200" width="130" height="20" rx="3" fill="#eef2ff" stroke="#4338ca" stroke-width="1.2"/>
+  <text x="685" y="214" font-size="9" fill="#3730a3" text-anchor="middle">host, step n+1</text>
+  <rect x="620" y="222" width="230" height="20" rx="3" fill="#15803d"/>
+  <text x="735" y="236" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">device, step n</text>
+  <text x="866" y="219" font-size="10.5" font-weight="700" fill="#166534">step = max(overhead, device)</text>
+  <text x="866" y="236" font-size="10" fill="#166534">Python under the kernels is free.</text>
+
+  <text x="620" y="272" font-size="11.5" font-weight="700" fill="#b91c1c">serial: something reads back, so nothing overlaps</text>
+  <rect x="620" y="280" width="130" height="20" rx="3" fill="#eef2ff" stroke="#4338ca" stroke-width="1.2"/>
+  <text x="685" y="294" font-size="9" fill="#3730a3" text-anchor="middle">host</text>
+  <rect x="750" y="280" width="230" height="20" rx="3" fill="#15803d"/>
+  <text x="865" y="294" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">device</text>
+  <text x="992" y="294" font-size="10.5" font-weight="700" fill="#b91c1c">= overhead + device</text>
+
+  <text x="620" y="322" font-size="10.5" fill="#475569">nanoserve is the second one, and `recommended_model` says so by reading</text>
+  <text x="620" y="338" font-size="10.5" fill="#475569">`Phase.syncs`, not by assumption. `sample` returns Python ints, so the host waits</text>
+  <text x="620" y="354" font-size="10.5" fill="#475569">for every kernel the step queued, and the next step has nothing to hide under.</text>
+
+  <!-- ===================== RIGHT MIDDLE: the ceiling ===================== -->
+  <rect x="620" y="372" width="530" height="98" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="636" y="394" font-size="11.5" font-weight="700" fill="#9a3412">the ceiling is one division in the profile you already have</text>
+  <text x="636" y="414" font-size="10.5" fill="#9a3412">Amdahl: 1 / ((1 - f) + f/k). With k infinite that is 1/(1 - f), so removing every</text>
+  <text x="636" y="430" font-size="10.5" fill="#9a3412">microsecond of launch overhead still leaves the device time: host/device, and no lower.</text>
+  <text x="636" y="450" font-size="10.5" font-weight="700" fill="#7c2d12">Rank hotspots by overhead, not host time. `forward` is the longest phase and</text>
+  <text x="636" y="466" font-size="10.5" font-weight="700" fill="#7c2d12">mostly kernels; `sample` is a third its length and 88% of this loop.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the gates ===================== -->
+  <text x="620" y="502" font-size="14" font-weight="700" fill="#334155">four believable profiles that mean nothing, and what catches each</text>
+  <line x1="620" y1="512" x2="1150" y2="512" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="534" font-size="10.5" font-weight="700" fill="#475569">warmup still in it</text>
+  <text x="810" y="534" font-size="10.5" fill="#64748b">context creation, allocator growth, autotune, once</text>
+  <text x="620" y="554" font-size="10.5" font-weight="700" fill="#475569">phases do not add up</text>
+  <text x="810" y="554" font-size="10.5" fill="#64748b">ranks where a timer was put, not what was slow</text>
+  <text x="620" y="574" font-size="10.5" font-weight="700" fill="#475569">device &gt; host in a phase</text>
+  <text x="810" y="574" font-size="10.5" fill="#64748b">a launch was timed; compute lands on the next sync</text>
+  <text x="620" y="594" font-size="10.5" font-weight="700" fill="#475569">no device times at all</text>
+  <text x="810" y="594" font-size="10.5" fill="#64748b">every second is overhead, the ceiling is infinite</text>
+
+  <rect x="620" y="606" width="530" height="36" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="636" y="629" font-size="10.5" fill="#475569">The instrument costs 0.07 to 0.13 ms/step: 0.02% of the step, 13% of the loop measured.</text>
+
+  <text x="50" y="662" font-size="10.5" fill="#94a3b8">nanoserve day 46 · profiler.py, six phases, two clocks, four gates · Engine.step instrumented · profbench.py on real weights · 1030 green</text>
+</svg>

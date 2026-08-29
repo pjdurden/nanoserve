@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .profiler import NULL_RECORDER
 from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
 
@@ -144,6 +145,13 @@ class Engine:
         self.prefill_rows = 0
         self.recomputed_tokens = 0
         self._next_id = 0
+        # Day 46. Where the seconds of a step go. `NULL_RECORDER` is a real object
+        # with the real shape rather than a `None` to branch on, so the loop below
+        # reads the same whether anybody is watching or not, and the phase names are
+        # written down in one place instead of living in a separate profiling copy
+        # of `step` that would drift from this one. Swap in a `StepRecorder` to
+        # collect. See `nanoserve.profiler`.
+        self.recorder = NULL_RECORDER
 
     @classmethod
     def build(
@@ -204,26 +212,32 @@ class Engine:
         prefill half. Mixing the two into a single flattened forward (chunked
         prefill) is a real optimisation and a later one.
         """
-        out = self.scheduler.schedule()
-        # Whatever the schedule just reaped is done drawing: finished, or aborted,
-        # which arrives here as finished too. Preempted requests are deliberately
-        # not in this list, because they come back and their generator has to be
-        # where they left it. Dropping the rest is not tidiness: a server that
-        # keeps one `torch.Generator` per request it has ever served leaks for as
-        # long as it runs.
-        for request in out.finished:
-            self.sampler.release(request.request_id)
-        if out.is_empty:
+        with self.recorder.step() as timing:
+            with timing.phase("schedule"):
+                out = self.scheduler.schedule()
+                # Whatever the schedule just reaped is done drawing: finished, or
+                # aborted, which arrives here as finished too. Preempted requests are
+                # deliberately not in this list, because they come back and their
+                # generator has to be where they left it. Dropping the rest is not
+                # tidiness: a server that keeps one `torch.Generator` per request it
+                # has ever served leaks for as long as it runs.
+                for request in out.finished:
+                    self.sampler.release(request.request_id)
+            if out.is_empty:
+                # An iteration that admitted nobody is not a step of this loop, so it
+                # is thrown away rather than averaged in as a very fast one.
+                timing.drop()
+                return out
+
+            timing.describe("prefill" if out.prefill else "decode", out.batch_size)
+            if out.prefill:
+                self._prefill(out.prefill, timing)
+            if out.decode:
+                self._decode(out.decode, timing)
+
+            self.issued_tokens += out.batch_size
+            self.iterations += 1
             return out
-
-        if out.prefill:
-            self._prefill(out.prefill)
-        if out.decode:
-            self._decode(out.decode)
-
-        self.issued_tokens += out.batch_size
-        self.iterations += 1
-        return out
 
     def _release_row(self, slot: int) -> None:
         """Empty a cache row whose slot the scheduler just took back.
@@ -237,7 +251,7 @@ class Engine:
         """
         self.cache.reset_row(slot)
 
-    def _prefill(self, requests) -> None:
+    def _prefill(self, requests, timing) -> None:
         """Run the admitted rows' context, and emit one token each.
 
         `token_ids`, not `prompt_token_ids`, because a preempted request comes back
@@ -247,26 +261,38 @@ class Engine:
         are identical for a request that has never been preempted, which is why
         there is no branch here.
         """
-        rows = [r.slot for r in requests]
-        for request in requests:
-            # The scheduler already took these blocks out of the pool; the row runs
-            # on that reservation rather than making a second one.
-            self.cache.adopt_row(request.slot, request.block_ids)
-            self.recomputed_tokens += request.num_tokens if request.num_preemptions else 0
+        with timing.phase("adopt_rows"):
+            rows = [r.slot for r in requests]
+            for request in requests:
+                # The scheduler already took these blocks out of the pool; the row
+                # runs on that reservation rather than making a second one.
+                self.cache.adopt_row(request.slot, request.block_ids)
+                self.recomputed_tokens += request.num_tokens if request.num_preemptions else 0
 
-        batch = pad_prompts([r.token_ids for r in requests], pad_id=self.pad_id, side="left")
-        logits = self.model.forward(
-            batch.input_ids,
-            batch.position_ids,
-            cache=self.cache.view(rows),
-            attention_mask=batch.attention_mask,
-        )
-        self.prefill_slots += batch.batch_size * batch.max_length
-        self.prefill_tokens += int(batch.lengths.sum().item())
-        self.prefill_rows += batch.batch_size
-        self._collect(requests, self._sample(requests, last_token_logits(logits, batch)))
+        with timing.phase("build_inputs"):
+            batch = pad_prompts([r.token_ids for r in requests], pad_id=self.pad_id, side="left")
 
-    def _decode(self, requests) -> None:
+        with timing.phase("forward", device=True):
+            logits = self.model.forward(
+                batch.input_ids,
+                batch.position_ids,
+                cache=self.cache.view(rows),
+                attention_mask=batch.attention_mask,
+            )
+
+        with timing.phase("account", syncs=True):
+            self.prefill_slots += batch.batch_size * batch.max_length
+            # `.item()` on a device tensor: a synchronisation, on the prefill path.
+            self.prefill_tokens += int(batch.lengths.sum().item())
+            self.prefill_rows += batch.batch_size
+
+        with timing.phase("sample", syncs=True, device=True):
+            tokens = self._sample(requests, last_token_logits(logits, batch))
+
+        with timing.phase("collect"):
+            self._collect(requests, tokens)
+
+    def _decode(self, requests, timing) -> None:
         """Run one token for every already-running row.
 
         Each row is at its own absolute position, which is its own cached length: no
@@ -275,19 +301,36 @@ class Engine:
         sampled last iteration, which is why the cache is exactly one token behind
         the request at the top of every decode step.
         """
-        self._sync_rows(requests)
-        rows = [r.slot for r in requests]
-        device = self.cache.k_pool[0].device if self.cache.k_pool[0] is not None else None
-        input_ids = torch.tensor(
-            [[r.output_token_ids[-1]] for r in requests], dtype=torch.long, device=device
-        )
-        positions = torch.tensor(
-            [[self.cache.tables[row].num_tokens] for row in rows],
-            dtype=torch.long,
-            device=device,
-        )
-        logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
-        self._collect(requests, self._sample(requests, logits[:, -1]))
+        with timing.phase("sync_rows"):
+            self._sync_rows(requests)
+
+        with timing.phase("build_inputs"):
+            rows = [r.slot for r in requests]
+            device = self.cache.k_pool[0].device if self.cache.k_pool[0] is not None else None
+            # Two host-to-device copies of one integer per row, built out of Python
+            # lists, every step. Tiny in bytes and not tiny in time: this is the phase
+            # a captured graph makes disappear by writing into a fixed input buffer.
+            input_ids = torch.tensor(
+                [[r.output_token_ids[-1]] for r in requests], dtype=torch.long, device=device
+            )
+            positions = torch.tensor(
+                [[self.cache.tables[row].num_tokens] for row in rows],
+                dtype=torch.long,
+                device=device,
+            )
+
+        with timing.phase("forward", device=True):
+            logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
+
+        with timing.phase("sample", syncs=True, device=True):
+            # `syncs=True` is the load-bearing annotation of the whole profile.
+            # `sample_batch` returns Python ints, so the host waits here for every
+            # kernel this step queued, which is what stops the launch overhead of the
+            # *next* step from hiding underneath this step's arithmetic.
+            tokens = self._sample(requests, logits[:, -1])
+
+        with timing.phase("collect"):
+            self._collect(requests, tokens)
 
     def _sync_rows(self, requests) -> None:
         """Copy any block the scheduler added this iteration into the row's table.
