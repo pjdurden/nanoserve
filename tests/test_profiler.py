@@ -836,9 +836,18 @@ def test_the_recorded_batch_size_is_the_rows_that_stepped():
     assert engine.recorder.profile("engine").tokens == engine.issued_tokens
 
 
-def test_the_engine_marks_sampling_as_the_step_s_sync_point():
+def test_the_engine_marks_exactly_one_phase_as_the_step_s_sync_point():
+    """On Day 46 that phase was `sample`; on Day 47 it is `collect`.
+
+    The count is what the overlap model reads, and it did not change: the tokens
+    stopped coming home one row at a time, but a stop rule still needs a Python
+    int, so the host still stops once a step and `serial` is still the model that
+    applies. `nanoserve.output` is where the move is measured.
+    """
     profile = _run_profiled().recorder.profile("engine").select("decode")
-    assert profile.sync_points >= 1
+    assert profile.sync_points == 1
+    syncing = [p.name for p in profile.samples[0].phases if p.syncs]
+    assert syncing == ["collect"]
     assert recommended_model(profile) == "serial"
 
 

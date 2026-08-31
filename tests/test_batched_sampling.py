@@ -270,3 +270,190 @@ def test_a_greedy_request_stores_no_generator():
     sampler = BatchedSampler(seed=0)
     sampler.sample_batch(torch.stack([row]), [("x", SamplingParams(seed=8))])
     assert sampler.num_generators == 0
+
+
+# --- Day 47: the same draw, without coming home ---------------------------------
+
+# Day 46 profiled the loop and found `sample` holding 86% to 89% of it at every
+# batch size. Not because sampling is expensive: because `sample_batch` returns
+# `list[int]`, and every one of those ints is a separate journey back from the
+# device. `sample_batch_device` is the same arithmetic with the return type
+# changed to a `[rows]` tensor, so the tokens stay where they were computed and
+# the host reads them at most once, later, and on purpose.
+#
+# Two properties have to survive that change or it is not an optimisation, it is
+# a rewrite of the sampler: every token must be the one the old path drew, and
+# the seeded rows must still be independent of their batchmates.
+
+
+def _boom(*args, **kwargs):
+    raise AssertionError("the device sampler read a tensor back to the host")
+
+
+def _forbid_readback(monkeypatch):
+    """Make every host-side read of a tensor an error, for the duration of a test.
+
+    This is the only direct way to assert the absence of a synchronisation. The
+    cost of a readback does not show up in a return value, it shows up as the host
+    waiting, and on a CPU box it does not show up at all. Removing the operations
+    themselves turns "did not sync" into something a test can fail on.
+    """
+    for name in ("tolist", "item", "__int__", "__index__", "__float__"):
+        monkeypatch.setattr(torch.Tensor, name, _boom, raising=False)
+
+
+def test_the_device_sampler_returns_a_tensor_not_a_list():
+    logits = torch.stack([_peaked(3), _peaked(6)])
+    tokens = BatchedSampler(seed=0).sample_batch_device(logits, [("a", GREEDY), ("b", GREEDY)])
+    assert isinstance(tokens, torch.Tensor)
+
+
+def test_the_device_sampler_returns_one_integer_per_row():
+    logits = torch.stack([_peaked(3), _peaked(6), _peaked(1)])
+    rows = [("a", GREEDY), ("b", GREEDY), ("c", GREEDY)]
+    tokens = BatchedSampler(seed=0).sample_batch_device(logits, rows)
+    assert tokens.shape == (3,)
+    assert tokens.dtype == torch.long
+
+
+def test_the_tokens_come_back_on_the_logits_device():
+    """The whole point: the tensor never leaves the device the forward ran on."""
+    logits = torch.stack([_peaked(3), _peaked(6)])
+    tokens = BatchedSampler(seed=0).sample_batch_device(logits, [("a", GREEDY), ("b", GREEDY)])
+    assert tokens.device == logits.device
+
+
+def test_an_all_greedy_batch_is_one_argmax_over_the_whole_tensor():
+    logits = torch.stack([_peaked(3), _peaked(6), _peaked(1), _peaked(0)])
+    rows = [(str(i), GREEDY) for i in range(4)]
+    tokens = BatchedSampler(seed=0).sample_batch_device(logits, rows)
+    assert torch.equal(tokens, logits.argmax(dim=-1))
+
+
+def test_an_all_greedy_batch_never_reads_a_tensor_back(monkeypatch):
+    """The common case, and the one the engine runs by default.
+
+    `SamplingParams()` is greedy, so every request in Weeks 7 to 12 took this
+    path. Before today it gathered the greedy rows into a copy, ran an argmax and
+    called `.tolist()`; now it is one kernel and no journey home.
+    """
+    logits = torch.stack([_peaked(3), _peaked(6)])
+    rows = [("a", GREEDY), ("b", GREEDY)]
+    sampler = BatchedSampler(seed=0)
+    _forbid_readback(monkeypatch)
+    tokens = sampler.sample_batch_device(logits, rows)
+    assert tokens.shape == (2,)
+
+
+def test_a_mixed_batch_never_reads_a_tensor_back(monkeypatch):
+    """The harder case: greedy, unseeded and seeded rows in the same tensor.
+
+    The draw is still one `multinomial` per seeded row, because a seed belongs to
+    a request. What changed is that its result is written into the token tensor
+    with `index_copy_` instead of being turned into a Python int on the spot.
+    """
+    row = _flat()
+    logits = torch.stack([row, row, row, _peaked(2)])
+    rows = [
+        ("g", GREEDY),
+        ("u", _random()),
+        ("s", SamplingParams(temperature=1.0, seed=5)),
+        ("g2", GREEDY),
+    ]
+    sampler = BatchedSampler(seed=0)
+    _forbid_readback(monkeypatch)
+    tokens = sampler.sample_batch_device(logits, rows)
+    assert tokens.shape == (4,)
+
+
+def test_the_device_path_draws_exactly_what_the_list_path_drew():
+    """Two identically seeded samplers, one down each path, token for token.
+
+    The regression that matters. A sampler rewritten for speed that quietly
+    changes which token a request gets is a behaviour change wearing an
+    optimisation's clothes, and nothing downstream would catch it.
+    """
+    row = _flat()
+    logits = torch.stack([row, _peaked(4), row, row])
+    rows = [
+        ("a", _random()),
+        ("b", GREEDY),
+        ("c", SamplingParams(temperature=1.0, seed=77)),
+        ("d", _random(top_k=3)),
+    ]
+    listed = BatchedSampler(seed=12)
+    devised = BatchedSampler(seed=12)
+    for _ in range(8):
+        assert listed.sample_batch(logits, rows) == devised.sample_batch_device(logits, rows).tolist()
+
+
+def test_the_list_path_is_the_device_path_read_once():
+    """`sample_batch` is not a second implementation, it is one `.tolist()`."""
+    row = _flat()
+    logits = torch.stack([row, row])
+    rows = [("a", _random()), ("b", SamplingParams(temperature=1.0, seed=3))]
+    a = BatchedSampler(seed=4)
+    b = BatchedSampler(seed=4)
+    assert a.sample_batch(logits, rows) == b.sample_batch_device(logits, rows).tolist()
+
+
+def test_a_seeded_row_on_the_device_path_is_still_alone_with_its_generator():
+    """Day 40's property, re-asserted through the new return type.
+
+    Grouping and `index_copy_` are exactly the places a rewrite couples rows back
+    together, so the promise is checked again rather than assumed to have carried.
+    """
+    row = _flat()
+    seeded = SamplingParams(temperature=1.0, seed=1234)
+    alone = BatchedSampler(seed=0)
+    solo = [
+        int(alone.sample_batch_device(torch.stack([row]), [("x", seeded)])[0])
+        for _ in range(12)
+    ]
+    crowded = BatchedSampler(seed=999)
+    rows = [("n1", _random()), ("n2", _random(top_p=0.5)), ("x", seeded)]
+    shared = [
+        int(crowded.sample_batch_device(torch.stack([row, row, row]), rows)[2])
+        for _ in range(12)
+    ]
+    assert solo == shared
+    assert len(set(solo)) > 1
+
+
+def test_a_greedy_row_in_a_mixed_batch_is_still_the_argmax_of_its_own_row():
+    logits = torch.stack([_flat(), _peaked(5), _flat()])
+    rows = [("a", _random()), ("b", GREEDY), ("c", _random(top_p=0.9))]
+    tokens = BatchedSampler(seed=0).sample_batch_device(logits, rows)
+    assert int(tokens[1]) == 5
+
+
+def test_the_device_path_refuses_a_row_count_that_does_not_match():
+    with pytest.raises(ValueError, match="rows"):
+        BatchedSampler().sample_batch_device(torch.stack([_flat(), _flat()]), [("a", GREEDY)])
+
+
+def test_an_empty_batch_is_an_empty_tensor_and_not_an_error():
+    """The scheduler can hand down zero rows on a step that only prefilled."""
+    tokens = BatchedSampler().sample_batch_device(torch.zeros(0, VOCAB), [])
+    assert tokens.shape == (0,)
+    assert tokens.dtype == torch.long
+
+
+def test_a_masked_token_is_never_drawn_on_the_device_path():
+    logits = torch.stack([torch.tensor([1.0, 5.0, 2.0, 4.0, 3.0, 0.0, 0.0, 0.0])] * 2)
+    sampler = BatchedSampler(seed=7)
+    rows = [("a", _random(top_k=2)), ("b", _random(top_k=2))]
+    drawn = set()
+    for _ in range(50):
+        drawn.update(sampler.sample_batch_device(logits, rows).tolist())
+    assert drawn <= {1, 3}
+
+
+def test_the_device_path_still_releases_generators():
+    """The leak Day 40 closed is not reopened by the new entry point."""
+    row = _flat()
+    sampler = BatchedSampler(seed=0)
+    sampler.sample_batch_device(torch.stack([row]), [("x", SamplingParams(temperature=1.0, seed=8))])
+    assert sampler.num_generators == 1
+    sampler.release("x")
+    assert sampler.num_generators == 0

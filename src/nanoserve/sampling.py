@@ -41,6 +41,14 @@ one token per row when the rows disagree: one greedy, one at `top_p=0.9`, one at
 rules it is built on are that greedy is a branch and not a zero temperature, that
 rows sharing a filter setting are filtered together, and that the draw itself is
 per row because a seed belongs to a request rather than to a batch.
+
+**Week 13, Day 47** changes what comes out and nothing about what is drawn.
+`sample_batch_device` returns the tokens as a `[rows]` tensor on the device they
+were computed on; `sample_batch` is that plus one `.tolist()`. The old path turned
+every row into a Python int on the spot, which on a GPU is one synchronisation per
+sampled row per step, and Day 46 measured the result: `sample` was 86% to 89% of
+the engine's whole Python loop. Nothing here got cleverer. The tokens just stopped
+coming home one at a time. See `nanoserve.output` for what that is worth.
 """
 
 from __future__ import annotations
@@ -268,33 +276,94 @@ class BatchedSampler:
             self._generators[request_id] = generator
         return generator
 
+
     def sample_batch(
         self,
         logits: torch.Tensor,
         rows: Sequence[tuple[str, SamplingParams]],
     ) -> list[int]:
-        """One token per row of `[rows, vocab]` logits, each under its own params.
+        """One token per row of `[rows, vocab]` logits, as Python ints.
 
         `rows` pairs each row with the request id and params that own it, as one
         sequence rather than two parallel lists: a length mismatch between ids and
         params would hand one caller another caller's distribution, and that is a
         bug no shape check catches.
 
-        Returns plain ints in row order, which is what `Request.append_token`
-        wants and what keeps the engine's collect loop unchanged.
+        Since Day 47 this is `sample_batch_device` plus exactly one `.tolist()`,
+        rather than a second implementation. That matters for two reasons. The
+        obvious one is that the two paths cannot drift, so a request gets the same
+        token whichever entry point the engine calls. The less obvious one is the
+        *count*: one journey home per step rather than one per sampled row, which
+        is the whole of Day 47 and is measured in `nanoserve.output`.
+
+        Callers who do not need Python ints this instant should call
+        `sample_batch_device` and keep the tensor. On a GPU this `.tolist()` is a
+        synchronisation, and a synchronisation is where the host stops running
+        ahead of the device.
+        """
+        return self.sample_batch_device(logits, rows).tolist()
+
+    def sample_batch_device(
+        self,
+        logits: torch.Tensor,
+        rows: Sequence[tuple[str, SamplingParams]],
+    ) -> torch.Tensor:
+        """The same draw as `sample_batch`, left on the device as `[rows]` int64.
+
+        Day 46 profiled a decode step and found `sample` holding 86% to 89% of the
+        Python loop at every batch size. Sampling is not expensive; *returning* it
+        was. `sample_batch` produced a `list[int]`, and every one of those ints was
+        a separate `int(tensor)`: a separate journey back across the bus, each one
+        a point where the host stops and waits for every kernel the step has
+        queued. The arithmetic below is unchanged. What changed is that it ends in
+        a tensor.
+
+        Three things make that possible without altering a single drawn token:
+
+        **The all-greedy batch is one kernel.** Every `Request` defaults to
+        `GREEDY`, so this is the case the engine actually runs, and it used to
+        gather the greedy rows into a `[m, vocab]` copy before taking the argmax.
+        An argmax is per row and independent of its neighbours, so the gather was
+        never buying anything: `logits.argmax(dim=-1)` is the same answer with no
+        copy, no dict, no Python loop and no readback.
+
+        **A mixed batch writes into one buffer instead of a list.** The greedy rows
+        and each filter group land in the right slots via `index_copy_`, which is a
+        device-side scatter. The index tensors are built from Python lists and
+        copied host to device, which is a *launch*, not a synchronisation: the host
+        hands the copy to the driver and keeps going.
+
+        **The per-row draw survives, because a seed is per request.** Day 40's rule
+        has not changed: one `multinomial` over a `[vocab]` vector per sampled row,
+        from that request's own generator, in row order, so the RNG is consumed in
+        exactly the sequence `sample_batch` consumed it in. The results are
+        concatenated and scattered rather than converted one at a time. That is the
+        difference between N readbacks and none.
+
+        Returns a `[rows]` int64 tensor on the logits device, empty when `rows` is.
         """
         if logits.shape[0] != len(rows):
             raise ValueError(
                 f"the logits have {logits.shape[0]} rows but {len(rows)} requests "
                 "were given: a row is a request, so they must line up"
             )
-        tokens = [0] * len(rows)
+        device = logits.device
+        if not rows:
+            # A step that only prefilled, or one whose whole batch was released.
+            return torch.empty(0, dtype=torch.long, device=device)
 
         greedy = [i for i, (_, p) in enumerate(rows) if p.is_greedy]
+        if len(greedy) == len(rows):
+            # The engine's default path: one argmax over the tensor as it stands.
+            return logits.argmax(dim=-1)
+
+        tokens = torch.empty(len(rows), dtype=torch.long, device=device)
         if greedy:
-            # One argmax for every greedy row in the batch, and no RNG at all.
-            for i, token in zip(greedy, logits[greedy].argmax(dim=-1).tolist()):
-                tokens[i] = int(token)
+            # Argmax over every row and keep the greedy ones. Cheaper than gathering
+            # `[m, vocab]` floats first, and identical: an argmax does not look
+            # sideways.
+            index = torch.tensor(greedy, dtype=torch.long, device=device)
+            tokens.index_copy_(0, index, logits.argmax(dim=-1).index_select(0, index))
 
         groups: dict[tuple[int, float], list[int]] = {}
         for i, (_, params) in enumerate(rows):
@@ -312,10 +381,15 @@ class BatchedSampler:
             block = top_k_filter(block, top_k)
             block = top_p_filter(block, top_p)
             probs = block.softmax(dim=-1)
-            for offset, i in enumerate(members):
-                request_id, params = rows[i]
-                generator = self._generator_for(request_id, params)
-                tokens[i] = int(
-                    torch.multinomial(probs[offset], num_samples=1, generator=generator)
-                )
+            drawn = torch.cat(
+                [
+                    torch.multinomial(
+                        probs[offset],
+                        num_samples=1,
+                        generator=self._generator_for(*rows[i]),
+                    )
+                    for offset, i in enumerate(members)
+                ]
+            )
+            tokens.index_copy_(0, torch.tensor(members, dtype=torch.long, device=device), drawn)
         return tokens

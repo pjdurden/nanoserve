@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <pattern id="idle" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="#fca5a5" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="50" font-size="29" font-weight="700" fill="#1e1b4b">The token that stopped coming home, one row at a time</text>
+  <text x="50" y="78" font-size="15.5" fill="#64748b">Day 46 found `sample` holding 86% to 89% of the engine's whole Python loop. Not because sampling is arithmetic:</text>
+  <text x="50" y="99" font-size="15.5" fill="#64748b">because it returned list[int], and every id was its own int(tensor). A readback is a synchronisation, and one per</text>
+  <text x="50" y="120" font-size="15.5" fill="#64748b">sampled row means the host stops N times a step. Now the sampler returns a [rows] tensor and the step stops once.</text>
+
+  <!-- ===================== LEFT TOP: before and after ===================== -->
+  <text x="50" y="158" font-size="14" font-weight="700" fill="#334155">one decode step at four sampled rows, before and after</text>
+
+  <rect x="50" y="172" width="510" height="176" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="196" font-size="10.5" font-weight="700" fill="#b91c1c">before: sample returns list[int]</text>
+  <rect x="66" y="204" width="140" height="26" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="136" y="222" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">forward</text>
+  <rect x="206" y="204" width="220" height="26" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="316" y="222" font-size="10.5" font-weight="700" fill="#9a3412" text-anchor="middle">sample: draw, int(), draw, int() ...</text>
+  <rect x="426" y="204" width="42" height="26" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="447" y="222" font-size="9" fill="#3730a3" text-anchor="middle">collect</text>
+  <line x1="261" y1="200" x2="261" y2="240" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <line x1="316" y1="200" x2="316" y2="240" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <line x1="371" y1="200" x2="371" y2="240" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <line x1="426" y1="200" x2="426" y2="240" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="478" y="222" font-size="10.5" font-weight="700" fill="#b91c1c">4 syncs</text>
+
+  <text x="66" y="266" font-size="10.5" font-weight="700" fill="#166534">after: sample returns a [rows] tensor</text>
+  <rect x="66" y="274" width="140" height="26" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="136" y="292" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">forward</text>
+  <rect x="206" y="274" width="128" height="26" rx="4" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="270" y="292" font-size="10.5" font-weight="700" fill="#9a3412" text-anchor="middle">sample</text>
+  <rect x="334" y="274" width="52" height="26" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.3"/>
+  <text x="360" y="292" font-size="9" fill="#3730a3" text-anchor="middle">collect</text>
+  <rect x="386" y="274" width="82" height="26" fill="url(#idle)" stroke="#fca5a5" stroke-width="1"/>
+  <line x1="386" y1="270" x2="386" y2="310" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="478" y="292" font-size="10.5" font-weight="700" fill="#166534">1 sync</text>
+
+  <text x="66" y="330" font-size="11" font-weight="700" fill="#1e1b4b">The sync moved from `sample` to `collect`. It did not go away: a stop rule</text>
+  <text x="66" y="344" font-size="11" font-weight="700" fill="#1e1b4b">needs a Python int, so the step still stops the host exactly once.</text>
+
+  <!-- ===================== LEFT BOTTOM: the measurement ===================== -->
+  <text x="50" y="382" font-size="14" font-weight="700" fill="#334155">measured: Llama-3.2-1B, cpu fp32, real logits, median of 25</text>
+  <line x1="50" y1="392" x2="560" y2="392" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="50" y="414" font-size="11.5" font-weight="700" fill="#64748b">greedy</text>
+  <text x="200" y="414" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">per row</text>
+  <text x="300" y="414" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">one tensor</text>
+  <text x="380" y="414" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">faster</text>
+  <text x="560" y="414" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">top-p, syncs before / after</text>
+
+  <text x="50" y="437" font-size="12" fill="#475569">1 slot</text>
+  <text x="200" y="437" font-size="12" fill="#475569" text-anchor="end">0.193 ms</text>
+  <text x="300" y="437" font-size="12" fill="#475569" text-anchor="end">0.145</text>
+  <text x="380" y="437" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">1.33x</text>
+  <text x="560" y="437" font-size="12" fill="#475569" text-anchor="end">1 / 1</text>
+
+  <text x="50" y="458" font-size="12" fill="#475569">2 slots</text>
+  <text x="200" y="458" font-size="12" fill="#475569" text-anchor="end">0.231 ms</text>
+  <text x="300" y="458" font-size="12" fill="#475569" text-anchor="end">0.151</text>
+  <text x="380" y="458" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">1.54x</text>
+  <text x="560" y="458" font-size="12" fill="#475569" text-anchor="end">2 / 1</text>
+
+  <text x="50" y="479" font-size="12" fill="#475569">4 slots</text>
+  <text x="200" y="479" font-size="12" fill="#475569" text-anchor="end">0.299 ms</text>
+  <text x="300" y="479" font-size="12" fill="#475569" text-anchor="end">0.151</text>
+  <text x="380" y="479" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">1.99x</text>
+  <text x="560" y="479" font-size="12" fill="#475569" text-anchor="end">4 / 1</text>
+
+  <text x="50" y="500" font-size="12" fill="#475569">8 slots</text>
+  <text x="200" y="500" font-size="12" fill="#475569" text-anchor="end">0.680 ms</text>
+  <text x="300" y="500" font-size="12" fill="#475569" text-anchor="end">0.358</text>
+  <text x="380" y="500" font-size="12" font-weight="700" fill="#c2410c" text-anchor="end">1.90x</text>
+  <text x="560" y="500" font-size="12" fill="#475569" text-anchor="end">8 / 1</text>
+
+  <rect x="50" y="516" width="510" height="60" rx="9" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="66" y="537" font-size="11.5" font-weight="700" fill="#166534">the greedy path bought Python, not synchronisations</text>
+  <text x="66" y="555" font-size="10.5" fill="#166534">It already read its whole argmax block home in one call, so the count was already 1.</text>
+  <text x="66" y="571" font-size="10.5" fill="#166534">What went is the gather of [rows, 128256] floats, the dict and the per-row loop.</text>
+
+  <rect x="50" y="584" width="510" height="58" rx="9" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+  <text x="66" y="605" font-size="11.5" font-weight="700" fill="#3730a3">the sampled path bought the opposite, and this box cannot time it</text>
+  <text x="66" y="623" font-size="10.5" fill="#3730a3">8 syncs to 1, and 1.02x measured: on a CPU a .tolist() is a memcpy out of the same</text>
+  <text x="66" y="639" font-size="10.5" fill="#3730a3">RAM. `check_measurable` refuses to turn that latency into a claim about a card.</text>
+
+  <!-- ===================== RIGHT TOP: the three strategies ===================== -->
+  <text x="620" y="158" font-size="14" font-weight="700" fill="#334155">three places a step's readback can be, at B rows, S of them sampled</text>
+  <line x1="620" y1="168" x2="1150" y2="168" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="192" font-size="11.5" font-weight="700" fill="#475569">per_row</text>
+  <text x="760" y="192" font-size="11.5" font-weight="700" fill="#b91c1c">S + 1 syncs</text>
+  <text x="880" y="192" font-size="10.5" fill="#64748b">Day 40: one tolist() for the greedy block, one int() per row</text>
+
+  <text x="620" y="216" font-size="11.5" font-weight="700" fill="#475569">one_transfer</text>
+  <text x="760" y="216" font-size="11.5" font-weight="700" fill="#c2410c">1 sync</text>
+  <text x="880" y="216" font-size="10.5" fill="#64748b">Day 47: collect resolves the whole [rows] tensor, once</text>
+
+  <text x="620" y="240" font-size="11.5" font-weight="700" fill="#475569">deferred</text>
+  <text x="760" y="240" font-size="11.5" font-weight="700" fill="#166534">1/k syncs</text>
+  <text x="880" y="240" font-size="10.5" fill="#64748b">next: resolve step N while step N+1 is already in flight</text>
+
+  <rect x="620" y="256" width="530" height="76" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="636" y="277" font-size="11.5" font-weight="700" fill="#334155">the bill is per journey, not per byte</text>
+  <text x="636" y="296" font-size="10.5" fill="#475569">One step's tokens are [rows] int64: 64 bytes at eight rows, on a bus that moves</text>
+  <text x="636" y="312" font-size="10.5" fill="#475569">gigabytes a second. Essentially all of the cost is fixed per call, so `readback_s`</text>
+  <text x="636" y="328" font-size="10.5" fill="#475569">prices the count and ignores the payload. Go fewer times, not lighter.</text>
+
+  <!-- ===================== RIGHT MIDDLE: the trap ===================== -->
+  <rect x="620" y="348" width="530" height="112" rx="9" fill="#fff7ed" stroke="#c2410c" stroke-width="1.4"/>
+  <text x="636" y="370" font-size="11.5" font-weight="700" fill="#9a3412">two different savings, and adding them is the overclaim</text>
+  <text x="636" y="390" font-size="10.5" fill="#9a3412">Python removed: one gather, one dict, one loop. Real here, measurable here,</text>
+  <text x="636" y="406" font-size="10.5" fill="#9a3412">1.33x to 1.99x on the sample phase, and it grows with the batch.</text>
+  <text x="636" y="426" font-size="10.5" fill="#9a3412">Syncs removed: S + 1 down to 1. Worth nothing on this box and worth the</text>
+  <text x="636" y="442" font-size="10.5" fill="#9a3412">whole week on a card, where each one stops the host running ahead.</text>
+  <text x="636" y="458" font-size="10.5" font-weight="700" fill="#7c2d12">The greedy path gets the first and none of the second. Report them apart.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the gates ===================== -->
+  <text x="620" y="494" font-size="14" font-weight="700" fill="#334155">four ways this quietly comes undone, and what catches each</text>
+  <line x1="620" y1="504" x2="1150" y2="504" stroke="#cbd5e1" stroke-width="1.2"/>
+
+  <text x="620" y="526" font-size="10.5" font-weight="700" fill="#475569">a stray int() creeps back</text>
+  <text x="850" y="526" font-size="10.5" fill="#64748b">check_single_transfer: transfers per step &gt; 1</text>
+  <text x="620" y="546" font-size="10.5" font-weight="700" fill="#475569">the sampler returns a list</text>
+  <text x="850" y="546" font-size="10.5" fill="#64748b">check_device_resident: not a tensor, or wrong device</text>
+  <text x="620" y="566" font-size="10.5" font-weight="700" fill="#475569">rows shift before collect</text>
+  <text x="850" y="566" font-size="10.5" fill="#64748b">check_in_row_order: two callers swap next tokens, silently</text>
+  <text x="620" y="586" font-size="10.5" font-weight="700" fill="#475569">a CPU prices the syncs</text>
+  <text x="850" y="586" font-size="10.5" fill="#64748b">check_measurable: no bus, so no readback to price</text>
+
+  <rect x="620" y="600" width="530" height="42" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.3"/>
+  <text x="636" y="617" font-size="10.5" fill="#475569">A second .tolist() is a second synchronisation, so TokenBatch memoises: at most one</text>
+  <text x="636" y="633" font-size="10.5" fill="#475569">journey per step however many callers look. A plain property is that bug, spelled shorter.</text>
+
+  <text x="50" y="662" font-size="10.5" fill="#94a3b8">nanoserve day 47 · output.py, one instrument, one batch, one processor, four gates · sample_batch_device · syncbench.py on real weights · 1116 green</text>
+</svg>

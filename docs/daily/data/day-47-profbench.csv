@@ -1,0 +1,4 @@
+slots,requests,max_tokens,device,steps,warmup_dropped,mean_batch,mean_step_ms,host_ms,device_ms,loop_ms,loop_share,loop_ms_per_token,tokens_per_second,sync_points,model,top1,top1_share,top3_share,ceiling,projected_step_ms
+1,4,12,cpu,43,2,1.0,389.4013,389.3307,0.0,0.328,0.0008,0.328,2.568,1,serial,forward,0.9992,0.9999,,
+2,4,12,cpu,21,2,2.0,775.353,775.262,0.0,0.7498,0.001,0.3749,2.579,1,serial,forward,0.999,0.9999,,
+4,4,12,cpu,10,2,4.0,1135.9923,1135.8774,0.0,0.7313,0.0006,0.1828,3.521,1,serial,forward,0.9994,0.9999,,

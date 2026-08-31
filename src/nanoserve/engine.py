@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .output import OutputProcessor, TokenBatch
 from .profiler import NULL_RECORDER
 from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
@@ -131,6 +132,12 @@ class Engine:
         # the `Request`, per-request RNG state lives here, keyed by request id and
         # dropped when the request finishes.
         self.sampler = BatchedSampler(seed=seed)
+        # Day 47. The collect half, and the only place in this loop allowed to bring
+        # a tensor back to the host. The sampler now returns a `[rows]` device tensor,
+        # so a step reads its tokens home exactly once, here, instead of once per
+        # sampled row inside `sample`. It counts that too, which is what makes
+        # `output.check_single_transfer` a check rather than a comment.
+        self.output = OutputProcessor()
         # The scheduler owns slot lifetime and has no tensors; this is the tensor
         # half of releasing one. Installed rather than passed to the constructor so
         # a caller who built the pair by hand cannot forget it, and because the
@@ -286,10 +293,10 @@ class Engine:
             self.prefill_tokens += int(batch.lengths.sum().item())
             self.prefill_rows += batch.batch_size
 
-        with timing.phase("sample", syncs=True, device=True):
+        with timing.phase("sample", device=True):
             tokens = self._sample(requests, last_token_logits(logits, batch))
 
-        with timing.phase("collect"):
+        with timing.phase("collect", syncs=True):
             self._collect(requests, tokens)
 
     def _decode(self, requests, timing) -> None:
@@ -322,14 +329,20 @@ class Engine:
         with timing.phase("forward", device=True):
             logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
 
-        with timing.phase("sample", syncs=True, device=True):
-            # `syncs=True` is the load-bearing annotation of the whole profile.
-            # `sample_batch` returns Python ints, so the host waits here for every
-            # kernel this step queued, which is what stops the launch overhead of the
-            # *next* step from hiding underneath this step's arithmetic.
+        with timing.phase("sample", device=True):
+            # Day 46 measured this phase at 86% to 89% of the whole host loop and
+            # Day 47 found out why: it used to end in one `int(tensor)` per row. Now
+            # it ends in a `[rows]` tensor that stays where it was computed, so
+            # nothing here waits on a kernel and `syncs` is gone from this line.
             tokens = self._sample(requests, logits[:, -1])
 
-        with timing.phase("collect"):
+        with timing.phase("collect", syncs=True):
+            # Where the annotation went, and the honest reading of the day: a sync
+            # moved rather than a sync removed. A stop rule needs a Python int, so
+            # the step still stops the host exactly once. Deferring this (resolving
+            # step N's tokens while step N+1 is already in flight, at the cost of one
+            # token of overshoot past a stop condition) is what removes the last one;
+            # `nanoserve.output` prices it under `strategy="deferred"`.
             self._collect(requests, tokens)
 
     def _sync_rows(self, requests) -> None:
@@ -348,7 +361,7 @@ class Engine:
             if held < len(request.block_ids):
                 self.cache.extend_row(request.slot, request.block_ids[held:])
 
-    def _sample(self, requests, logits: torch.Tensor) -> list[int]:
+    def _sample(self, requests, logits: torch.Tensor) -> TokenBatch:
         """One token per row, each under the params its own request asked for.
 
         Until Day 40 this line was `.argmax(dim=-1)` and it was the same call for
@@ -357,16 +370,25 @@ class Engine:
         seed. What is handed down is a request id per row as well as its params,
         because the RNG state is keyed by id and has to survive from this step to
         the next one, and across a preemption that puts the row back in a prefill.
-        """
-        return self.sampler.sample_batch(
-            logits, [(r.request_id, r.sampling) for r in requests]
-        )
 
-    def _collect(self, requests, tokens: list[int]) -> None:
-        """Hand each row its sampled token. `append_token` applies the stop rules."""
-        for request, token in zip(requests, tokens):
-            request.append_token(int(token))
-            self.collected_tokens += 1
+        Day 47 changes what comes back and not what is drawn. `sample_batch_device`
+        returns the tokens as a tensor on the device the forward ran on, and the
+        request ids ride along in the `TokenBatch` so that `collect` can check the
+        rows are still the rows it sampled. They can stop being that: between these
+        two phases nothing moves, but between one step and the next the scheduler
+        releases and admits, and a `[rows]` tensor on its own is anonymous.
+        """
+        rows = [(r.request_id, r.sampling) for r in requests]
+        return TokenBatch(self.sampler.sample_batch_device(logits, rows), [i for i, _ in rows])
+
+    def _collect(self, requests, tokens: TokenBatch) -> None:
+        """Bring the step's tokens home, once, and let each request apply its rules.
+
+        The one synchronisation left in a decode step. `OutputProcessor.apply`
+        resolves the tensor with a single `.tolist()` and calls `append_token`,
+        which is still where the stop rules live.
+        """
+        self.collected_tokens += len(self.output.apply(tokens, requests))
 
     # --- driving it -----------------------------------------------------------
 
