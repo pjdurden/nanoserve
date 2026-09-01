@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .deferred import DeferredOutputProcessor
 from .output import OutputProcessor, TokenBatch
 from .profiler import NULL_RECORDER
 from .sampling import BatchedSampler, SamplingParams
@@ -91,6 +92,15 @@ class Engine:
                allocator the scheduler admits against. Same pool, one bookkeeper.
     pad_id:    filler for the prefill rectangle. Never attended to and never
                written to the cache, so any in-vocab id works.
+    defer_window: Day 48. How many steps the sampled tokens may stay on the device
+               before the host looks at them. 0 is Day 47's loop: resolve every
+               step, one journey home per step. 1 is a one-step lag, which does not
+               reduce that count and does let the next decode take its `input_ids`
+               straight from the tensor the sampler left. k brings k steps home in
+               one journey, and costs up to k rows per finished request that
+               nobody keeps. The scheduler is given a matching `lookahead`,
+               because a token still on the device is in the cache row and not in
+               `Request.num_tokens`. See `nanoserve.deferred`.
     seed:      seeds the sampler's *shared* generator, the one requests that gave
                no seed of their own draw from. It makes a fixed set of requests
                repeatable; it cannot make one request repeatable, because with a
@@ -111,6 +121,7 @@ class Engine:
         cache: BatchedPagedKVCache,
         pad_id: int = 0,
         seed: int | None = None,
+        defer_window: int = 0,
     ):
         if cache.batch_size != scheduler.max_batch_size:
             raise ValueError(
@@ -137,7 +148,17 @@ class Engine:
         # so a step reads its tokens home exactly once, here, instead of once per
         # sampled row inside `sample`. It counts that too, which is what makes
         # `output.check_single_transfer` a check rather than a comment.
-        self.output = OutputProcessor()
+        #
+        # Day 48 makes "once" adjustable. With a window the tokens stay on the
+        # device across step boundaries and several steps go home together, so the
+        # counter this reports is a rate below one rather than exactly one, and the
+        # two processors are kept as two classes rather than one with a flag
+        # because the deferred one has three ways for a token not to reach its
+        # request and the immediate one has none.
+        self.defer_window = defer_window
+        self.output = (
+            DeferredOutputProcessor(window=defer_window) if defer_window else OutputProcessor()
+        )
         # The scheduler owns slot lifetime and has no tensors; this is the tensor
         # half of releasing one. Installed rather than passed to the constructor so
         # a caller who built the pair by hand cannot forget it, and because the
@@ -169,15 +190,24 @@ class Engine:
         max_batch_size: int = 8,
         pad_id: int = 0,
         seed: int | None = None,
+        defer_window: int = 0,
     ) -> Engine:
-        """Wire a scheduler and a matching cache over one fresh pool."""
+        """Wire a scheduler and a matching cache over one fresh pool.
+
+        `defer_window` reaches the scheduler as `lookahead` and nowhere else. The
+        two numbers are the same number seen from two sides: one is how many steps
+        of tokens are still on the device, the other is how many tokens of block
+        headroom that means every running row needs. Letting a caller set them
+        apart is letting them set them wrong.
+        """
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
             model,
-            Scheduler(allocator, max_batch_size=max_batch_size),
+            Scheduler(allocator, max_batch_size=max_batch_size, lookahead=defer_window),
             BatchedPagedKVCache(model.config, allocator, batch_size=max_batch_size),
             pad_id=pad_id,
             seed=seed,
+            defer_window=defer_window,
         )
 
     @property
@@ -242,6 +272,15 @@ class Engine:
             if out.decode:
                 self._decode(out.decode, timing)
 
+            if self.defer_window:
+                # After both forwards have been queued, which is the whole placement
+                # argument: the host has handed the device this step's work before it
+                # stops to look at an older step's answer. On one stream that is a
+                # reordering rather than an overlap, and what it actually buys is the
+                # batching: everything but the newest batch goes home together.
+                with timing.phase("settle", syncs=True):
+                    self.collected_tokens += len(self.output.settle())
+
             self.issued_tokens += out.batch_size
             self.iterations += 1
             return out
@@ -296,7 +335,7 @@ class Engine:
         with timing.phase("sample", device=True):
             tokens = self._sample(requests, last_token_logits(logits, batch))
 
-        with timing.phase("collect", syncs=True):
+        with timing.phase("collect", syncs=not self.defer_window):
             self._collect(requests, tokens)
 
     def _decode(self, requests, timing) -> None:
@@ -314,12 +353,11 @@ class Engine:
         with timing.phase("build_inputs"):
             rows = [r.slot for r in requests]
             device = self.cache.k_pool[0].device if self.cache.k_pool[0] is not None else None
-            # Two host-to-device copies of one integer per row, built out of Python
-            # lists, every step. Tiny in bytes and not tiny in time: this is the phase
+            # One host-to-device copy of one integer per row, built out of a Python
+            # list, every step. Tiny in bytes and not tiny in time: this is the phase
             # a captured graph makes disappear by writing into a fixed input buffer.
-            input_ids = torch.tensor(
-                [[r.output_token_ids[-1]] for r in requests], dtype=torch.long, device=device
-            )
+            # Day 48 removes the other one. See `_decode_input_ids`.
+            input_ids = self._decode_input_ids(requests, device)
             positions = torch.tensor(
                 [[self.cache.tables[row].num_tokens] for row in rows],
                 dtype=torch.long,
@@ -336,13 +374,14 @@ class Engine:
             # nothing here waits on a kernel and `syncs` is gone from this line.
             tokens = self._sample(requests, logits[:, -1])
 
-        with timing.phase("collect", syncs=True):
-            # Where the annotation went, and the honest reading of the day: a sync
-            # moved rather than a sync removed. A stop rule needs a Python int, so
-            # the step still stops the host exactly once. Deferring this (resolving
-            # step N's tokens while step N+1 is already in flight, at the cost of one
-            # token of overshoot past a stop condition) is what removes the last one;
-            # `nanoserve.output` prices it under `strategy="deferred"`.
+        with timing.phase("collect", syncs=not self.defer_window):
+            # Where Day 47's annotation went, and the honest reading of that day: a
+            # sync moved rather than a sync removed. A stop rule needs a Python int,
+            # so the step still stops the host exactly once. Day 48 is what removes
+            # it: with `defer_window` set, this phase only hands the tensor over and
+            # the stop is `settle`, one step or more later. The annotation follows
+            # the sync rather than the phase name, which is the only way
+            # `sync_points` stays a statement about the code that ran.
             self._collect(requests, tokens)
 
     def _sync_rows(self, requests) -> None:
@@ -381,14 +420,62 @@ class Engine:
         rows = [(r.request_id, r.sampling) for r in requests]
         return TokenBatch(self.sampler.sample_batch_device(logits, rows), [i for i, _ in rows])
 
-    def _collect(self, requests, tokens: TokenBatch) -> None:
-        """Bring the step's tokens home, once, and let each request apply its rules.
+    def _decode_input_ids(self, requests, device) -> torch.Tensor:
+        """This step's input tokens, from the device if last step's are still on it.
 
-        The one synchronisation left in a decode step. `OutputProcessor.apply`
-        resolves the tensor with a single `.tolist()` and calls `append_token`,
-        which is still where the stop rules live.
+        The fast path is the day. The token a decode row forwards is exactly the
+        token the previous step sampled for that row, so if the previous step's
+        `[rows]` tensor is still held and its rows are still these rows, the input
+        is `tensor.unsqueeze(1)`: a view, no allocation, no Python list, and above
+        all no journey home to build one out of. The slow path is Day 33's line,
+        and it needs `output_token_ids[-1]`, which is a Python int, which is a
+        readback that has not happened yet.
+
+        The row check is not a formality. Between one step and the next the
+        scheduler releases finished rows and admits new ones, so a held `[rows]`
+        tensor can be the right length and the wrong rows, and using it then hands
+        every row after the change somebody else's token in fluent, plausible,
+        wrong text. When the rows differ the held tokens are not this step's input
+        and the requests below need ints the engine does not have, so it pays for
+        them here and goes back to deferring on the next step.
         """
-        self.collected_tokens += len(self.output.apply(tokens, requests))
+        held = self.output.newest if self.defer_window else None
+        if held is not None and held.request_ids == tuple(r.request_id for r in requests):
+            return held.tokens.unsqueeze(1)
+        if self.defer_window:
+            self.collected_tokens += len(self.output.flush())
+        return torch.tensor(
+            [[r.output_token_ids[-1]] for r in requests], dtype=torch.long, device=device
+        )
+
+    def _collect(self, requests, tokens: TokenBatch) -> None:
+        """Hand the step's tokens to the output path, and let it decide when to look.
+
+        Day 47's version was the whole collect phase: one `.tolist()` and one
+        `append_token` per row, the single synchronisation left in a step. With a
+        deferral window it is a handover instead, and the transfer happens in
+        `settle` after the next forward has been queued, or later still if the
+        window covers more steps than one.
+        """
+        if self.defer_window:
+            self.output.defer(tokens, requests)
+        else:
+            self.collected_tokens += len(self.output.apply(tokens, requests))
+
+    def flush(self) -> int:
+        """Bring every held token home. The end of a run, and a no-op without a window.
+
+        A run drains itself in the ordinary case, because a request is only finished
+        once its stop token has been applied and `has_unfinished` is what ends the
+        loop. What is left afterwards is overshoot: rows forwarded for requests that
+        were already done. They still have to be counted, or `waste_fraction` reports
+        a run that issued more tokens than it can account for.
+        """
+        if not self.defer_window:
+            return 0
+        applied = len(self.output.flush())
+        self.collected_tokens += applied
+        return applied
 
     # --- driving it -----------------------------------------------------------
 
@@ -416,6 +503,7 @@ class Engine:
                     f"{self.scheduler.num_running} running, "
                     f"{self.scheduler.num_waiting} waiting"
                 )
+        self.flush()
         return finished
 
     def generate(

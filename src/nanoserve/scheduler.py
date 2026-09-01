@@ -369,6 +369,14 @@ class Scheduler:
     watermark_blocks: the same reserve named in blocks, overriding the share. The
                     unit a sweep needs, since `int(share * num_blocks)` is 0 for
                     any pool under a hundred blocks.
+    lookahead:      tokens of block headroom every request must hold beyond the
+                    ones it has already been given. Zero since Day 33 and the right
+                    answer for an engine that appends a token before it forwards
+                    it. Day 48's deferred output processing breaks that assumption:
+                    a token still on the device is already in the cache row and not
+                    yet in `num_tokens`, so a request's length lags its row's by up
+                    to the deferral window, and the rule below would top it up to
+                    blocks it has already outgrown. See `blocks_needed_for`.
     on_release:     called with a slot index whenever that slot goes back to the
                     free list, whether the request finished or was preempted. The
                     scheduler owns slot lifetime and has no tensors; the engine
@@ -397,14 +405,18 @@ class Scheduler:
         max_batch_size: int = 8,
         watermark: float = 0.01,
         watermark_blocks: int | None = None,
+        lookahead: int = 0,
         on_release: Callable[[int], None] | None = None,
     ):
         if max_batch_size < 1:
             raise ValueError(f"max_batch_size must be at least 1, got {max_batch_size}")
         if not 0.0 <= watermark < 1.0:
             raise ValueError(f"watermark must be in [0, 1), got {watermark}")
+        if lookahead < 0:
+            raise ValueError(f"lookahead is a number of tokens, got {lookahead}")
         self.allocator = allocator
         self.max_batch_size = max_batch_size
+        self.lookahead = lookahead
         self.on_release = on_release
         # Blocks admission leaves on the table. A newcomer that takes the pool's
         # last block is a preemption waiting to happen: it is the youngest, so it is
@@ -506,11 +518,16 @@ class Scheduler:
             )
         if request.request_id in self._by_id:
             raise ValueError(f"request id {request.request_id!r} is already known")
-        need = self.allocator.blocks_for_length(request.worst_case_tokens)
+        # The headroom counts at the door too. A request that fits an empty pool
+        # exactly does not fit it with a deferral window's worth of overshoot on
+        # top, and the door is the only place that can say so before the engine
+        # spins on it forever.
+        largest = request.worst_case_tokens + self.lookahead
+        need = self.allocator.blocks_for_length(largest)
         if need > self.allocator.num_blocks:
             raise KVCacheExhausted(
                 f"request {request.request_id!r} needs {need} blocks for "
-                f"{request.worst_case_tokens} tokens; the whole pool is "
+                f"{largest} tokens; the whole pool is "
                 f"{self.allocator.num_blocks}"
             )
         request.arrival = self._arrivals
@@ -546,8 +563,19 @@ class Scheduler:
         Never more than 1 for a running request, because a running request adds
         exactly one token per iteration. That bound is why the growth loop can
         preempt one victim at a time and know it is making progress.
+
+        `lookahead` is Day 48's amendment and it is zero everywhere else. Under
+        deferred output processing the sampled token stays on the device for up to
+        a window of steps, so it is written into the cache row before it is ever
+        appended to the request: `num_tokens` is then behind the row it is meant to
+        size, and topping up to it leaves the row one token short of a block it is
+        about to cross. Nothing raises when that happens. `BlockTable.append`
+        reaches the allocator itself, the pool is booked twice for one sequence,
+        and the release frees only the blocks the request knows about. Buying the
+        headroom here keeps every block in this engine bought in one place.
         """
-        return self.allocator.blocks_for_length(request.num_tokens) - len(request.block_ids)
+        target = request.num_tokens + self.lookahead
+        return self.allocator.blocks_for_length(target) - len(request.block_ids)
 
     def schedule(self) -> SchedulerOutput:
         """Reap, grow (preempting if the pool is dry), admit, and hand back the batch."""
@@ -717,8 +745,18 @@ class Scheduler:
 
     @property
     def used_blocks(self) -> int:
-        """Blocks the running set's real tokens actually need right now."""
-        return sum(self.allocator.blocks_for_length(r.num_tokens) for r in self.running)
+        """Blocks the running set's real tokens actually need right now.
+
+        Plus `lookahead`, which is zero unless the engine defers its output. Under
+        deferral the headroom is not slack: those blocks hold K/V for tokens the
+        forwards have already written and the requests have not been told about
+        yet, so counting them as unused would report `reservation_waste` climbing
+        for memory that is doing exactly the job it was bought for.
+        """
+        return sum(
+            self.allocator.blocks_for_length(r.num_tokens + self.lookahead)
+            for r in self.running
+        )
 
     @property
     def reservation_waste(self) -> float:

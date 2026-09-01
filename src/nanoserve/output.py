@@ -193,6 +193,33 @@ class TokenBatch:
             )
         return self._ids
 
+    def adopt_ids(self, ids: Sequence[int]) -> None:
+        """Take resolved ids that came home in somebody else's transfer. Day 48.
+
+        The one thing a batch cannot do for itself. Deferred output processing
+        concatenates several steps' token tensors and brings the whole lot back in
+        a single `.tolist()`, so each batch's slice of that list arrives from
+        outside rather than from its own `resolve`. Handing it in here is what
+        keeps `is_resolved` and the memoisation true afterwards: a batch that was
+        filled this way must never pay for a second journey.
+
+        Refuses a batch that already has ids, because that is the caller draining
+        the same step twice, and refuses a wrong length, because a slice taken at
+        the wrong offset hands every row after it another row's token and every
+        answer stays grammatical.
+        """
+        if self._ids is not None:
+            raise ValueError(
+                f"this batch of {self.num_rows} rows is already resolved: adopting "
+                "again means a step was drained twice"
+            )
+        if len(ids) != self.num_rows:
+            raise ValueError(
+                f"{len(ids)} ids for {self.num_rows} rows: a slice taken at the wrong "
+                "offset hands every row after it somebody else's token"
+            )
+        self._ids = list(ids)
+
 
 class OutputProcessor:
     """Turns a `TokenBatch` into appended tokens, once, and counts what it cost.
