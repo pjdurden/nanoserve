@@ -6,24 +6,37 @@
   <img src="docs/diagrams/architecture-overview.svg" alt="nanoserve architecture: the life of a request" width="840">
 </p>
 
-Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work: roughly 1.5k to 2k annotated lines, built and posted in public over 100 days.
+Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas at a size you can actually read: **about 9k annotated lines of engine**, plus a separate ~7.8k-line measurement harness that exists to prove the numbers rather than to serve tokens. No subsystem is more than a few hundred lines, so any one of them is a sitting. Built and posted in public over 100 days.
 
 The rule of the build is **correctness before speed**. Every numerical piece is checked against the HuggingFace reference to 1e-5 before anything is optimized. The first thing built was not a model, it was the test harness that proves the model right.
 
 ## Status
 
-**Day 7 of 100 (Week 1 done).** Every forward-pass primitive is built and a full transformer block is assembled from them, each verified against the real Llama-3.2-1B.
+**Day 48 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 49 onward are the measurement and hardening pass.
 
-| Stage | Verified against HuggingFace | Status |
+Every numerical piece is checked against HuggingFace before anything is optimized. **1175 tests green.**
+
+| Stage | Verified against | Status |
 | --- | --- | --- |
-| Weight loading (safetensors name mapping) | tensor inventory + shapes | done |
-| RMSNorm | `input_layernorm` hook, to 1e-5 | done |
-| RoPE (inv_freq, cos/sin table, rotate-half apply) | `rotary_emb` + `apply_rotary_pos_emb`, 1e-6 to 1e-9 | done |
-| SwiGLU MLP | `mlp` hook, to 1e-5 | done |
-| GQA attention (32 query / 8 KV heads, causal prefill) | `self_attn` hook, to 1e-5 | done |
-| Full transformer block (pre-norm, two residuals) | `model.layers[0]` hook, to 1e-5 | done |
-| Full forward pass + greedy decode | token-for-token | next (Week 2: stack the blocks) |
-| Sampling, paged KV cache, Triton kernel, scheduler, OpenAI server | | roadmap below |
+| Weight loading (safetensors, HF -> nanoserve name mapping, tied lm_head) | tensor inventory + shapes | done, day 3 |
+| RMSNorm | `input_layernorm` hook, to 1e-5 | done, day 4 |
+| RoPE (inv_freq, cos/sin table, rotate-half apply) | `rotary_emb` + `apply_rotary_pos_emb`, 1e-6 to 1e-9 | done, day 4 |
+| SwiGLU MLP | `mlp` hook, to 1e-5 | done, day 5 |
+| GQA attention (32 query / 8 KV heads, causal prefill) | `self_attn` hook, to 1e-5 | done, day 6 |
+| Full transformer block (pre-norm, two residuals) | `model.layers[0]` hook, to 1e-5 | done, day 7 |
+| Full forward pass + greedy decode | token-for-token vs HF, 20 tokens | done, days 8-9 |
+| Sampling (temperature, top-k, top-p) | masks pinned bit-exact to HF warpers | done, day 10 |
+| Contiguous KV cache | tokens bit-identical to the uncached path | done, day 11 |
+| Block allocator + block table | atomic alloc/free, lazy growth | done, days 14-15 |
+| Paged KV cache (real K/V through scattered blocks) | torch paged-attention reference | done, days 16-19 |
+| Triton paged-attention kernel (streaming online softmax) | the torch reference, and a log-log scaling fit | done, days 21-25 |
+| Static batching (padded, ragged prompts, per-sequence block tables) | goodput vs batch size | done, days 27-29 |
+| Continuous batching (waiting/running queues, iteration-level) | Week 8 acceptance test, continuous vs static | done, days 30-32 |
+| Preemption by recompute + incremental allocation | invariants checked every iteration | done, days 33-36 |
+| OpenAI-compatible server, FastAPI over the sync engine loop | Week 11 acceptance test over a real socket | done, days 37-41 |
+| SSE streaming (including the token that is half a character) | | done, day 39 |
+| Serving benchmark, TTFT split, latency-throughput curve | five parts that sum exactly | done, days 42-48 |
+| Speculative decoding, tensor parallelism, prefix caching, quantization | | out of scope for v1, see roadmap |
 
 Daily build log: [docs/daily/](docs/daily/). Full 100-day plan: [docs/PLAN.md](docs/PLAN.md).
 
@@ -78,7 +91,9 @@ Everything else is standard transformer code. These two are why an inference eng
 
 ## Roadmap
 
-**v1 (by Day 100):** load Llama-3.2-1B from safetensors into hand-written layers; generate text that matches HuggingFace token-for-token under greedy decoding; temperature / top-k / top-p sampling; a paged KV cache with a block allocator; a hand-written Triton paged-attention kernel; continuous batching with preemption; an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
+**v1 — landed by Day 48, ahead of plan.** Llama-3.2-1B loaded from safetensors into hand-written layers; text that matches HuggingFace token-for-token under greedy decoding; temperature / top-k / top-p sampling; a paged KV cache with a block allocator; a hand-written Triton paged-attention kernel; continuous batching with preemption; an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
+
+**Days 49-100:** measurement and hardening. Profiling on real hardware, the latency-throughput knee as arithmetic, host time against device time, and the failure modes written down.
 
 **Out of scope for v1 (the v2 teaser):** speculative decoding, tensor parallelism, prefix caching, quantization. v1 stops at a correct, batched, served engine.
 

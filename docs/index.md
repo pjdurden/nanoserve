@@ -5,7 +5,7 @@ nav_order: 1
 
 A from-scratch LLM inference engine you can read in an afternoon. Think nanoGPT, but for serving instead of training.
 
-Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas in the smallest code that still does the real work: roughly 1.5k to 2k annotated lines, built and posted in public over 100 days. Correctness before speed: every numerical piece is checked against the HuggingFace reference to 1e-5 before anything is optimized.
+Production inference engines like vLLM and SGLang are 100k+ lines. The ideas that make them fast (paged attention, continuous batching, iteration-level scheduling) are buried under that scale. nanoserve implements those same ideas at a size you can actually read: about 9k annotated lines of engine, plus a separate ~7.8k-line measurement harness that exists to prove the numbers rather than to serve tokens. Built and posted in public over 100 days; day 48 of 100, with the v1 engine feature-complete and 1175 tests green. Correctness before speed: every numerical piece is checked against the HuggingFace reference to 1e-5 before anything is optimized.
 
 <p align="center">
   <img src="diagrams/architecture-overview.svg" alt="nanoserve architecture: the life of a request" width="840">
