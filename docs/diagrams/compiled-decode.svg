@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <pattern id="padcells" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="#fef2f2"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="#fca5a5" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="27" font-weight="700" fill="#1e1b4b">The decode forward behind a compiler, and the scissors in it</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Dynamo does not fail on code it cannot trace. It breaks: ends the graph, hands the line back to Python, starts a new graph</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">after it. A function with twelve breaks is still "compiled", still correct, and still mostly the eager loop. Every one of mine</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">was my own validation reading `context_lens` back to the host, once per layer per step.</text>
+
+  <!-- ===================== LEFT TOP: what one decode traces to ===================== -->
+  <text x="50" y="148" font-size="13.5" font-weight="700" fill="#334155">one decode forward, traced (`torch._dynamo.explain`, 2 layers)</text>
+
+  <rect x="50" y="160" width="540" height="180" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="184" font-size="10.5" font-weight="700" fill="#b91c1c">before: 13 graphs, 12 breaks</text>
+  <text x="66" y="198" font-size="9.5" fill="#7f1d1d">`int(context_lens.min())` and `.max()`, on every layer</text>
+  <g>
+    <rect x="66" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="94" y1="203" x2="94" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="98" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="126" y1="203" x2="126" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="130" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="158" y1="203" x2="158" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="162" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="190" y1="203" x2="190" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="194" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="222" y1="203" x2="222" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="226" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="254" y1="203" x2="254" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="258" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="286" y1="203" x2="286" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="290" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="318" y1="203" x2="318" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="322" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="350" y1="203" x2="350" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="354" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="382" y1="203" x2="382" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="386" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="414" y1="203" x2="414" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="418" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+    <line x1="446" y1="203" x2="446" y2="233" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <rect x="450" y="206" width="24" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.2"/>
+  </g>
+  <text x="486" y="222" font-size="10" font-weight="700" fill="#b91c1c">13 fragments</text>
+  <text x="66" y="250" font-size="9.5" fill="#64748b">each dashed line is a return to the interpreter, and on a device</text>
+  <text x="66" y="263" font-size="9.5" fill="#64748b">a point where the queue is allowed to drain</text>
+
+  <text x="66" y="290" font-size="10.5" font-weight="700" fill="#15803d">after: 1 graph, 0 breaks, 137 ops captured</text>
+  <rect x="66" y="298" width="408" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="270" y="314" font-size="9.5" fill="#166534" text-anchor="middle">embed, 2 x (norm, qkv, rope, paged read, o_proj, mlp), norm, lm_head</text>
+  <text x="486" y="314" font-size="10" font-weight="700" fill="#15803d">1 fragment</text>
+  <text x="66" y="334" font-size="9.5" fill="#64748b">the fix is not deleting the check: the cache knew both numbers as Python ints</text>
+
+  <!-- ===================== RIGHT TOP: what the guard is on ===================== -->
+  <text x="620" y="148" font-size="13.5" font-weight="700" fill="#334155">what the graph is guarded on, and where dynamo gives up</text>
+  <rect x="620" y="160" width="530" height="180" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="182" font-size="9.5" fill="#64748b">Expected: the [rows, max_ctx] mapping widens every step.</text>
+  <text x="636" y="195" font-size="9.5" fill="#64748b">`dynamic=True` makes that symbolic, and it did not help.</text>
+
+  <line x1="672" y1="300" x2="1120" y2="300" stroke="#94a3b8" stroke-width="1.2"/>
+  <line x1="672" y1="206" x2="672" y2="300" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="666" y="216" font-size="8.5" fill="#64748b" text-anchor="end">num</text>
+  <text x="666" y="226" font-size="8.5" fill="#64748b" text-anchor="end">tokens</text>
+  <text x="1120" y="313" font-size="8.5" fill="#64748b" text-anchor="end">decode step</text>
+
+  <polyline points="672,294 700,294 700,288 728,288 728,282 756,282 756,276 784,276 784,270 812,270 812,264 840,264 840,258 868,258 868,252 896,252 896,246 924,246 924,240 952,240 952,234 980,234 980,228 1008,228 1008,222 1036,222 1036,216 1064,216 1064,210 1092,210"
+            fill="none" stroke="#4338ca" stroke-width="2"/>
+  <g fill="#4338ca">
+    <circle cx="686" cy="294" r="3"/><circle cx="714" cy="288" r="3"/><circle cx="742" cy="282" r="3"/>
+    <circle cx="770" cy="276" r="3"/><circle cx="798" cy="270" r="3"/><circle cx="826" cy="264" r="3"/>
+    <circle cx="854" cy="258" r="3"/><circle cx="882" cy="252" r="3"/>
+  </g>
+  <g fill="#b91c1c">
+    <circle cx="910" cy="246" r="3"/><circle cx="938" cy="240" r="3"/><circle cx="966" cy="234" r="3"/>
+    <circle cx="994" cy="228" r="3"/><circle cx="1022" cy="222" r="3"/><circle cx="1050" cy="216" r="3"/>
+    <circle cx="1078" cy="210" r="3"/>
+  </g>
+  <line x1="896" y1="204" x2="896" y2="304" stroke="#b91c1c" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="890" y="216" font-size="9" font-weight="700" fill="#4338ca" text-anchor="end">8 builds</text>
+  <text x="902" y="216" font-size="9" font-weight="700" fill="#b91c1c">cache_size_limit</text>
+  <text x="902" y="270" font-size="9" fill="#b91c1c">no more builds:</text>
+  <text x="902" y="282" font-size="9" fill="#b91c1c">eager from here on,</text>
+  <text x="902" y="294" font-size="9" fill="#b91c1c">for the whole process</text>
+
+  <text x="636" y="322" font-size="9.5" font-weight="700" fill="#b91c1c">Actual: `cache.tables[0].num_tokens == 13`. A Python int, read inside the</text>
+  <text x="636" y="334" font-size="9.5" font-weight="700" fill="#b91c1c">traced region, specialised on its value. Symbolic shapes do nothing for it.</text>
+
+  <!-- ===================== LEFT BOTTOM: the measured sweep ===================== -->
+  <text x="50" y="378" font-size="13.5" font-weight="700" fill="#334155">measured: Llama-3.2-1B, cpu fp32, 2 rows, 9 decode steps</text>
+  <rect x="50" y="390" width="540" height="235" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="70" y="414" font-size="10.5" font-weight="700" fill="#334155">mode</text>
+  <text x="185" y="414" font-size="10.5" font-weight="700" fill="#334155">builds</text>
+  <text x="255" y="414" font-size="10.5" font-weight="700" fill="#334155">reuse</text>
+  <text x="420" y="414" font-size="10.5" font-weight="700" fill="#334155" text-anchor="end">step</text>
+  <text x="500" y="414" font-size="10.5" font-weight="700" fill="#334155" text-anchor="end">speedup</text>
+  <line x1="66" y1="421" x2="574" y2="421" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="70" y="440" font-size="10.5" fill="#166534">off (eager)</text>
+  <text x="185" y="440" font-size="10.5" fill="#475569">0 / 9</text>
+  <text x="255" y="440" font-size="10.5" fill="#166534">100%</text>
+  <text x="420" y="440" font-size="10.5" fill="#475569" text-anchor="end">627.78 ms</text>
+  <text x="500" y="440" font-size="10.5" font-weight="700" fill="#166534" text-anchor="end">1.00x</text>
+
+  <text x="70" y="462" font-size="10.5" fill="#b91c1c">dynamic</text>
+  <text x="185" y="462" font-size="10.5" font-weight="700" fill="#b91c1c">8 / 9</text>
+  <text x="255" y="462" font-size="10.5" font-weight="700" fill="#b91c1c">11%</text>
+  <text x="420" y="462" font-size="10.5" fill="#7f1d1d" text-anchor="end">28982.62 ms</text>
+  <text x="500" y="462" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="end">0.02x</text>
+
+  <text x="70" y="484" font-size="10.5" fill="#b91c1c">static</text>
+  <text x="185" y="484" font-size="10.5" font-weight="700" fill="#b91c1c">8 / 9</text>
+  <text x="255" y="484" font-size="10.5" font-weight="700" fill="#b91c1c">11%</text>
+  <text x="420" y="484" font-size="10.5" fill="#7f1d1d" text-anchor="end">18723.76 ms</text>
+  <text x="500" y="484" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="end">0.03x</text>
+  <text x="574" y="484" font-size="9" fill="#b91c1c" text-anchor="end">fell back</text>
+
+  <line x1="66" y1="500" x2="574" y2="500" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="70" y="519" font-size="9.5" fill="#64748b">Eight builds over nine decode steps, in both modes. `dynamic=True` did not</text>
+  <text x="70" y="532" font-size="9.5" fill="#64748b">remove one of them, because what invalidates the graph is not a dimension.</text>
+
+  <text x="70" y="556" font-size="9.5" fill="#64748b">The first version of this table swept all three modes in one process and</text>
+  <text x="70" y="569" font-size="9.5" fill="#64748b">reported `static` at 1.00x. That was not static being free: dynamo`s counter</text>
+  <text x="70" y="582" font-size="9.5" fill="#64748b">is per code object per process, so `dynamic` had already spent the budget</text>
+  <text x="70" y="595" font-size="9.5" fill="#64748b">and `static` never compiled at all. One `torch._dynamo.reset()` per mode.</text>
+  <text x="70" y="612" font-size="9.5" font-weight="700" fill="#b91c1c">A silent no-op benchmarks exactly like a free one.</text>
+
+  <!-- ===================== RIGHT BOTTOM: bucketing ===================== -->
+  <text x="620" y="378" font-size="13.5" font-weight="700" fill="#334155">bucketing closes the shape set, and pays for it in cells</text>
+  <rect x="620" y="390" width="530" height="235" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="412" font-size="9.5" fill="#64748b">128 decode steps, 4 rows, context width rounded up to a multiple.</text>
+  <text x="636" y="425" font-size="9.5" fill="#64748b">Raw: 128 distinct shapes, one per step.</text>
+
+  <text x="642" y="448" font-size="10" font-weight="700" fill="#334155">multiple</text>
+  <text x="730" y="448" font-size="10" font-weight="700" fill="#334155">shapes</text>
+  <text x="800" y="448" font-size="10" font-weight="700" fill="#334155">padding waste</text>
+  <line x1="636" y1="455" x2="1134" y2="455" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="642" y="473" font-size="10" fill="#475569">8</text>
+  <text x="760" y="473" font-size="10" fill="#b91c1c" text-anchor="end">17</text>
+  <rect x="800" y="464" width="11" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="820" y="473" font-size="10" fill="#475569">4.7%</text>
+
+  <text x="642" y="493" font-size="10" fill="#475569">16</text>
+  <text x="760" y="493" font-size="10" fill="#b91c1c" text-anchor="end">9</text>
+  <rect x="800" y="484" width="22" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="831" y="493" font-size="10" fill="#475569">9.5%</text>
+
+  <text x="642" y="513" font-size="10" font-weight="700" fill="#166534">32</text>
+  <text x="760" y="513" font-size="10" font-weight="700" fill="#166534" text-anchor="end">5</text>
+  <rect x="800" y="504" width="41" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="850" y="513" font-size="10" font-weight="700" fill="#166534">17.8%</text>
+  <text x="898" y="513" font-size="9" fill="#166534">smallest that fits under the limit</text>
+
+  <text x="642" y="533" font-size="10" fill="#475569">64</text>
+  <text x="760" y="533" font-size="10" fill="#166534" text-anchor="end">3</text>
+  <rect x="800" y="524" width="70" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="879" y="533" font-size="10" fill="#475569">30.6%</text>
+
+  <text x="642" y="553" font-size="10" fill="#475569">128</text>
+  <text x="760" y="553" font-size="10" fill="#166534" text-anchor="end">2</text>
+  <rect x="800" y="544" width="108" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="917" y="553" font-size="10" fill="#475569">47.0%</text>
+
+  <text x="642" y="573" font-size="10" fill="#475569">256</text>
+  <text x="760" y="573" font-size="10" fill="#166534" text-anchor="end">1</text>
+  <rect x="800" y="564" width="166" height="11" fill="url(#padcells)" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="975" y="573" font-size="10" fill="#475569">72.1%</text>
+
+  <line x1="636" y1="588" x2="1134" y2="588" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="636" y="605" font-size="9.5" fill="#64748b">A compiler should not need this: symbolic shapes are free. A replayed CUDA graph</text>
+  <text x="636" y="618" font-size="9.5" fill="#64748b">does, because a capture holds fixed sizes. Neither helps until the int guard is gone.</text>
+</svg>

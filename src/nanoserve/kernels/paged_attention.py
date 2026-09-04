@@ -111,6 +111,7 @@ def paged_attention_batched_reference(
     context_lens: torch.Tensor,
     n_rep: int,
     scale: float | None = None,
+    context_bounds: tuple[int, int] | None = None,
 ) -> torch.Tensor:
     """The decode read for a whole batch: one new token per row, one table per row.
 
@@ -139,6 +140,17 @@ def paged_attention_batched_reference(
                   need to be told which keys are fake, only how many are real.
     n_rep:        GQA repeat factor (`config.num_kv_groups`).
     scale:        softmax scale; defaults to `head_dim ** -0.5`.
+    context_bounds: optional `(min, max)` of `context_lens`, as Python ints. Day 49.
+                  The two guards below need those two numbers and nothing else, and
+                  computing them here means `int(context_lens.min())` on every layer
+                  of every step: a readback the host waits for, and, under
+                  `torch.compile`, a graph break that cuts the captured region in
+                  two. The caller usually knows them already without touching the
+                  device (`BlockTable.num_tokens` is a Python int, so
+                  `BatchedPagedKVCache.context_bounds` is a `min` over a list), so
+                  passing them keeps the validation and removes the journey. Given
+                  bounds are trusted: they are a claim about a tensor this function
+                  is being asked not to look at.
 
     Returns [batch, n_q, 1, d], the attention output before o_proj. Row i is equal to
     `paged_attention_reference` run on row i's slots alone, which is the property the
@@ -181,15 +193,20 @@ def paged_attention_batched_reference(
             f"(batch={batch}); got {tuple(slot_mapping.shape)} and "
             f"{tuple(context_lens.shape)}"
         )
-    if int(context_lens.min()) < 1:
+    shortest, longest = (
+        context_bounds
+        if context_bounds is not None
+        else (int(context_lens.min()), int(context_lens.max()))
+    )
+    if shortest < 1:
         raise ValueError(
             "context_lens must be at least 1 for every row: a query with no visible "
             "key softmaxes over nothing (0/0). A decode query always has its own token"
         )
-    if int(context_lens.max()) > max_ctx:
+    if longest > max_ctx:
         raise ValueError(
             f"context_lens claims more history than the mapping holds: max "
-            f"{int(context_lens.max())} > max_ctx {max_ctx}"
+            f"{longest} > max_ctx {max_ctx}"
         )
     if scale is None:
         scale = d**-0.5

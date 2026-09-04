@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .compiled import CompiledDecode
 from .deferred import DeferredOutputProcessor
 from .output import OutputProcessor, TokenBatch
 from .profiler import NULL_RECORDER
@@ -101,6 +102,16 @@ class Engine:
                nobody keeps. The scheduler is given a matching `lookahead`,
                because a token still on the device is in the cache row and not in
                `Request.num_tokens`. See `nanoserve.deferred`.
+    compile_decode: Day 49. Which bet to take on `torch.compile` for the decode
+               forward, and only the decode forward. `None` (or "off") leaves the
+               eager path alone. "dynamic" compiles once with the row count and the
+               context width symbolic, which is the only setting that survives a
+               decode loop: the context width grows by one every step, so a graph
+               specialised on it is rebuilt every step until dynamo gives up.
+               "static" is that specialisation, kept because measuring it is the
+               only way the claim above is a measurement. The prefill stays eager
+               either way, because its rectangle is a different shape on almost
+               every admission. See `nanoserve.compiled`.
     seed:      seeds the sampler's *shared* generator, the one requests that gave
                no seed of their own draw from. It makes a fixed set of requests
                repeatable; it cannot make one request repeatable, because with a
@@ -122,6 +133,7 @@ class Engine:
         pad_id: int = 0,
         seed: int | None = None,
         defer_window: int = 0,
+        compile_decode: str | None = None,
     ):
         if cache.batch_size != scheduler.max_batch_size:
             raise ValueError(
@@ -155,6 +167,22 @@ class Engine:
         # two processors are kept as two classes rather than one with a flag
         # because the deferred one has three ways for a token not to reach its
         # request and the immediate one has none.
+        # Day 49. The forward the compiler is pointed at, wrapped whether or not
+        # anything was asked for, so `_decode` has one call site rather than a
+        # branch and so `engine.decode_forward.calls` is always a number.
+        #
+        # Two different callables go in, and the difference is the honest content
+        # of "off". Uncompiled, the wrapper is handed `_eager_forward`, which looks
+        # `forward` up on the model every call, so replacing `engine.model.forward`
+        # (which the Day-48 tests do, to spy on the decode input) still reaches the
+        # decode path exactly as it did before this class existed. Compiled, it is
+        # handed the bound method itself, because that is what compiling *is*: the
+        # function has been traced and the trace is what runs, and a later
+        # assignment to the attribute cannot reach inside it.
+        self.decode_forward = CompiledDecode(
+            self._eager_forward if not compile_decode else model.forward,
+            mode=compile_decode or "off",
+        )
         self.defer_window = defer_window
         self.output = (
             DeferredOutputProcessor(window=defer_window) if defer_window else OutputProcessor()
@@ -191,6 +219,7 @@ class Engine:
         pad_id: int = 0,
         seed: int | None = None,
         defer_window: int = 0,
+        compile_decode: str | None = None,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -208,6 +237,7 @@ class Engine:
             pad_id=pad_id,
             seed=seed,
             defer_window=defer_window,
+            compile_decode=compile_decode,
         )
 
     @property
@@ -284,6 +314,16 @@ class Engine:
             self.issued_tokens += out.batch_size
             self.iterations += 1
             return out
+
+    def _eager_forward(self, *args, **kwargs):
+        """The decode forward, resolved on the model at call time. Day 49.
+
+        One line, and it exists so that "off" means off. `CompiledDecode` holds a
+        callable, and holding `model.forward` directly would freeze the attribute
+        at construction: the prefill would follow a later reassignment and the
+        decode would not, which is a difference nobody would look for.
+        """
+        return self.model.forward(*args, **kwargs)
 
     def _release_row(self, slot: int) -> None:
         """Empty a cache row whose slot the scheduler just took back.
@@ -365,7 +405,11 @@ class Engine:
             )
 
         with timing.phase("forward", device=True):
-            logits = self.model.forward(input_ids, positions, cache=self.cache.view(rows))
+            # Through the Day-49 wrapper rather than straight at the model. It is
+            # the same call when nothing is compiled, and when something is it is
+            # the one place that knows how many distinct shapes this run has asked
+            # a compiler to build for.
+            logits = self.decode_forward(input_ids, positions, cache=self.cache.view(rows))
 
         with timing.phase("sample", device=True):
             # Day 46 measured this phase at 86% to 89% of the whole host loop and

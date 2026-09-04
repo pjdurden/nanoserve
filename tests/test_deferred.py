@@ -513,13 +513,15 @@ class TestEngineTransfers:
         # raise for the duration of the call, so "did not read back" is something a
         # test can fail on rather than a claim in a docstring.
         #
-        # The call and not the whole step, and the difference is a finding rather
-        # than a convenience. `paged_attention_batched_reference` validates its
+        # The call and not the whole step, and the difference was a finding rather
+        # than a convenience. `paged_attention_batched_reference` validated its
         # `context_lens` with `int(context_lens.min())` on every layer of every
-        # step, so the reference kernel reads back more times per step than the
-        # output path ever did. Removing the engine's synchronisation does not make
-        # the step free of them; it makes the engine's own contribution zero, and
-        # the rest is a kernel-side bill this day does not pay.
+        # step, so on Day 48 the reference kernel read back more times per step
+        # than the output path ever did, and this test could only honestly claim
+        # `_decode_input_ids`. Day 49 paid that bill: the bounds come down from
+        # `BatchedPagedKVCache.context_bounds`, where they are already Python ints,
+        # and `test_compiled.py` makes the wider claim over the whole forward. The
+        # scope here stays as it was, because it is this day's claim.
         engine = _engine(_model(), defer_window=4, max_batch_size=1)
         engine.add_request(_req("a", [1, 2, 3], max_new_tokens=8))
         engine.step()  # prefill: samples and holds

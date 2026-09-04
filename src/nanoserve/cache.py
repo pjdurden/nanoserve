@@ -806,6 +806,22 @@ class BatchedPagedKVCache:
             self._mapping_rows = rows
         return self._mapping
 
+    def context_bounds(self, rows=None) -> tuple[int, int]:
+        """The shortest and longest history in these rows, as Python ints. Day 49.
+
+        Free, and that is the whole reason it exists. `BlockTable.num_tokens` is an
+        int on the host that this class maintains itself, so the two numbers the
+        paged read validates against are already known before any tensor is built.
+        Working them out from `context_lens` instead is `int(tensor.min())` once per
+        layer per step: a synchronisation Day 48 found the hard way, and, under
+        `torch.compile`, a graph break that ends the captured region at every layer.
+        """
+        rows = self._rows(rows)
+        lens = [self.tables[r].num_tokens for r in rows]
+        if not lens:
+            raise ValueError("no rows: an empty batch has no context bounds")
+        return min(lens), max(lens)
+
     def paged_attention(
         self,
         layer: int,
@@ -847,7 +863,17 @@ class BatchedPagedKVCache:
         self.write(layer, k, v, rows=rows)
         slot_mapping, context_lens = self.slot_mapping(q.device, rows=rows)
         return paged_attention_batched_reference(
-            q, self.k_pool[layer], self.v_pool[layer], slot_mapping, context_lens, n_rep, scale
+            q,
+            self.k_pool[layer],
+            self.v_pool[layer],
+            slot_mapping,
+            context_lens,
+            n_rep,
+            scale,
+            # Handed down rather than read back. The write above has already grown
+            # these rows, so the bounds are the post-write ones the mapping was
+            # built from, which is exactly what the read validates against.
+            context_bounds=self.context_bounds(rows),
         )
 
     def free(self) -> None:
@@ -906,6 +932,9 @@ class BatchedCacheRows:
 
     def slot_mapping(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
         return self.cache.slot_mapping(device, rows=self.rows)
+
+    def context_bounds(self) -> tuple[int, int]:
+        return self.cache.context_bounds(rows=self.rows)
 
     def paged_attention(
         self,

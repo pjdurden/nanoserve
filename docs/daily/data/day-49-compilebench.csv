@@ -1,0 +1,4 @@
+mode,steps,decode_steps,shapes,recompiles,expected_compiles,builds,reuse,fell_back,compile_s,step_ms,wall_s,tokens,speedup,breakeven_steps,traced_graphs,traced_breaks
+off,10,9,9,8,0,0,1.0,0,0.009,627.781,8.189,20,1.0,inf,1,0
+dynamic,10,9,9,8,1,8,0.111,0,0.0,28982.625,239.758,20,0.022,inf,1,0
+static,10,9,9,8,8,8,0.111,1,6.4,18723.765,177.396,20,0.034,inf,1,0
