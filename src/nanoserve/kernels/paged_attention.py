@@ -112,6 +112,7 @@ def paged_attention_batched_reference(
     n_rep: int,
     scale: float | None = None,
     context_bounds: tuple[int, int] | None = None,
+    validated: bool = False,
 ) -> torch.Tensor:
     """The decode read for a whole batch: one new token per row, one table per row.
 
@@ -151,6 +152,15 @@ def paged_attention_batched_reference(
                   passing them keeps the validation and removes the journey. Given
                   bounds are trusted: they are a claim about a tensor this function
                   is being asked not to look at.
+    validated:    the caller checked the bounds itself and this read should not.
+                  Day 50, and it is Day 49's fix one level further out. Two ints
+                  handed *in* are still two Python ints that change every step, so a
+                  tracer guards on their values and rebuilds the graph as reliably as
+                  reading them here did. A bool that is True for the whole run is a
+                  guard that holds for the whole run. `DecodePlan` validates its
+                  lengths on the host when it is built, so the planned decode path
+                  passes this and no bounds at all; passing both is refused, because
+                  the two are the same claim and only one of them can be the reason.
 
     Returns [batch, n_q, 1, d], the attention output before o_proj. Row i is equal to
     `paged_attention_reference` run on row i's slots alone, which is the property the
@@ -193,21 +203,28 @@ def paged_attention_batched_reference(
             f"(batch={batch}); got {tuple(slot_mapping.shape)} and "
             f"{tuple(context_lens.shape)}"
         )
-    shortest, longest = (
-        context_bounds
-        if context_bounds is not None
-        else (int(context_lens.min()), int(context_lens.max()))
-    )
-    if shortest < 1:
+    if validated and context_bounds is not None:
         raise ValueError(
-            "context_lens must be at least 1 for every row: a query with no visible "
-            "key softmaxes over nothing (0/0). A decode query always has its own token"
+            "a read is either validated by its caller or handed bounds to validate "
+            "with, not both: validated=True says the check already happened, and "
+            "context_bounds says do it here with these two numbers"
         )
-    if longest > max_ctx:
-        raise ValueError(
-            f"context_lens claims more history than the mapping holds: max "
-            f"{longest} > max_ctx {max_ctx}"
+    if not validated:
+        shortest, longest = (
+            context_bounds
+            if context_bounds is not None
+            else (int(context_lens.min()), int(context_lens.max()))
         )
+        if shortest < 1:
+            raise ValueError(
+                "context_lens must be at least 1 for every row: a query with no visible "
+                "key softmaxes over nothing (0/0). A decode query always has its own token"
+            )
+        if longest > max_ctx:
+            raise ValueError(
+                f"context_lens claims more history than the mapping holds: max "
+                f"{longest} > max_ctx {max_ctx}"
+            )
     if scale is None:
         scale = d**-0.5
 

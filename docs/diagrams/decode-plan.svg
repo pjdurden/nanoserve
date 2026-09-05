@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="27" font-weight="700" fill="#1e1b4b">Moving a decode step&apos;s addressing out of the forward</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A tracer cannot make an attribute of an arbitrary Python object symbolic: it bakes the value in and guards on it. `table.num_tokens`</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">grows by one every decode step, so the graph was rebuilt every step. Move the addressing out of the forward and the same guard</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">fails on a tensor <tspan font-style="italic">size</tspan> instead, which is the one thing `dynamic=True` was built for.</text>
+
+  <!-- ===================== LEFT TOP: where the addressing lives ===================== -->
+  <text x="50" y="148" font-size="13.5" font-weight="700" fill="#334155">where the addressing lives, before and after</text>
+  <rect x="50" y="160" width="540" height="180" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="182" font-size="10.5" font-weight="700" fill="#b91c1c">Day 49: inside the traced region</text>
+  <rect x="66" y="190" width="330" height="52" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="76" y="205" font-size="9" font-weight="700" fill="#7f1d1d">forward (traced)</text>
+  <text x="76" y="219" font-size="9" fill="#7f1d1d">layer 0: _reserve, table.append(1), table.slot(start)</text>
+  <text x="76" y="232" font-size="9" fill="#7f1d1d">every layer: [table.slot(p) for p in range(n)] -&gt; [rows, ctx]</text>
+  <text x="406" y="213" font-size="9.5" font-weight="700" fill="#b91c1c">host state,</text>
+  <text x="406" y="226" font-size="9.5" font-weight="700" fill="#b91c1c">read by the tracer</text>
+
+  <text x="66" y="266" font-size="10.5" font-weight="700" fill="#15803d">Day 50: before the call, as four tensors</text>
+  <rect x="66" y="274" width="152" height="50" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.4"/>
+  <text x="76" y="289" font-size="9" font-weight="700" fill="#166534">plan_decode (host)</text>
+  <text x="76" y="302" font-size="8.5" fill="#166534">grow every row by 1, once</text>
+  <text x="76" y="314" font-size="8.5" fill="#166534">check the lengths here</text>
+
+  <line x1="220" y1="299" x2="256" y2="299" stroke="#4338ca" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <rect x="258" y="274" width="138" height="50" rx="4" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="266" y="288" font-size="8.5" fill="#3730a3">write_slots  [rows]</text>
+  <text x="266" y="299" font-size="8.5" fill="#3730a3">slot_mapping [rows, ctx]</text>
+  <text x="266" y="310" font-size="8.5" fill="#3730a3">context_lens [rows]</text>
+  <text x="266" y="321" font-size="8.5" fill="#3730a3">positions    [rows, 1]</text>
+
+  <line x1="398" y1="299" x2="420" y2="299" stroke="#4338ca" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="422" y="274" width="152" height="50" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="432" y="289" font-size="9" font-weight="700" fill="#166534">forward (traced)</text>
+  <text x="432" y="302" font-size="8.5" fill="#166534">scatter to write_slots</text>
+  <text x="432" y="314" font-size="8.5" fill="#166534">gather slot_mapping. no host reads</text>
+
+  <!-- ===================== RIGHT TOP: the guard ===================== -->
+  <text x="620" y="148" font-size="13.5" font-weight="700" fill="#334155">the guard dynamo fails on, and what it costs</text>
+  <rect x="620" y="160" width="530" height="180" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="182" font-size="10" font-weight="700" fill="#b91c1c">before: a value</text>
+  <rect x="636" y="190" width="380" height="20" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="644" y="204" font-size="9.5" font-family="ui-monospace, monospace" fill="#7f1d1d">cache.tables[0].num_tokens == 13</text>
+  <text x="1024" y="204" font-size="9.5" font-weight="700" fill="#b91c1c">a Python int</text>
+  <text x="636" y="226" font-size="9" fill="#64748b">Grows by one every step. `dynamic=True` makes tensor dimensions symbolic</text>
+  <text x="636" y="238" font-size="9" fill="#64748b">and has nothing whatever to say about this. 8 builds over 9 steps, then the</text>
+  <text x="636" y="250" font-size="9" fill="#64748b">recompile limit, then eager for the rest of the process, silently.</text>
+
+  <text x="636" y="276" font-size="10" font-weight="700" fill="#15803d">after: a size</text>
+  <rect x="636" y="284" width="380" height="20" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="644" y="298" font-size="9.5" font-family="ui-monospace, monospace" fill="#166534">plan.slot_mapping size at index 1: 4 -&gt; 5</text>
+  <text x="1024" y="298" font-size="9.5" font-weight="700" fill="#15803d">a dimension</text>
+  <text x="636" y="320" font-size="9" fill="#64748b">A size is what symbolic shapes are for, so the graph is built and then kept:</text>
+  <text x="636" y="332" font-size="9" fill="#64748b">1 build over 11 steps on Llama-3.2-1B, and no fallback.</text>
+
+  <!-- ===================== LEFT BOTTOM: the measured sweep ===================== -->
+  <text x="50" y="378" font-size="13.5" font-weight="700" fill="#334155">measured: Llama-3.2-1B, cpu fp32, 4 rows, 11 decode steps</text>
+  <rect x="50" y="390" width="540" height="235" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="70" y="414" font-size="10.5" font-weight="700" fill="#334155">mode</text>
+  <text x="200" y="414" font-size="10.5" font-weight="700" fill="#334155">builds</text>
+  <text x="272" y="414" font-size="10.5" font-weight="700" fill="#334155">reuse</text>
+  <text x="430" y="414" font-size="10.5" font-weight="700" fill="#334155" text-anchor="end">step</text>
+  <text x="498" y="414" font-size="10.5" font-weight="700" fill="#334155" text-anchor="end">speedup</text>
+  <line x1="66" y1="421" x2="574" y2="421" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="70" y="440" font-size="10.5" fill="#166534">off (eager)</text>
+  <text x="200" y="440" font-size="10.5" fill="#475569">0 / 11</text>
+  <text x="272" y="440" font-size="10.5" fill="#166534">100%</text>
+  <text x="430" y="440" font-size="10.5" fill="#475569" text-anchor="end">861.81 ms</text>
+  <text x="498" y="440" font-size="10.5" font-weight="700" fill="#166534" text-anchor="end">1.00x</text>
+
+  <text x="70" y="462" font-size="10.5" font-weight="700" fill="#166534">dynamic</text>
+  <text x="200" y="462" font-size="10.5" font-weight="700" fill="#166534">1 / 11</text>
+  <text x="272" y="462" font-size="10.5" font-weight="700" fill="#166534">91%</text>
+  <text x="430" y="462" font-size="10.5" fill="#475569" text-anchor="end">863.34 ms</text>
+  <text x="498" y="462" font-size="10.5" font-weight="700" fill="#475569" text-anchor="end">1.00x</text>
+  <text x="574" y="462" font-size="8.5" fill="#64748b" text-anchor="end">44.0 s to build</text>
+
+  <text x="70" y="484" font-size="10.5" fill="#b91c1c">static</text>
+  <text x="200" y="484" font-size="10.5" font-weight="700" fill="#b91c1c">8 / 11</text>
+  <text x="272" y="484" font-size="10.5" font-weight="700" fill="#b91c1c">27%</text>
+  <text x="430" y="484" font-size="10.5" fill="#7f1d1d" text-anchor="end">16357.90 ms</text>
+  <text x="498" y="484" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="end">0.05x</text>
+  <text x="574" y="484" font-size="9" fill="#b91c1c" text-anchor="end">fell back</text>
+
+  <line x1="66" y1="500" x2="574" y2="500" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="70" y="519" font-size="9.5" font-weight="700" fill="#b91c1c">Day 49, same script: dynamic was 8 builds over 9 steps at 28,982.62 ms, 0.02x.</text>
+  <text x="70" y="536" font-size="9.5" fill="#64748b">`static` is still one build per shape and still hits the recompile limit, and that</text>
+  <text x="70" y="549" font-size="9.5" fill="#64748b">is correct: the plan does not close the shape set, bucketing does, and a replayed</text>
+  <text x="70" y="562" font-size="9.5" fill="#64748b">CUDA graph is what will need it closed.</text>
+
+  <text x="70" y="586" font-size="9.5" fill="#64748b">The regression is gone rather than reversed. 861.81 against 863.34 is 0.998x:</text>
+  <text x="70" y="599" font-size="9.5" fill="#64748b">a compiler that ran, kept its graph, and found nothing in this model on a CPU.</text>
+  <text x="70" y="616" font-size="9.5" font-weight="700" fill="#4338ca">A compiler fighting the engine and a compiler that does not help need different fixes.</text>
+
+
+  <!-- ===================== RIGHT BOTTOM: the price ===================== -->
+  <text x="620" y="378" font-size="13.5" font-weight="700" fill="#334155">the price: the rectangle is rebuilt every step, and it widens every step</text>
+  <rect x="620" y="390" width="530" height="235" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="412" font-size="9.5" fill="#64748b">4 rows from a 16-token prompt. Step i builds `rows * (16 + i)` int64 cells to</text>
+  <text x="636" y="425" font-size="9.5" fill="#64748b">append `rows`. A persistent device-side table would touch the second number.</text>
+
+  <text x="642" y="450" font-size="10" font-weight="700" fill="#334155">steps</text>
+  <text x="742" y="450" font-size="10" font-weight="700" fill="#334155" text-anchor="end">rebuilt</text>
+  <text x="822" y="450" font-size="10" font-weight="700" fill="#334155" text-anchor="end">appended</text>
+  <text x="882" y="450" font-size="10" font-weight="700" fill="#334155" text-anchor="end">ratio</text>
+  <line x1="636" y1="457" x2="1134" y2="457" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="642" y="475" font-size="10" fill="#475569">8</text>
+  <text x="742" y="475" font-size="10" fill="#475569" text-anchor="end">656</text>
+  <text x="822" y="475" font-size="10" fill="#166534" text-anchor="end">32</text>
+  <text x="882" y="475" font-size="10" font-weight="700" fill="#166534" text-anchor="end">20x</text>
+  <rect x="896" y="467" width="18" height="10" fill="#a5b4fc"/>
+
+  <text x="642" y="495" font-size="10" fill="#475569">64</text>
+  <text x="742" y="495" font-size="10" fill="#475569" text-anchor="end">12,416</text>
+  <text x="822" y="495" font-size="10" fill="#166534" text-anchor="end">256</text>
+  <text x="882" y="495" font-size="10" font-weight="700" fill="#475569" text-anchor="end">49x</text>
+  <rect x="896" y="487" width="43" height="10" fill="#818cf8"/>
+
+  <text x="642" y="515" font-size="10" fill="#475569">128</text>
+  <text x="742" y="515" font-size="10" fill="#475569" text-anchor="end">41,216</text>
+  <text x="822" y="515" font-size="10" fill="#166534" text-anchor="end">512</text>
+  <text x="882" y="515" font-size="10" font-weight="700" fill="#b45309" text-anchor="end">80x</text>
+  <rect x="896" y="507" width="71" height="10" fill="#6366f1"/>
+
+  <text x="642" y="535" font-size="10" fill="#475569">256</text>
+  <text x="742" y="535" font-size="10" fill="#475569" text-anchor="end">147,968</text>
+  <text x="822" y="535" font-size="10" fill="#166534" text-anchor="end">1,024</text>
+  <text x="882" y="535" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">144x</text>
+  <rect x="896" y="527" width="128" height="10" fill="#4f46e5"/>
+
+  <text x="642" y="555" font-size="10" fill="#475569">512</text>
+  <text x="742" y="555" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">558,080</text>
+  <text x="822" y="555" font-size="10" fill="#166534" text-anchor="end">2,048</text>
+  <text x="882" y="555" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">272x</text>
+  <rect x="896" y="547" width="242" height="10" fill="#4338ca"/>
+
+  <line x1="636" y1="572" x2="1134" y2="572" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="636" y="589" font-size="9.5" fill="#64748b">`check_rebuild_bounded` is set at 32x: an 8-step run passes, a 512-step run fails by</text>
+  <text x="636" y="602" font-size="9.5" fill="#64748b">a factor of eight. 4.5 MB of int64 written on the host to say where 2,048 tokens are.</text>
+  <text x="636" y="619" font-size="9.5" font-weight="700" fill="#4338ca">A block table that lives on the device is what collapses the first column into the second.</text>
+</svg>

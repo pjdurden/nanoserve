@@ -77,6 +77,7 @@ from .cache import BatchedPagedKVCache, BlockAllocator
 from .compiled import CompiledDecode
 from .deferred import DeferredOutputProcessor
 from .output import OutputProcessor, TokenBatch
+from .plan import plan_decode
 from .profiler import NULL_RECORDER
 from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
@@ -398,18 +399,22 @@ class Engine:
             # a captured graph makes disappear by writing into a fixed input buffer.
             # Day 48 removes the other one. See `_decode_input_ids`.
             input_ids = self._decode_input_ids(requests, device)
-            positions = torch.tensor(
-                [[self.cache.tables[row].num_tokens] for row in rows],
-                dtype=torch.long,
-                device=device,
-            )
+            # Day 50. The step's whole addressing, decided here rather than inside
+            # the forward: this grows every row's table by one and hands back the
+            # write slots, the read rectangle, the context lengths and the new
+            # tokens' positions. `positions` used to be built right here off
+            # `tables[row].num_tokens`, and the plan is the same list read one line
+            # earlier, so the phase does not gain a build. What it gains is that the
+            # forward no longer does one.
+            plan = plan_decode(self.cache, rows, device)
+            view = self.cache.view(rows, plan=plan)
 
         with timing.phase("forward", device=True):
             # Through the Day-49 wrapper rather than straight at the model. It is
             # the same call when nothing is compiled, and when something is it is
             # the one place that knows how many distinct shapes this run has asked
             # a compiler to build for.
-            logits = self.decode_forward(input_ids, positions, cache=self.cache.view(rows))
+            logits = self.decode_forward(input_ids, plan.positions, cache=view)
 
         with timing.phase("sample", device=True):
             # Day 46 measured this phase at 86% to 89% of the whole host loop and

@@ -20,6 +20,7 @@ import torch
 
 from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
+from .plan import DecodePlan
 
 
 class NaiveKVCache:
@@ -602,14 +603,19 @@ class BatchedPagedKVCache:
             )
         return rows
 
-    def view(self, rows) -> BatchedCacheRows:
+    def view(self, rows, plan: DecodePlan | None = None) -> BatchedCacheRows:
         """Present `rows` as if they were a whole batch. Day 31.
 
         What continuous batching needs and Day 28 did not have: a forward is over
         whichever requests the scheduler picked this iteration, not over every row
         the cache owns. See `BatchedCacheRows`.
+
+        `plan` is Day 50: this step's addressing, already worked out on the host, so
+        the forward that gets this view reads no Python attribute of the cache. It
+        rides on the view rather than on the forward's signature because `layers.py`
+        duck-types on the cache and knows nothing about decoding.
         """
-        return BatchedCacheRows(self, self._rows(rows))
+        return BatchedCacheRows(self, self._rows(rows), plan)
 
     def adopt_row(self, row: int, block_ids: list[int]) -> None:
         """Give row `row` a reservation somebody else made. See `BlockTable.adopt`."""
@@ -667,6 +673,114 @@ class BatchedPagedKVCache:
                 f"(rows hold {self.seq_lens}, adding {counts} to rows {list(rows)})"
             )
 
+    def plan_decode(self, rows=None, device=None) -> DecodePlan:
+        """Grow every named row by one and hand back this step's addressing. Day 50.
+
+        The whole of a decode step's host-side bookkeeping, done once, here, before
+        anything is traced: reserve the growth for the batch atomically, append one
+        token to each row's table, and build the four tensors the forward needs
+        (`positions`, `write_slots`, `slot_mapping`, `context_lens`). See
+        `nanoserve.plan` for why the forward must not do this itself.
+
+        The order matters twice over. `positions` is read *before* the tables grow,
+        because a new token's absolute position is the count of tokens that preceded
+        it; doing it after is off by one. And `_reserve` runs before any row appends,
+        so a batch the pool cannot take leaves every table exactly as it was, which
+        is the same promise `write` has made since Day 28.
+
+        `_step_slots` is cleared on the way out. A planned step and an unplanned one
+        are two ways of deciding where this token goes, and a step that started with
+        a plan must not finish by consulting a handshake some earlier step left
+        behind.
+        """
+        rows = self._rows(rows)
+        before = [self.tables[r].num_tokens for r in rows]
+        empty = [r for r, n in zip(rows, before) if n < 1]
+        if empty:
+            raise ValueError(
+                f"rows {empty} hold no tokens: a decode plan is for rows that already "
+                "hold a prefill, and a decode over an empty row would attend over its "
+                "own token and no prompt at all"
+            )
+        self._reserve([1] * len(rows), rows)  # all rows fit, or none of them moves
+
+        write_slots = []
+        for row, start in zip(rows, before):
+            table = self.tables[row]
+            table.append(1)
+            write_slots.append(table.slot(start))
+        after = [n + 1 for n in before]
+        max_ctx = max(after)
+        grid = [
+            [self.tables[r].slot(p) for p in range(n)] + [0] * (max_ctx - n)
+            for r, n in zip(rows, after)
+        ]
+
+        self._mapping = None  # the tables grew; the cache's own addressing is stale
+        self._step_slots = None
+        self._step_rows = None
+        return DecodePlan(
+            rows=rows,
+            positions=torch.tensor(
+                [[n] for n in before], dtype=torch.long, device=device
+            ),
+            write_slots=torch.tensor(write_slots, dtype=torch.long, device=device),
+            slot_mapping=torch.tensor(grid, dtype=torch.long, device=device),
+            context_lens=torch.tensor(after, dtype=torch.long, device=device),
+            min_ctx=min(after),
+            max_ctx=max_ctx,
+        )
+
+    def _ensure_pool(self, layer: int, k: torch.Tensor, v: torch.Tensor) -> None:
+        """Allocate this layer's flat `[num_slots, n_kv, d]` K/V pool on first write."""
+        if self.k_pool[layer] is None:
+            pool = (
+                self.allocator.num_blocks * self.block_size,
+                self.config.num_key_value_heads,
+                self.config.head_dim,
+            )
+            self.k_pool[layer] = torch.zeros(pool, dtype=k.dtype, device=k.device)
+            self.v_pool[layer] = torch.zeros(pool, dtype=v.dtype, device=v.device)
+
+    def _planned_write(
+        self, layer: int, k: torch.Tensor, v: torch.Tensor, plan: DecodePlan, rows
+    ) -> None:
+        """Scatter one token per row into the slots the plan already chose. Day 50.
+
+        What is *not* here is the point of it. No table grows, because `plan_decode`
+        grew them. No slot is computed, because the plan holds them. No layer-0
+        handshake is consulted, because the handshake existed to tell the other
+        layers where layer 0 decided to put things, and the plan tells everybody at
+        once. And the per-row Python loop is gone: `write` had one because a ragged
+        prefill writes different counts to different places, and a decode step is one
+        token per row by definition, so the whole batch is a single `index_put`.
+        """
+        if rows != plan.rows:
+            raise ValueError(
+                f"layer {layer} names rows {list(rows)} but the plan addresses "
+                f"{list(plan.rows)}: the plan is what says where each row's token goes"
+            )
+        if k.ndim != 4 or k.shape != v.shape:
+            raise ValueError(
+                "k and v must both be [batch, num_kv_heads, seq, head_dim]; got "
+                f"{tuple(k.shape)} and {tuple(v.shape)}"
+            )
+        batch, _, seq, _ = k.shape
+        if seq != 1:
+            raise ValueError(
+                f"a planned write is a decode write: one token per row, got seq={seq}. "
+                "A ragged prefill has no plan and takes the key-mask path"
+            )
+        if batch != len(rows):
+            raise ValueError(
+                f"this forward covers {len(rows)} rows {list(rows)}, got a batch of "
+                f"{batch}"
+            )
+        self._ensure_pool(layer, k, v)
+        # [batch, n_kv, 1, d] -> [batch, n_kv, d], one row per destination slot.
+        self.k_pool[layer][plan.write_slots] = k[:, :, 0, :]
+        self.v_pool[layer][plan.write_slots] = v[:, :, 0, :]
+
     def write(
         self,
         layer: int,
@@ -674,6 +788,7 @@ class BatchedPagedKVCache:
         v: torch.Tensor,
         valid: torch.Tensor | None = None,
         rows=None,
+        plan: DecodePlan | None = None,
     ) -> None:
         """Store this step's K/V into each row's own blocks. No read.
 
@@ -695,7 +810,21 @@ class BatchedPagedKVCache:
         over rows because the rows write different counts to different places, which
         is honest for a reference and is exactly the loop a real engine flattens into
         one `[total_new_tokens]` slot vector.
+
+        plan: optional `DecodePlan` (Day 50). With one, none of the paragraph above
+              happens: the tables were grown on the host before the forward started
+              and this is a single scatter into slots that are already decided. See
+              `_planned_write`, and `nanoserve.plan` for why.
         """
+        if plan is not None:
+            rows = plan.rows if rows is None else self._rows(rows)
+            if valid is not None:
+                raise ValueError(
+                    "a planned write takes no key mask: a plan is a decode step's "
+                    "addressing, and a decode step has one real token per row"
+                )
+            self._planned_write(layer, k, v, plan, rows)
+            return
         rows = self._rows(rows)
         if k.ndim != 4 or k.shape != v.shape:
             raise ValueError(
@@ -745,14 +874,7 @@ class BatchedPagedKVCache:
                 f"{list(self._step_rows)}: every layer of one step writes the same rows"
             )
 
-        if self.k_pool[layer] is None:
-            pool = (
-                self.allocator.num_blocks * self.block_size,
-                self.config.num_key_value_heads,
-                self.config.head_dim,
-            )
-            self.k_pool[layer] = torch.zeros(pool, dtype=k.dtype, device=k.device)
-            self.v_pool[layer] = torch.zeros(pool, dtype=v.dtype, device=v.device)
+        self._ensure_pool(layer, k, v)
 
         for row in range(batch):
             cols = (
@@ -766,7 +888,9 @@ class BatchedPagedKVCache:
             self.k_pool[layer][self._step_slots[row]] = k[row][:, cols, :].transpose(0, 1)
             self.v_pool[layer][self._step_slots[row]] = v[row][:, cols, :].transpose(0, 1)
 
-    def slot_mapping(self, device=None, rows=None) -> tuple[torch.Tensor, torch.Tensor]:
+    def slot_mapping(
+        self, device=None, rows=None, plan: DecodePlan | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """The read's addressing: `[batch, max_ctx]` slots and `[batch]` real lengths.
 
         Ragged histories, one rectangle, because a kernel wants a tensor with a stride
@@ -783,7 +907,20 @@ class BatchedPagedKVCache:
         Rebuilt only when the tables have grown (`write` on layer 0 invalidates it) or
         a different row selection asks for it, so the 15 remaining layers of a decode
         step reuse one construction.
+
+        plan: optional `DecodePlan` (Day 50), in which case the rectangle was built
+              on the host before the forward and this hands back the very tensors it
+              was given. Not a copy and not a rebuild: the identity is the property,
+              because a rebuild inside the forward is the `table.slot(p)` loop that
+              specialises a traced graph on an integer.
         """
+        if plan is not None:
+            if rows is not None and self._rows(rows) != plan.rows:
+                raise ValueError(
+                    f"this read covers rows {list(self._rows(rows))} and the plan "
+                    f"addresses {list(plan.rows)}"
+                )
+            return plan.slot_mapping, plan.context_lens
         rows = self._rows(rows)
         lens = [self.tables[r].num_tokens for r in rows]
         if max(lens) == 0:
@@ -832,6 +969,7 @@ class BatchedPagedKVCache:
         scale: float | None = None,
         attention_mask: torch.Tensor | None = None,
         rows=None,
+        plan: DecodePlan | None = None,
     ) -> torch.Tensor:
         """The batched fused read: store one new token per row, attend per row.
 
@@ -858,6 +996,26 @@ class BatchedPagedKVCache:
             raise ValueError(
                 f"the batched paged read is the decode read: one new token per row, "
                 f"got {k.shape[2]}. A ragged prefill writes and attends densely"
+            )
+        if plan is not None:
+            # Day 50. Nothing below this line reads a Python attribute of this cache
+            # or of a block table: the write goes to slots the plan holds, the read
+            # rectangle is the plan's own tensor, and the lengths were validated on
+            # the host when the plan was built. `validated=True` rather than
+            # `context_bounds=(lo, hi)` on purpose, and the difference is the day:
+            # two ints that change every step are two guards that fail every step,
+            # whether they are read here or handed in.
+            rows = plan.rows if rows is None else self._rows(rows)
+            self.write(layer, k, v, rows=rows, plan=plan)
+            return paged_attention_batched_reference(
+                q,
+                self.k_pool[layer],
+                self.v_pool[layer],
+                plan.slot_mapping,
+                plan.context_lens,
+                n_rep,
+                scale,
+                validated=True,
             )
         rows = self._rows(rows)
         self.write(layer, k, v, rows=rows)
@@ -912,9 +1070,19 @@ class BatchedCacheRows:
     refuse every prefill after the first.
     """
 
-    def __init__(self, cache: BatchedPagedKVCache, rows: tuple[int, ...]):
+    def __init__(
+        self,
+        cache: BatchedPagedKVCache,
+        rows: tuple[int, ...],
+        plan: DecodePlan | None = None,
+    ):
         self.cache = cache
         self.rows = rows
+        # Day 50. This step's addressing, if the caller worked it out before the
+        # forward. Carried on the view because `layers.py` duck-types on the cache
+        # and has no idea what a decode step is, so a plan on the view reaches the
+        # write and the read with no change to a single call site in between.
+        self.plan = plan
 
     @property
     def batch_size(self) -> int:
@@ -928,10 +1096,19 @@ class BatchedCacheRows:
     def write(
         self, layer: int, k: torch.Tensor, v: torch.Tensor, valid: torch.Tensor | None = None
     ) -> None:
-        self.cache.write(layer, k, v, valid, rows=self.rows)
+        self.cache.write(layer, k, v, valid, rows=self.rows, plan=self.plan)
 
     def slot_mapping(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.cache.slot_mapping(device, rows=self.rows)
+        return self.cache.slot_mapping(device, rows=self.rows, plan=self.plan)
+
+    def plan_decode(self, device=None) -> DecodePlan:
+        """This view's rows, grown by one, with their addressing. See Day 50.
+
+        Returns the plan rather than attaching it: a view that planned itself would
+        be a view whose meaning changed after the forward already had it, and the
+        caller wants `cache.view(rows, plan=plan)` anyway.
+        """
+        return self.cache.plan_decode(rows=self.rows, device=device)
 
     def context_bounds(self) -> tuple[int, int]:
         return self.cache.context_bounds(rows=self.rows)
@@ -947,7 +1124,5 @@ class BatchedCacheRows:
         attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         return self.cache.paged_attention(
-            layer, k, v, q, n_rep, scale, attention_mask, rows=self.rows
+            layer, k, v, q, n_rep, scale, attention_mask, rows=self.rows, plan=self.plan
         )
-        self._step_slots = None
-        self._mapping = None

@@ -50,11 +50,15 @@ cpu fp32, 2 rows, 9 decode steps: 628ms a step eager against 28,983ms compiled,
 with 8 builds over those 9 steps in *both* modes. A forty-six-fold regression, from
 a guard on an integer.
 
-The shape of the fix is the same as the readback fix above and it is not written
-yet: the host-side bookkeeping (`table.slot(p)` over a `range` that moves) has to
-happen *outside* the traced region and arrive as a tensor, the way `context_bounds`
-now arrives as two ints. Until then this module's honest recommendation is "off",
-and `check_graph_reused` is the gate that says so.
+The shape of the fix is the same as the readback fix above, and Day 50 is where it
+got written: the host-side bookkeeping (`table.slot(p)` over a `range` that moves)
+happens *outside* the traced region and arrives as a tensor. `nanoserve.plan` is
+that, and with a `DecodePlan` in hand the guard that fails is a slot mapping's
+*size* rather than an integer's value, which is the thing `dynamic=True` was built
+for. Measured on the tiny two-layer model over 13 decode steps: 8 builds in 9 steps
+before, 2 builds in 13 after, and the second of those two is the symbolic one that
+then holds for the rest of the run. `check_graph_reused` is the gate that says so
+and it now passes.
 
 **Bucketing is the other answer, and it is the one a captured graph needs.**
 Padding rows to the next power of two and the context width to the next multiple
@@ -180,9 +184,22 @@ def decode_shape(input_ids: torch.Tensor, cache) -> DecodeShape:
     than `seq_lens` reports, because the read builds its mapping after the write:
     by the time `slot_mapping` is asked for a rectangle, the token being forwarded
     is already in the row. Predicting the shape a guard will see means counting it.
+
+    Unless the view carries a Day-50 `DecodePlan`, in which case there is nothing to
+    predict. The plan grew the tables and built the rectangle before this wrapper
+    was called, so `seq_lens` is already the post-write length and adding one to it
+    overshoots; `plan.max_ctx` is not an estimate of the guard's dimension, it is
+    the dimension.
     """
     if input_ids.dim() != 2:
         raise ValueError(f"decode input ids are [rows, seq]; got {tuple(input_ids.shape)}")
+    plan = getattr(cache, "plan", None)
+    if plan is not None:
+        return DecodeShape(
+            rows=plan.batch_size,
+            context_width=plan.max_ctx,
+            query_len=int(input_ids.shape[1]),
+        )
     lens = list(cache.seq_lens)
     if not lens:
         raise ValueError("a decode forward over no rows has no shape")
@@ -627,11 +644,12 @@ class CompiledDecode:
 
         Only ever true in static mode, and that is a limitation of this property
         rather than a fact about the engine. It predicts the fallback from *shapes*,
-        which is the whole story only when shapes are the whole guard. They are not
-        here: a `dynamic=True` run rebuilds on a guard over `table.num_tokens` and
-        hits the same limit while this returns False. The measured version is
-        `check_graph_reused` against `dynamo_frames_compiled`, and where the two
-        disagree, believe the counter.
+        which is the whole story only when shapes are the whole guard. On Day 49 they
+        were not: a `dynamic=True` run rebuilt on a guard over `table.num_tokens` and
+        hit the same limit while this returned False. Day 50's `DecodePlan` is what
+        made shapes the whole guard, so the prediction and the counter now agree on
+        the planned path. The measured version is still `check_graph_reused` against
+        `dynamo_frames_compiled`, and where the two disagree, believe the counter.
         """
         return self.mode == "static" and self.distinct > self.recompile_limit
 

@@ -12,9 +12,9 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 
 ## Status
 
-**Day 49 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 49 onward are the measurement and hardening pass.
+**Day 50 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 46 onward are the measurement and optimization pass.
 
-Every numerical piece is checked against HuggingFace before anything is optimized. **1175 tests green.**
+Every numerical piece is checked against HuggingFace before anything is optimized. **1313 tests green.**
 
 | Stage | Verified against | Status |
 | --- | --- | --- |
@@ -91,7 +91,7 @@ Everything else is standard transformer code. These two are why an inference eng
 
 ## Roadmap
 
-**v1 — landed by Day 48, ahead of plan.** Llama-3.2-1B loaded from safetensors into hand-written layers; text that matches HuggingFace token-for-token under greedy decoding; temperature / top-k / top-p sampling; a paged KV cache with a block allocator; a hand-written Triton paged-attention kernel; continuous batching with preemption; an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
+**v1, landed by Day 48, ahead of plan.** Llama-3.2-1B loaded from safetensors into hand-written layers; text that matches HuggingFace token-for-token under greedy decoding; temperature / top-k / top-p sampling; a paged KV cache with a block allocator; a hand-written Triton paged-attention kernel; continuous batching with preemption; an OpenAI-compatible `/v1/completions` endpoint with SSE streaming.
 
 **Days 49-100:** measurement and hardening. Profiling on real hardware, the latency-throughput knee as arithmetic, host time against device time, and the failure modes written down.
 

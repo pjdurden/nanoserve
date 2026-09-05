@@ -5,7 +5,16 @@ Run from the repo root with the venv python:
     cd ~/nanoserve && .venv/bin/python compilebench.py
 
     cd ~/nanoserve && .venv/bin/python compilebench.py --modes off,dynamic,static \
-        --csv docs/daily/data/day-49-compilebench.csv
+        --csv docs/daily/data/day-50-compilebench.csv
+
+Run twice, on two consecutive days, with nothing in this file changed between them.
+Day 49 measured 8 builds over 9 decode steps in `dynamic` mode at 0.02x, because the
+guard dynamo kept failing was `cache.tables[0].num_tokens`, a Python int read inside
+the traced region. Day 50 moved the whole of a decode step's addressing out of the
+forward (`nanoserve.plan`) and the same script reports 1 build over 11 steps at
+0.998x. The regression is gone and the speedup is not there: on this CPU inductor
+found nothing in this model, and 44 seconds of compile bought none of it back. Those
+are different results and the `builds` and `reuse` columns are what tell them apart.
 
 Three modes, one engine each, same prompts, same tokens out. What the columns are
 and why each of them is a different question:
