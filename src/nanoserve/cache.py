@@ -21,6 +21,7 @@ import torch
 from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
 from .plan import DecodePlan
+from .slots import SlotTable
 
 
 class NaiveKVCache:
@@ -558,7 +559,13 @@ class BatchedPagedKVCache:
     the oracle it will be graded against.
     """
 
-    def __init__(self, config, allocator: BlockAllocator, batch_size: int):
+    def __init__(
+        self,
+        config,
+        allocator: BlockAllocator,
+        batch_size: int,
+        max_model_len: int | None = None,
+    ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         self.config = config
@@ -566,6 +573,14 @@ class BatchedPagedKVCache:
         self.block_size = allocator.block_size
         self.num_layers = config.num_hidden_layers
         self.batch_size = batch_size
+        # Day 51. How wide the persistent slot table is, which is the longest a row
+        # in this cache is ever allowed to get. The pool is the bound that always
+        # holds (a row cannot hold more tokens than the pool has slots), and it is a
+        # bound and not a plan: a server passes the `max_model_len` it decided to
+        # serve and gets a table orders of magnitude smaller. See `nanoserve.slots`.
+        pool_slots = allocator.num_blocks * allocator.block_size
+        wanted = config.max_position_embeddings if max_model_len is None else max_model_len
+        self.max_model_len = min(wanted, pool_slots)
         # One table per sequence, all drawing on the same pool. The tables are the
         # only thing that is per-row: the physical blocks are common property.
         self.tables = [BlockTable(allocator) for _ in range(batch_size)]
@@ -580,6 +595,11 @@ class BatchedPagedKVCache:
         # or a different set of rows is read.
         self._mapping: tuple[torch.Tensor, torch.Tensor] | None = None
         self._mapping_rows: tuple[int, ...] | None = None
+        # Day 51. The read rectangle, allocated once and written one cell per row
+        # per step, instead of built from scratch on the host every step. Only the
+        # planned decode path uses it; the ragged prefill still builds its own,
+        # because a prefill really does decide where things go while it runs.
+        self.slot_table = SlotTable(batch_size, self.max_model_len)
 
     @property
     def seq_lens(self) -> list[int]:
@@ -622,6 +642,7 @@ class BatchedPagedKVCache:
         (index,) = self._rows([row])
         self.tables[index].adopt(block_ids)
         self._mapping = None
+        self.slot_table.reset(index)
 
     def extend_row(self, row: int, block_ids: list[int]) -> None:
         """Give row `row` more blocks its owner just reserved. See `BlockTable.extend`."""
@@ -641,6 +662,9 @@ class BatchedPagedKVCache:
         """
         (index,) = self._rows([row])
         self._mapping = None
+        # Day 51. The mirror empties with the row. Nothing is cleared: what is past
+        # a row's length is padding, and the next tenant overwrites from column 0.
+        self.slot_table.reset(index)
         return self.tables[index].detach()
 
     @property
@@ -692,6 +716,14 @@ class BatchedPagedKVCache:
         are two ways of deciding where this token goes, and a step that started with
         a plan must not finish by consulting a handshake some earlier step left
         behind.
+
+        Day 51 changes where the rectangle comes from and nothing about what it
+        says. `self.slot_table` holds `[batch_size, max_model_len]` slots on the
+        device; this step catches the mirror up on any row a prefill or a reset
+        moved, writes one cell per row, and reads back a *window* on that buffer
+        rather than a freshly built tensor. The lengths are still a fresh `[rows]`
+        tensor on purpose: they are the one number a later step overwrites in place,
+        so a plan that shared them could never be found stale. See `nanoserve.slots`.
         """
         rows = self._rows(rows)
         before = [self.tables[r].num_tokens for r in rows]
@@ -704,6 +736,11 @@ class BatchedPagedKVCache:
             )
         self._reserve([1] * len(rows), rows)  # all rows fit, or none of them moves
 
+        # Before the tables grow, so a row the mirror is behind on is copied at the
+        # length it currently has and this step's append lands on the end of it.
+        self.slot_table.to(device)
+        self.slot_table.sync(self.tables, rows)
+
         write_slots = []
         for row, start in zip(rows, before):
             table = self.tables[row]
@@ -711,10 +748,8 @@ class BatchedPagedKVCache:
             write_slots.append(table.slot(start))
         after = [n + 1 for n in before]
         max_ctx = max(after)
-        grid = [
-            [self.tables[r].slot(p) for p in range(n)] + [0] * (max_ctx - n)
-            for r, n in zip(rows, after)
-        ]
+        self.slot_table.append(rows, write_slots)
+        slot_mapping, context_lens = self.slot_table.read(rows, max_ctx)
 
         self._mapping = None  # the tables grew; the cache's own addressing is stale
         self._step_slots = None
@@ -725,8 +760,8 @@ class BatchedPagedKVCache:
                 [[n] for n in before], dtype=torch.long, device=device
             ),
             write_slots=torch.tensor(write_slots, dtype=torch.long, device=device),
-            slot_mapping=torch.tensor(grid, dtype=torch.long, device=device),
-            context_lens=torch.tensor(after, dtype=torch.long, device=device),
+            slot_mapping=slot_mapping,
+            context_lens=context_lens,
             min_ctx=min(after),
             max_ctx=max_ctx,
         )
@@ -1044,6 +1079,7 @@ class BatchedPagedKVCache:
         """
         for table in self.tables:
             table.free()
+        self.slot_table.reset_all()
         self.k_pool = [None] * self.num_layers
         self.v_pool = [None] * self.num_layers
 

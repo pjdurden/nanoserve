@@ -563,6 +563,11 @@ def build_engine(
         num_blocks=plan.num_blocks,
         block_size=plan.block_size,
         max_batch_size=plan.max_batch_size,
+        # Day 51. The cache's persistent slot table is sized from the same length
+        # the pool was planned around, not from the pool: `[max_batch_size,
+        # num_blocks * block_size]` int64 would be hundreds of megabytes of pure
+        # addressing on a real card. See `nanoserve.slots.check_table_fits`.
+        max_model_len=plan.max_model_len,
     )
     return engine, plan
 

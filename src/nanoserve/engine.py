@@ -221,6 +221,7 @@ class Engine:
         seed: int | None = None,
         defer_window: int = 0,
         compile_decode: str | None = None,
+        max_model_len: int | None = None,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -229,12 +230,23 @@ class Engine:
         of tokens are still on the device, the other is how many tokens of block
         headroom that means every running row needs. Letting a caller set them
         apart is letting them set them wrong.
+
+        `max_model_len` is Day 51, and it sizes one thing: the cache's persistent
+        slot table, `[max_batch_size, max_model_len]` int64 held for the process.
+        Left unset it falls back to the pool, which is the bound that always holds
+        and is far larger than any server actually serves. `build_engine` passes the
+        length it planned the pool around, which is where the number belongs.
         """
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
             model,
             Scheduler(allocator, max_batch_size=max_batch_size, lookahead=defer_window),
-            BatchedPagedKVCache(model.config, allocator, batch_size=max_batch_size),
+            BatchedPagedKVCache(
+                model.config,
+                allocator,
+                batch_size=max_batch_size,
+                max_model_len=max_model_len,
+            ),
             pad_id=pad_id,
             seed=seed,
             defer_window=defer_window,

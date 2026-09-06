@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="27" font-weight="700" fill="#1e1b4b">The read rectangle stops being built and starts being a window</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 50 rebuilt a `[rows, max_ctx]` int64 rectangle on the host every decode step, and max_ctx grows by one per step: 558,080 cells</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">written to append 2,048. Day 51 allocates `[max_batch_size, max_model_len]` once, writes one cell per row per step, and hands the</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">forward `slots[:rows, :width]`: the buffer&apos;s own storage, at the buffer&apos;s own address.</text>
+
+  <!-- ===================== LEFT TOP: what the step writes ===================== -->
+  <text x="50" y="148" font-size="13.5" font-weight="700" fill="#334155">what one decode step writes, before and after</text>
+  <rect x="50" y="160" width="540" height="185" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="182" font-size="10.5" font-weight="700" fill="#b91c1c">Day 50: rebuild the whole rectangle</text>
+  <rect x="66" y="190" width="228" height="60" rx="4" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="76" y="205" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d">[[t.slot(p) for p in range(n)]</text>
+  <text x="76" y="217" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d"> + [0]*(max_ctx-n) for t in rows]</text>
+  <text x="76" y="232" font-size="9" fill="#7f1d1d">rows x max_ctx slot() calls, then one</text>
+  <text x="76" y="243" font-size="9" fill="#7f1d1d">host-to-device build. Every step.</text>
+  <text x="306" y="216" font-size="9.5" font-weight="700" fill="#b91c1c">quadratic in the</text>
+  <text x="306" y="229" font-size="9.5" font-weight="700" fill="#b91c1c">length of the run</text>
+
+  <text x="66" y="276" font-size="10.5" font-weight="700" fill="#15803d">Day 51: append one cell a row</text>
+
+  <!-- the persistent buffer, drawn -->
+  <text x="66" y="292" font-size="8.5" fill="#475569">slots [max_batch_size, max_model_len], allocated once</text>
+  <g>
+    <rect x="66" y="298" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="92" y="298" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="118" y="298" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="144" y="298" width="26" height="14" fill="#4338ca" stroke="#4338ca" stroke-width="0.8"/>
+    <rect x="170" y="298" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <rect x="196" y="298" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+
+    <rect x="66" y="313" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="92" y="313" width="26" height="14" fill="#4338ca" stroke="#4338ca" stroke-width="0.8"/>
+    <rect x="118" y="313" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <rect x="144" y="313" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <rect x="170" y="313" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <rect x="196" y="313" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+  </g>
+  <text x="230" y="308" font-size="9" fill="#4338ca" font-weight="700">this step: 2 cells written</text>
+  <text x="230" y="321" font-size="9" fill="#64748b">pale = history, grey = padding</text>
+  <text x="66" y="340" font-size="9" fill="#166534">The forward reads slots[:2, :4]. No build, no copy, no transfer.</text>
+
+  <line x1="400" y1="310" x2="432" y2="310" stroke="#4338ca" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="434" y="286" width="140" height="48" rx="4" fill="#f0fdf4" stroke="#15803d" stroke-width="1.6"/>
+  <text x="444" y="301" font-size="9" font-weight="700" fill="#166534">forward (traced)</text>
+  <text x="444" y="314" font-size="8.5" fill="#166534">same rectangle, same math,</text>
+  <text x="444" y="326" font-size="8.5" fill="#166534">a fixed address to capture</text>
+
+  <!-- ===================== RIGHT TOP: the prefix condition ===================== -->
+  <text x="620" y="148" font-size="13.5" font-weight="700" fill="#334155">a window needs the rows to be a prefix</text>
+  <rect x="620" y="160" width="530" height="185" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="182" font-size="10" font-weight="700" fill="#15803d">rows (0, 1, 2): basic slicing</text>
+  <rect x="636" y="190" width="330" height="20" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="644" y="204" font-size="9.5" font-family="ui-monospace, monospace" fill="#166534">slots[:3, :w]   -&gt; a view</text>
+  <text x="974" y="204" font-size="9.5" font-weight="700" fill="#15803d">same data_ptr</text>
+  <text x="636" y="226" font-size="9" fill="#64748b">Storage, address and row stride are the buffer&apos;s. Nothing is allocated,</text>
+  <text x="636" y="238" font-size="9" fill="#64748b">so a captured graph could replay against it.</text>
+
+  <text x="636" y="264" font-size="10" font-weight="700" fill="#b45309">rows (0, 2): advanced indexing</text>
+  <rect x="636" y="272" width="330" height="20" rx="3" fill="#fffbeb" stroke="#fcd34d" stroke-width="1"/>
+  <text x="644" y="286" font-size="9.5" font-family="ui-monospace, monospace" fill="#92400e">slots[:, :w].index_select(0, r) -&gt; a copy</text>
+  <text x="974" y="286" font-size="9.5" font-weight="700" fill="#b45309">new address</text>
+  <text x="636" y="308" font-size="9" fill="#64748b">Same answer, still no host loop and no transfer, still much cheaper than</text>
+  <text x="636" y="320" font-size="9" fill="#64748b">the rebuild. But a fresh allocation, so a graph cannot be replayed over it.</text>
+  <text x="636" y="337" font-size="9.5" font-weight="700" fill="#4338ca">A scheduler hands out whichever row slots are free, so this is the scheduler&apos;s knob, not the cache&apos;s.</text>
+
+  <!-- ===================== LEFT BOTTOM: measured ===================== -->
+  <text x="50" y="382" font-size="13.5" font-weight="700" fill="#334155">measured, host only, 4 rows from a 16-token prompt (CPU)</text>
+  <rect x="50" y="394" width="540" height="225" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="416" font-size="9.5" font-weight="700" fill="#475569">steps</text>
+  <text x="186" y="416" font-size="9.5" font-weight="700" fill="#b91c1c" text-anchor="end">rebuild</text>
+  <text x="276" y="416" font-size="9.5" font-weight="700" fill="#15803d" text-anchor="end">window</text>
+  <text x="366" y="416" font-size="9.5" font-weight="700" fill="#b45309" text-anchor="end">gather</text>
+  <text x="440" y="416" font-size="9.5" font-weight="700" fill="#4338ca" text-anchor="end">speedup</text>
+  <text x="560" y="416" font-size="9.5" font-weight="700" fill="#475569" text-anchor="end">cells written</text>
+  <line x1="66" y1="422" x2="560" y2="422" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="66" y="442" font-size="10" fill="#475569">8</text>
+  <text x="186" y="442" font-size="10" fill="#475569" text-anchor="end">0.461 ms</text>
+  <text x="276" y="442" font-size="10" fill="#475569" text-anchor="end">0.485 ms</text>
+  <text x="366" y="442" font-size="10" fill="#475569" text-anchor="end">0.621 ms</text>
+  <text x="440" y="442" font-size="10" font-weight="700" fill="#b45309" text-anchor="end">0.95x</text>
+  <text x="560" y="442" font-size="10" fill="#475569" text-anchor="end">656 -&gt; 96</text>
+
+  <text x="66" y="464" font-size="10" fill="#475569">64</text>
+  <text x="186" y="464" font-size="10" fill="#475569" text-anchor="end">5.697 ms</text>
+  <text x="276" y="464" font-size="10" fill="#475569" text-anchor="end">2.488 ms</text>
+  <text x="366" y="464" font-size="10" fill="#475569" text-anchor="end">3.158 ms</text>
+  <text x="440" y="464" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">2.29x</text>
+  <text x="560" y="464" font-size="10" fill="#475569" text-anchor="end">12,416 -&gt; 320</text>
+
+  <text x="66" y="486" font-size="10" fill="#475569">128</text>
+  <text x="186" y="486" font-size="10" fill="#475569" text-anchor="end">17.354 ms</text>
+  <text x="276" y="486" font-size="10" fill="#475569" text-anchor="end">5.308 ms</text>
+  <text x="366" y="486" font-size="10" fill="#475569" text-anchor="end">6.422 ms</text>
+  <text x="440" y="486" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">3.27x</text>
+  <text x="560" y="486" font-size="10" fill="#475569" text-anchor="end">41,216 -&gt; 576</text>
+
+  <text x="66" y="508" font-size="10" fill="#475569">512</text>
+  <text x="186" y="508" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">224.343 ms</text>
+  <text x="276" y="508" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">19.617 ms</text>
+  <text x="366" y="508" font-size="10" fill="#475569" text-anchor="end">25.046 ms</text>
+  <text x="440" y="508" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">11.44x</text>
+  <text x="560" y="508" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">558,080 -&gt; 2,112</text>
+
+  <line x1="66" y1="522" x2="560" y2="522" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="66" y="540" font-size="9.5" fill="#64748b">264x fewer cells and 11x less time, and the gap between those two numbers is the</text>
+  <text x="66" y="553" font-size="9.5" fill="#64748b">honest part: what is left per step is a Python loop over rows calling `table.slot`</text>
+  <text x="66" y="566" font-size="9.5" fill="#64748b">and three small tensor builds. O(rows) with a fat constant, not free.</text>
+  <text x="66" y="586" font-size="9.5" fill="#64748b">At 8 steps the persistent table is 5% <tspan font-style="italic">slower</tspan>: the prompt is resynced once and the</text>
+  <text x="66" y="599" font-size="9.5" fill="#64748b">run is too short to pay it back. The crossover is somewhere under 64 steps.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the hazard ===================== -->
+  <text x="620" y="382" font-size="13.5" font-weight="700" fill="#334155">a window is live storage, so one of the two tensors could not be one</text>
+  <rect x="620" y="394" width="530" height="225" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="409" font-size="10" font-weight="700" fill="#334155">an append writes at column = that row&apos;s length</text>
+  <g>
+    <rect x="636" y="424" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="662" y="424" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="688" y="424" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="714" y="424" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="740" y="424" width="26" height="14" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+    <text x="778" y="435" font-size="9" fill="#64748b">row 0, len 4: the new cell lands</text>
+    <text x="778" y="446" font-size="9" fill="#15803d" font-weight="700">outside a held 4-wide window</text>
+
+    <rect x="636" y="452" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="662" y="452" width="26" height="14" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="688" y="452" width="26" height="14" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+    <rect x="714" y="452" width="26" height="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="778" y="463" font-size="9" fill="#64748b">row 1, len 2: the new cell lands</text>
+    <text x="778" y="474" font-size="9" fill="#b45309" font-weight="700">inside it, over the padding</text>
+  </g>
+  <rect x="630" y="419" width="114" height="51" rx="3" fill="none" stroke="#4338ca" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <text x="636" y="490" font-size="9" fill="#64748b">The dashed box is a rectangle an earlier step handed out. Nothing keeps that</text>
+  <text x="636" y="502" font-size="9" fill="#64748b">overwritten cell out of the read except a `context_lens` that did not move.</text>
+
+  <line x1="636" y1="514" x2="1134" y2="514" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="636" y="534" font-size="10" font-weight="700" fill="#b91c1c">so a length that tracked the table would disarm yesterday&apos;s gate</text>
+  <rect x="636" y="542" width="498" height="20" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="644" y="556" font-size="9" font-family="ui-monospace, monospace" fill="#7f1d1d">check_plan_current: plan.context_lens.tolist() != [t.num_tokens for t in rows]</text>
+  <text x="636" y="578" font-size="9.5" fill="#64748b">Day 50&apos;s staleness gate compares a plan&apos;s lengths against the cache&apos;s. A view of the</text>
+  <text x="636" y="590" font-size="9.5" fill="#64748b">table&apos;s lengths always agrees with them, so the gate would stop being able to fail</text>
+  <text x="636" y="602" font-size="9.5" fill="#64748b">rather than start failing. Lengths are `[rows]`, so the copy costs nothing.</text>
+  <text x="636" y="616" font-size="9.5" font-weight="700" fill="#4338ca">Share the buffer a later step writes past. Copy the one a later step writes over.</text>
+</svg>

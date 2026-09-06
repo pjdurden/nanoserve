@@ -12,9 +12,9 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 
 ## Status
 
-**Day 50 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 46 onward are the measurement and optimization pass.
+**Day 51 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 46 onward are the measurement and optimization pass.
 
-Every numerical piece is checked against HuggingFace before anything is optimized. **1313 tests green.**
+Every numerical piece is checked against HuggingFace before anything is optimized. **1375 tests green.**
 
 | Stage | Verified against | Status |
 | --- | --- | --- |
