@@ -1,0 +1,5 @@
+steps,rows,max_batch,prompt,row_bucket,width_multiple,shapes_open,shapes_bucketed,falls_back_open,falls_back_bucketed,waste,cells_open,cells_bucketed,open_ms,bucketed_ms
+8,3,8,16,4,128,8,1,0,0,0.3594,492,768,0.589,0.605
+64,3,8,16,4,128,64,1,1,0,0.5453,9312,20480,4.019,4.125
+128,3,8,16,4,128,128,2,1,0,0.5356,30912,66560,8.126,8.745
+512,3,8,16,4,128,512,5,1,0,0.3853,418560,680960,32.561,34.911

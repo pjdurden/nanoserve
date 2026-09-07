@@ -117,6 +117,16 @@ class DecodePlan:
                   (the reference gathers before it masks) and so has to be legal.
     context_lens: `[rows]` long, how many entries of a row are real. Includes this
                   step's own token: it is written before it is attended.
+    pad_rows:     rows appended to the batch purely to keep the forward's shape on
+                  a bucket. Day 52. They sit after the real ones, their
+                  `context_lens` entry is 0 so they attend over nothing, and their
+                  `write_slots` entry is `sink_slot`. Zero means the plan is the
+                  Day-51 one and every tensor below is exactly `[rows, ...]`.
+    sink_slot:    the pool slot a padded row's K/V is thrown at: one past the end of
+                  the pool the allocator hands out, so it is a legal address that no
+                  block maps to and no `BlockTable` can name. `None` when nothing is
+                  padded. See `nanoserve.buckets` for why the write is not simply
+                  sliced off instead.
     min_ctx,
     max_ctx:      the bounds of `context_lens`, as Python ints, *for the host*.
                   Nothing inside a traced forward may read them; that is the whole
@@ -136,11 +146,39 @@ class DecodePlan:
     context_lens: torch.Tensor
     min_ctx: int
     max_ctx: int
+    pad_rows: int = 0
+    sink_slot: int | None = None
 
     @property
     def batch_size(self) -> int:
-        """Rows in this step. The `[rows, 1]` dimension of everything above."""
+        """Cache rows in this step. Padding is not one of them."""
         return len(self.rows)
+
+    @property
+    def graph_rows(self) -> int:
+        """Rows the forward actually runs, padding included. Day 52.
+
+        The dimension a shape guard sees, which is the one that has to stop moving.
+        `batch_size` is the dimension the *scheduler* moved, and the whole point of
+        padding is that the two are allowed to disagree.
+        """
+        return self.batch_size + self.pad_rows
+
+    @property
+    def graph_width(self) -> int:
+        """The rectangle's context axis as the forward sees it, rounding included.
+
+        Read off the tensor rather than recomputed, because this is the number a
+        guard keys on and the tensor is the only thing that cannot be wrong about
+        it. `max_ctx` is the longest real history and is what `context_lens` is
+        checked against; past it the columns are padding the mask covers.
+        """
+        return int(self.slot_mapping.shape[1])
+
+    @property
+    def is_bucketed(self) -> bool:
+        """Whether anything about this step's shape was rounded rather than measured."""
+        return self.pad_rows > 0 or self.graph_width != self.max_ctx
 
     @property
     def width(self) -> int:
@@ -153,8 +191,23 @@ class DecodePlan:
 
     @property
     def cells(self) -> int:
-        """Entries in the read rectangle, real and padding both."""
+        """Entries the batch itself asked for: real rows, as wide as the longest one."""
         return self.batch_size * self.max_ctx
+
+    @property
+    def graph_cells(self) -> int:
+        """Entries the kernel actually reads, after both axes have been rounded up."""
+        return self.graph_rows * self.graph_width
+
+    @property
+    def pad_cells(self) -> int:
+        """Cells that exist only to keep the shape on a bucket. The price of Day 52."""
+        return self.graph_cells - self.cells
+
+    @property
+    def pad_share(self) -> float:
+        """What fraction of the computed rectangle bucketing added."""
+        return self.pad_cells / self.graph_cells if self.graph_cells else 0.0
 
     @property
     def real_cells(self) -> int:
@@ -177,22 +230,29 @@ class DecodePlan:
 
     @property
     def mapping_bytes(self) -> int:
-        """What the read rectangle costs to hold, in bytes. Rebuilt every step."""
-        return mapping_bytes(self.batch_size, self.max_ctx)
+        """What the read rectangle costs to hold, in bytes. The padded one, since
+        that is the tensor the forward is handed."""
+        return mapping_bytes(self.graph_rows, self.graph_width)
 
     def render(self) -> str:
         """One line for a log: shape, occupancy, and price."""
-        return (
+        line = (
             f"{self.batch_size} rows x {self.max_ctx} wide = {self.cells} cells, "
             f"{self.real_cells} real ({self.padding_share:.0%} padding), "
             f"{self.mapping_bytes} bytes, ctx {self.min_ctx}..{self.max_ctx}"
         )
+        if self.is_bucketed:
+            line += (
+                f", bucketed to {self.graph_rows} x {self.graph_width} "
+                f"(+{self.pad_cells} cells, {self.pad_share:.0%})"
+            )
+        return line
 
 
 # --- building one ---------------------------------------------------------------
 
 
-def plan_decode(cache, rows=None, device=None) -> DecodePlan:
+def plan_decode(cache, rows=None, device=None, buckets=None) -> DecodePlan:
     """Grow every named row by one token and hand back this step's addressing.
 
     `cache` is a `BatchedPagedKVCache` or one of its row views; a view supplies its
@@ -203,12 +263,16 @@ def plan_decode(cache, rows=None, device=None) -> DecodePlan:
 
     This is the mutating call of the step, and it is the *only* one: the tables grow
     exactly once, here, atomically across the batch, before anything is traced.
+
+    `buckets` is Day 52: a `DecodeBuckets` that rounds this step's two dimensions up
+    so the forward's shape stays in a closed set. `None` falls back to whatever the
+    cache was built with, which is `None` again unless somebody asked for it.
     """
     inner = getattr(cache, "cache", None)
     if inner is not None:
         rows = cache.rows if rows is None else rows
         cache = inner
-    return cache.plan_decode(rows=rows, device=device)
+    return cache.plan_decode(rows=rows, device=device, buckets=buckets)
 
 
 # --- what it costs ----------------------------------------------------------------
@@ -281,18 +345,28 @@ def check_plan_addressing(plan: DecodePlan) -> None:
     slot, which is the invariant a shared pool lives on: a collision is one sequence
     reading another's K/V, and it produces fluent, wrong text.
     """
-    if tuple(plan.write_slots.shape) != (plan.batch_size,):
+    if tuple(plan.write_slots.shape) != (plan.graph_rows,):
         raise PlanUnsound(
-            f"a plan has one write slot per row ({plan.batch_size}); got "
+            f"a plan has one write slot per row ({plan.graph_rows}); got "
             f"{tuple(plan.write_slots.shape)}"
         )
-    if tuple(plan.slot_mapping.shape) != (plan.batch_size, plan.max_ctx):
+    if tuple(plan.slot_mapping.shape) != (plan.graph_rows, plan.graph_width):
         raise PlanUnsound(
-            f"the read rectangle is [rows, max_ctx] = "
-            f"{(plan.batch_size, plan.max_ctx)}; got {tuple(plan.slot_mapping.shape)}"
+            f"the read rectangle is [graph_rows, graph_width] = "
+            f"{(plan.graph_rows, plan.graph_width)}; got {tuple(plan.slot_mapping.shape)}"
         )
     lens = plan.context_lens.tolist()
-    for i, n in enumerate(lens):
+    if len(lens) != plan.graph_rows:
+        raise PlanUnsound(
+            f"a plan has one context length per row ({plan.graph_rows}); got {len(lens)}"
+        )
+    for i, n in enumerate(lens[plan.batch_size :], start=plan.batch_size):
+        if n != 0:
+            raise PlanUnsound(
+                f"padded row {i} claims {n} cached tokens: a padded row is there to "
+                "hold the shape still and must attend over nothing"
+            )
+    for i, n in enumerate(lens[: plan.batch_size]):
         if n < 1:
             raise PlanUnsound(
                 f"row {plan.rows[i]} claims {n} cached tokens: a decode query has at "
@@ -305,7 +379,7 @@ def check_plan_addressing(plan: DecodePlan) -> None:
                 f"write slot in the read rectangle is {last}: the step would store this "
                 "token where the same step's read does not look"
             )
-    live = [int(s) for i, n in enumerate(lens) for s in plan.slot_mapping[i, :n]]
+    live = [int(s) for i, n in enumerate(lens[: plan.batch_size]) for s in plan.slot_mapping[i, :n]]
     if len(set(live)) != len(live):
         raise PlanUnsound(
             f"{len(live) - len(set(live))} of {len(live)} addressed slots are named by "
@@ -334,7 +408,7 @@ def check_plan_current(plan: DecodePlan, cache) -> None:
     inner = getattr(cache, "cache", None)
     cache = inner if inner is not None else cache
     now = [cache.tables[r].num_tokens for r in plan.rows]
-    want = plan.context_lens.tolist()
+    want = plan.context_lens.tolist()[: plan.batch_size]
     if now != want:
         raise PlanUnsound(
             f"this plan is stale: it was built when rows {list(plan.rows)} held "

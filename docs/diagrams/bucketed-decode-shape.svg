@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The decode shape stops moving, and the closed set too big to capture</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The rectangle is `[rows, max_ctx]` and max_ctx grows by one every step, so a 512-step run presents 512 shapes and dynamo abandons</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">the frame after eight. Day 52 rounds the batch up to a row bucket and the width up to a multiple: 512 shapes become 5. The padded</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">row reads nothing (context_lens = 0) and writes to a sink slot one past the end of the pool the allocator can hand out.</text>
+
+  <!-- ===================== LEFT TOP: the open shape set ===================== -->
+  <text x="50" y="148" font-size="13.5" font-weight="700" fill="#334155">open: one new shape per step, forever</text>
+  <rect x="50" y="160" width="540" height="190" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="182" font-size="10.5" font-weight="700" fill="#b91c1c">Day 51: the rectangle is exactly what the batch is</text>
+
+  <g>
+    <rect x="66" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="78" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="90" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="66" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="78" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="90" y="208" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="66" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="78" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="90" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <text x="72" y="248" font-size="9" fill="#64748b">step 1</text>
+    <text x="72" y="260" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d">[3, 3]</text>
+  </g>
+  <g>
+    <rect x="150" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="162" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="174" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="186" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="150" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="162" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="174" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="186" y="208" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="150" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="162" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="174" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="186" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <text x="156" y="248" font-size="9" fill="#64748b">step 2</text>
+    <text x="156" y="260" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d">[3, 4]</text>
+  </g>
+  <g>
+    <rect x="246" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="258" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="270" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="282" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="294" y="196" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="246" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="258" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="270" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="282" y="208" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="294" y="208" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="246" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="258" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="270" y="220" width="12" height="12" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="282" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="294" y="220" width="12" height="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <text x="252" y="248" font-size="9" fill="#64748b">step 3</text>
+    <text x="252" y="260" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d">[3, 5]</text>
+  </g>
+  <text x="352" y="215" font-size="20" fill="#94a3b8">...</text>
+  <text x="352" y="260" font-size="8.5" font-family="ui-monospace, monospace" fill="#7f1d1d">[3, 516]</text>
+
+  <rect x="66" y="278" width="352" height="22" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="74" y="293" font-size="9" font-family="ui-monospace, monospace" fill="#7f1d1d">512 steps -&gt; 512 distinct shapes -&gt; 512 builds asked for</text>
+  <text x="66" y="320" font-size="9.5" fill="#64748b">Past `cache_size_limit` (8) dynamo stops compiling the frame and runs eager for</text>
+  <text x="66" y="333" font-size="9.5" fill="#64748b">the rest of the process. Nothing is raised and nothing is logged.</text>
+
+  <text x="440" y="212" font-size="9.5" font-weight="700" fill="#b91c1c">rows moves when the</text>
+  <text x="440" y="225" font-size="9.5" font-weight="700" fill="#b91c1c">scheduler admits, width</text>
+  <text x="440" y="238" font-size="9.5" font-weight="700" fill="#b91c1c">moves every single step</text>
+
+  <!-- ===================== RIGHT TOP: the bucketed step ===================== -->
+  <text x="620" y="148" font-size="13.5" font-weight="700" fill="#334155">bucketed: both axes rounded up, and the padded row has two jobs</text>
+  <rect x="620" y="160" width="530" height="190" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="182" font-size="10.5" font-weight="700" fill="#15803d">3 rows -&gt; row bucket 4, width 5 -&gt; multiple of 8</text>
+
+  <g>
+    <rect x="636" y="196" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="651" y="196" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="666" y="196" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="681" y="196" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="696" y="196" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="711" y="196" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="726" y="196" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="741" y="196" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+
+    <rect x="636" y="211" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="651" y="211" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="666" y="211" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="681" y="211" width="15" height="15" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="696" y="211" width="15" height="15" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="711" y="211" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="726" y="211" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="741" y="211" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+
+    <rect x="636" y="226" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="651" y="226" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="666" y="226" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="681" y="226" width="15" height="15" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="0.7"/>
+    <rect x="696" y="226" width="15" height="15" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+    <rect x="711" y="226" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="726" y="226" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+    <rect x="741" y="226" width="15" height="15" fill="#fef3c7" stroke="#fcd34d" stroke-width="0.7"/>
+
+    <rect x="636" y="241" width="150" height="15" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+    <text x="643" y="253" font-size="8.5" font-weight="700" fill="#7c2d12">padded row: context_lens = 0</text>
+  </g>
+  <text x="766" y="207" font-size="9" fill="#64748b">pale blue = real history</text>
+  <text x="766" y="219" font-size="9" fill="#64748b">grey = ragged padding (Day 50)</text>
+  <text x="766" y="231" font-size="9" fill="#b45309">yellow = bucket padding (today)</text>
+  <text x="800" y="250" font-size="9" font-weight="700" fill="#15803d">shape [4, 8] whatever</text>
+  <text x="800" y="262" font-size="9" font-weight="700" fill="#15803d">the batch really was</text>
+
+  <line x1="700" y1="262" x2="700" y2="286" stroke="#b45309" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <rect x="636" y="286" width="240" height="24" rx="3" fill="#f0fdf4" stroke="#15803d" stroke-width="1.3"/>
+  <text x="644" y="302" font-size="9" fill="#166534">reads nothing: the mask covers the whole row</text>
+  <rect x="884" y="286" width="250" height="24" rx="3" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.3"/>
+  <text x="892" y="302" font-size="9" fill="#7f1d1d">writes anyway: one index_put, whole batch</text>
+
+  <text x="636" y="328" font-size="9.5" fill="#64748b">Slicing the write to `k[:real_rows]` puts a Python int that changes every step back</text>
+  <text x="636" y="341" font-size="9.5" font-weight="700" fill="#4338ca">inside the traced region: exactly the guard Day 49 measured a 46x regression on.</text>
+
+  <!-- ===================== LEFT BOTTOM: the sink slot ===================== -->
+  <text x="50" y="382" font-size="13.5" font-weight="700" fill="#334155">so a padded row needs an address that cannot belong to anybody</text>
+  <rect x="50" y="394" width="540" height="225" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="66" y="416" font-size="10" font-weight="700" fill="#334155">k_pool, one row taller than the pool the allocator hands out</text>
+  <g>
+    <rect x="66" y="428" width="46" height="26" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="1"/>
+    <text x="80" y="445" font-size="9" fill="#3730a3">blk 0</text>
+    <rect x="112" y="428" width="46" height="26" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="1"/>
+    <text x="126" y="445" font-size="9" fill="#3730a3">blk 1</text>
+    <rect x="158" y="428" width="46" height="26" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="1"/>
+    <text x="172" y="445" font-size="9" fill="#3730a3">blk 2</text>
+    <rect x="204" y="428" width="46" height="26" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="216" y="445" font-size="9" fill="#64748b">free</text>
+    <rect x="250" y="428" width="46" height="26" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="262" y="445" font-size="9" fill="#64748b">free</text>
+    <rect x="300" y="428" width="34" height="26" fill="#fde68a" stroke="#b45309" stroke-width="1.6"/>
+    <text x="307" y="445" font-size="9" font-weight="700" fill="#7c2d12">sink</text>
+  </g>
+  <line x1="66" y1="462" x2="296" y2="462" stroke="#4338ca" stroke-width="1.2"/>
+  <text x="66" y="476" font-size="9" fill="#4338ca">num_blocks * block_size: every slot a BlockTable can ever name</text>
+  <line x1="300" y1="462" x2="334" y2="462" stroke="#b45309" stroke-width="1.2"/>
+  <text x="342" y="452" font-size="9" font-weight="700" fill="#b45309">slot num_blocks * block_size</text>
+  <text x="342" y="464" font-size="9" fill="#7c2d12">legal to write, impossible to allocate</text>
+
+  <text x="66" y="500" font-size="10" font-weight="700" fill="#b91c1c">why not just take a block for it?</text>
+  <rect x="66" y="508" width="498" height="22" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="74" y="523" font-size="9" font-family="ui-monospace, monospace" fill="#7f1d1d">audit_blocks: &quot;block 5 is allocated but no request holds it&quot; -&gt; stranded</text>
+  <text x="66" y="547" font-size="9.5" fill="#64748b">Day 35&apos;s ledger invariant is that every allocated block is held by some request. A</text>
+  <text x="66" y="560" font-size="9.5" fill="#64748b">sink taken with `allocate()` is exactly the shape of a leak, and the audit is right.</text>
+  <text x="66" y="580" font-size="9.5" fill="#64748b">So the sink is not a block. The pool tensor is allocated one row taller, always, so</text>
+  <text x="66" y="593" font-size="9.5" fill="#64748b">there is one pool shape rather than two and the address exists whether or not</text>
+  <text x="66" y="606" font-size="9.5" fill="#64748b">anything pads. Several padded rows name it at once; nothing ever reads it.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the product ===================== -->
+  <text x="620" y="382" font-size="13.5" font-weight="700" fill="#334155">closed is not the same as small, and the set size is a product</text>
+  <rect x="620" y="394" width="530" height="225" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="636" y="414" font-size="9.5" fill="#64748b">len(row_buckets) x len(widths), at 256 rows and max_model_len 8192</text>
+
+  <text x="636" y="438" font-size="10" font-weight="700" fill="#334155">width multiple</text>
+  <text x="800" y="438" font-size="10" font-weight="700" fill="#334155" text-anchor="end">widths</text>
+  <text x="900" y="438" font-size="10" font-weight="700" fill="#334155" text-anchor="end">shapes</text>
+  <text x="1134" y="438" font-size="10" font-weight="700" fill="#334155" text-anchor="end">verdict</text>
+  <line x1="636" y1="444" x2="1134" y2="444" stroke="#cbd5e1" stroke-width="1"/>
+
+  <text x="636" y="464" font-size="10" fill="#475569">128</text>
+  <text x="800" y="464" font-size="10" fill="#475569" text-anchor="end">9 x 64</text>
+  <text x="900" y="464" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">576</text>
+  <text x="1134" y="464" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">a compile bill</text>
+
+  <text x="636" y="486" font-size="10" fill="#475569">512</text>
+  <text x="800" y="486" font-size="10" fill="#475569" text-anchor="end">9 x 16</text>
+  <text x="900" y="486" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="end">144</text>
+  <text x="1134" y="486" font-size="10" fill="#b91c1c" text-anchor="end">a compile bill</text>
+
+  <text x="636" y="508" font-size="10" fill="#475569">2048</text>
+  <text x="800" y="508" font-size="10" fill="#475569" text-anchor="end">9 x 4</text>
+  <text x="900" y="508" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">36</text>
+  <text x="1134" y="508" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">a capture list</text>
+
+  <text x="636" y="530" font-size="10" fill="#475569">8192</text>
+  <text x="800" y="530" font-size="10" fill="#475569" text-anchor="end">9 x 1</text>
+  <text x="900" y="530" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">9</text>
+  <text x="1134" y="530" font-size="10" font-weight="700" fill="#15803d" text-anchor="end">a capture list</text>
+
+  <line x1="636" y1="542" x2="1134" y2="542" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="636" y="560" font-size="9.5" fill="#64748b">The row axis is bounded and fine. The width axis is what blows the budget, and</text>
+  <text x="636" y="573" font-size="9.5" fill="#64748b">coarsening it buys the budget back in padding: 38.5% of the cells the measured</text>
+  <text x="636" y="586" font-size="9.5" fill="#64748b">512-step run computes exist only to hold the shape still (680,960 vs 418,560).</text>
+  <text x="636" y="605" font-size="9.5" font-weight="700" fill="#4338ca">vLLM captures batch sizes only: its kernel reads each row&apos;s length from a tensor,</text>
+  <text x="636" y="617" font-size="9.5" font-weight="700" fill="#4338ca">so the context axis never reaches a guard. Mine gathers before it masks.</text>
+</svg>

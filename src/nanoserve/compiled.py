@@ -188,16 +188,18 @@ def decode_shape(input_ids: torch.Tensor, cache) -> DecodeShape:
     Unless the view carries a Day-50 `DecodePlan`, in which case there is nothing to
     predict. The plan grew the tables and built the rectangle before this wrapper
     was called, so `seq_lens` is already the post-write length and adding one to it
-    overshoots; `plan.max_ctx` is not an estimate of the guard's dimension, it is
-    the dimension.
+    overshoots; the plan's dimensions are not an estimate of the guard's, they are
+    the guard's. Which two they are is Day 52: `graph_rows` and `graph_width` are
+    what the tensors handed to the forward really measure, and on a bucketed plan
+    they are the rounded pair rather than the batch the scheduler admitted.
     """
     if input_ids.dim() != 2:
         raise ValueError(f"decode input ids are [rows, seq]; got {tuple(input_ids.shape)}")
     plan = getattr(cache, "plan", None)
     if plan is not None:
         return DecodeShape(
-            rows=plan.batch_size,
-            context_width=plan.max_ctx,
+            rows=plan.graph_rows,
+            context_width=plan.graph_width,
             query_len=int(input_ids.shape[1]),
         )
     lens = list(cache.seq_lens)
@@ -518,10 +520,13 @@ class CompiledDecode:
     recompile_limit: where dynamo stops compiling this frame and goes back to the
                      interpreter forever.
 
-    What it does *not* do is pad. Bucketing is priced in this module and applied by
-    nothing yet, because padding a decode batch needs a cache row that is not a
-    slot, and a compiler does not need padding at all: symbolic shapes are free and
-    a replayed capture is what makes them expensive.
+    What it does *not* do is pad, and that stayed true. Bucketing is priced in this
+    module and applied in `nanoserve.buckets` (Day 52), one layer down where the
+    rectangle is built: a padded batch needs a cache row that is not a scheduler
+    slot and a pool address that is not a block, and neither is something a wrapper
+    around a forward can invent. What this class does with it is report the shape
+    the guard really sees, through `decode_shape`, so `distinct` collapses to the
+    bucket count on a bucketed run and stays one-per-step on an unbucketed one.
     """
 
     def __init__(

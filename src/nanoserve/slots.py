@@ -176,6 +176,11 @@ class SlotTable:
         self.windows = 0
         self.gathers = 0
         self.moves = 0
+        # Day 52. Reads that were widened past the rows the caller asked for, and
+        # the cells that cost. Padding a batch up to a row bucket is what keeps the
+        # forward's shape constant; these two say how often and how much.
+        self.pads = 0
+        self.padded_cells = 0
 
     # --- what it is ---------------------------------------------------------
 
@@ -342,7 +347,7 @@ class SlotTable:
 
     # --- reading --------------------------------------------------------------
 
-    def read(self, rows, width: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def read(self, rows, width: int, *, pad_rows: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
         """The rectangle and the lengths, for a forward over `rows`.
 
         The rectangle is `slots[:n, :width]` when `rows` is a prefix of the table's,
@@ -354,9 +359,28 @@ class SlotTable:
         The lengths are always a fresh tensor and that is deliberate, not an
         oversight: see the module docstring. They are `[rows]`, so it costs `rows`
         int64, and it is what keeps a plan checkable after the cache has moved on.
+
+        `pad_rows` is Day 52. It widens the rectangle to `len(rows) + pad_rows` so
+        that a batch can be padded up to a bucket and the forward's shape stops
+        moving. The padded rows are the table's *next* rows, which costs nothing
+        over a prefix (`slots[:n + pad, :width]` is the same basic slice, so the
+        result is still a window at the buffer's own address) and costs a duplicated
+        index over a gather. What is in those rows is another tenant's slots or
+        nothing at all, and neither is read: their length is 0, so the whole row is
+        masked. The length is what makes the padding safe, and it is the reason the
+        lengths are built here rather than pointed at.
         """
         rows = self._rows(rows)
         width = int(width)
+        pad_rows = int(pad_rows)
+        if pad_rows < 0:
+            raise ValueError(f"a read pads a non-negative number of rows; got {pad_rows}")
+        if len(rows) + pad_rows > self.max_batch_size:
+            raise ValueError(
+                f"a read over {len(rows)} rows padded by {pad_rows} needs "
+                f"{len(rows) + pad_rows} rows and the table has {self.max_batch_size}: "
+                "a row bucket bigger than the cache is a bucket with nothing to pad into"
+            )
         if width < 1:
             raise ValueError(f"a rectangle is at least one column wide; got {width}")
         if width > self.max_model_len:
@@ -371,15 +395,25 @@ class SlotTable:
                     f"is {width} wide: the read would not see the whole history"
                 )
         if rows == tuple(range(len(rows))):
-            mapping = self.slots[: len(rows), :width]
+            mapping = self.slots[: len(rows) + pad_rows, :width]
             self.windows += 1
         else:
-            index = torch.tensor(rows, dtype=torch.long, device=self.slots.device)
+            # A gather has no "next rows" to widen into, so the padding repeats the
+            # first row's index. It reads real slots and is masked away by a length
+            # of 0, exactly as the prefix case is.
+            index = torch.tensor(
+                rows + (rows[0],) * pad_rows, dtype=torch.long, device=self.slots.device
+            )
             mapping = self.slots[:, :width].index_select(0, index)
             self.gathers += 1
         lengths = torch.tensor(
-            [self._lengths[r] for r in rows], dtype=torch.long, device=self.slots.device
+            [self._lengths[r] for r in rows] + [0] * pad_rows,
+            dtype=torch.long,
+            device=self.slots.device,
         )
+        if pad_rows:
+            self.pads += 1
+            self.padded_cells += pad_rows * width
         return mapping, lengths
 
     def is_window(self, tensor: torch.Tensor) -> bool:

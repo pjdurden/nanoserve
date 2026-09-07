@@ -222,6 +222,7 @@ class Engine:
         defer_window: int = 0,
         compile_decode: str | None = None,
         max_model_len: int | None = None,
+        bucket_decode: bool = False,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -236,6 +237,12 @@ class Engine:
         Left unset it falls back to the pool, which is the bound that always holds
         and is far larger than any server actually serves. `build_engine` passes the
         length it planned the pool around, which is where the number belongs.
+
+        `bucket_decode` is Day 52 and it changes one thing: every decode step is
+        padded up to a row bucket and read at a width multiple, so the forward sees
+        one of a small closed set of shapes rather than a new one every step. It
+        costs cells the kernel computes and nobody reads, and it buys the only
+        property a replayed capture cannot do without. See `nanoserve.buckets`.
         """
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
@@ -246,6 +253,7 @@ class Engine:
                 allocator,
                 batch_size=max_batch_size,
                 max_model_len=max_model_len,
+                bucket_decode=bucket_decode,
             ),
             pad_id=pad_id,
             seed=seed,
@@ -420,6 +428,15 @@ class Engine:
             # forward no longer does one.
             plan = plan_decode(self.cache, rows, device)
             view = self.cache.view(rows, plan=plan)
+            if plan.pad_rows:
+                # Day 52. The rows the plan invented need a token each, and the
+                # forward wants one tensor. This is the last per-step allocation on
+                # the input side and it is `[pad, 1]` of zeros; a captured graph
+                # replaces it with a write into a fixed input buffer, which is the
+                # next thing this padding exists for.
+                input_ids = torch.cat(
+                    [input_ids, input_ids.new_zeros(plan.pad_rows, 1)], dim=0
+                )
 
         with timing.phase("forward", device=True):
             # Through the Day-49 wrapper rather than straight at the model. It is
@@ -433,7 +450,11 @@ class Engine:
             # Day 47 found out why: it used to end in one `int(tensor)` per row. Now
             # it ends in a `[rows]` tensor that stays where it was computed, so
             # nothing here waits on a kernel and `syncs` is gone from this line.
-            tokens = self._sample(requests, logits[:, -1])
+            # `logits` is `[graph_rows, seq, vocab]`, and on a bucketed step the
+            # padded rows are on the end of it. Dropping them here rather than
+            # inside the forward keeps the traced region's shapes constant, which
+            # is the whole reason they are there.
+            tokens = self._sample(requests, logits[: len(requests), -1])
 
         with timing.phase("collect", syncs=not self.defer_window):
             # Where Day 47's annotation went, and the honest reading of that day: a

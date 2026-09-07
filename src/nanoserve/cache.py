@@ -21,6 +21,7 @@ import torch
 from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
 from .plan import DecodePlan
+from .buckets import DecodeBuckets
 from .slots import SlotTable
 
 
@@ -565,6 +566,7 @@ class BatchedPagedKVCache:
         allocator: BlockAllocator,
         batch_size: int,
         max_model_len: int | None = None,
+        bucket_decode: bool = False,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -600,6 +602,31 @@ class BatchedPagedKVCache:
         # planned decode path uses it; the ragged prefill still builds its own,
         # because a prefill really does decide where things go while it runs.
         self.slot_table = SlotTable(batch_size, self.max_model_len)
+        # Day 52. The shapes a decode step is allowed to present, or `None` for the
+        # Day-51 behaviour of presenting whatever the batch happened to be. Built
+        # from this cache's own two limits because a row bucket it has no row for
+        # and a width wider than the slot table are both a crash rather than a
+        # rounding decision. See `nanoserve.buckets`.
+        self.decode_buckets = (
+            DecodeBuckets(batch_size, self.max_model_len) if bucket_decode else None
+        )
+
+    @property
+    def sink_slot(self) -> int:
+        """The pool slot a padded decode row throws its K/V at. Day 52.
+
+        One row past the end of the pool the allocator hands out, so it is a legal
+        index into `k_pool` that no block ever maps to and therefore no `BlockTable`
+        can ever name. It is not a block and never enters the allocator's ledger,
+        which is the point: a sink taken out of the pool with `allocate()` would be
+        a block no request holds, and Day 35's `audit_blocks` calls that stranded,
+        correctly.
+
+        Several padded rows in one step name it at once. That is fine and worth
+        being explicit about: an `index_put` with a repeated index leaves one of the
+        writes in place and nobody can say which, and nothing ever reads this slot.
+        """
+        return self.allocator.num_blocks * self.block_size
 
     @property
     def seq_lens(self) -> list[int]:
@@ -697,7 +724,7 @@ class BatchedPagedKVCache:
                 f"(rows hold {self.seq_lens}, adding {counts} to rows {list(rows)})"
             )
 
-    def plan_decode(self, rows=None, device=None) -> DecodePlan:
+    def plan_decode(self, rows=None, device=None, buckets=None) -> DecodePlan:
         """Grow every named row by one and hand back this step's addressing. Day 50.
 
         The whole of a decode step's host-side bookkeeping, done once, here, before
@@ -724,7 +751,16 @@ class BatchedPagedKVCache:
         rather than a freshly built tensor. The lengths are still a fresh `[rows]`
         tensor on purpose: they are the one number a later step overwrites in place,
         so a plan that shared them could never be found stale. See `nanoserve.slots`.
+
+        Day 52 rounds the shape. With `buckets` (or a cache built `bucket_decode`),
+        the batch is padded up to a row bucket and the rectangle is read at a width
+        multiple, so the forward sees one of a small closed set of shapes instead of
+        a new one every step. The padded rows attend over nothing (`context_lens` 0)
+        and write to `sink_slot`, and both halves are required: the write is one
+        `index_put` over the padded batch, so a padded row writes K/V whether anyone
+        wants it to or not. See `nanoserve.buckets`.
         """
+        buckets = self.decode_buckets if buckets is None else buckets
         rows = self._rows(rows)
         before = [self.tables[r].num_tokens for r in rows]
         empty = [r for r, n in zip(rows, before) if n < 1]
@@ -749,7 +785,16 @@ class BatchedPagedKVCache:
         after = [n + 1 for n in before]
         max_ctx = max(after)
         self.slot_table.append(rows, write_slots)
-        slot_mapping, context_lens = self.slot_table.read(rows, max_ctx)
+        pad_rows = 0
+        sink_slot = None
+        width = max_ctx
+        if buckets is not None:
+            pad_rows = buckets.row_bucket(len(rows)) - len(rows)
+            width = buckets.width_bucket(max_ctx)
+            if pad_rows:
+                sink_slot = self.sink_slot
+                write_slots = write_slots + [sink_slot] * pad_rows
+        slot_mapping, context_lens = self.slot_table.read(rows, width, pad_rows=pad_rows)
 
         self._mapping = None  # the tables grew; the cache's own addressing is stale
         self._step_slots = None
@@ -757,20 +802,30 @@ class BatchedPagedKVCache:
         return DecodePlan(
             rows=rows,
             positions=torch.tensor(
-                [[n] for n in before], dtype=torch.long, device=device
+                # Padded rows sit at position 0. Any legal position would do (the
+                # row's output is discarded), and 0 is the one that cannot be
+                # mistaken for a neighbour's while reading a log.
+                [[n] for n in before] + [[0]] * pad_rows,
+                dtype=torch.long,
+                device=device,
             ),
             write_slots=torch.tensor(write_slots, dtype=torch.long, device=device),
             slot_mapping=slot_mapping,
             context_lens=context_lens,
             min_ctx=min(after),
             max_ctx=max_ctx,
+            pad_rows=pad_rows,
+            sink_slot=sink_slot,
         )
 
     def _ensure_pool(self, layer: int, k: torch.Tensor, v: torch.Tensor) -> None:
         """Allocate this layer's flat `[num_slots, n_kv, d]` K/V pool on first write."""
         if self.k_pool[layer] is None:
             pool = (
-                self.allocator.num_blocks * self.block_size,
+                # One row past what the allocator can hand out: the Day-52 sink,
+                # allocated unconditionally so the pool has one shape rather than
+                # two and so the address exists whether or not anything pads.
+                self.allocator.num_blocks * self.block_size + 1,
                 self.config.num_key_value_heads,
                 self.config.head_dim,
             )
@@ -806,13 +861,16 @@ class BatchedPagedKVCache:
                 f"a planned write is a decode write: one token per row, got seq={seq}. "
                 "A ragged prefill has no plan and takes the key-mask path"
             )
-        if batch != len(rows):
+        if batch != plan.graph_rows:
             raise ValueError(
-                f"this forward covers {len(rows)} rows {list(rows)}, got a batch of "
-                f"{batch}"
+                f"this forward covers {len(rows)} rows {list(rows)} padded to "
+                f"{plan.graph_rows}, got a batch of {batch}"
             )
         self._ensure_pool(layer, k, v)
-        # [batch, n_kv, 1, d] -> [batch, n_kv, d], one row per destination slot.
+        # [batch, n_kv, 1, d] -> [batch, n_kv, d], one row per destination slot. The
+        # padded rows are in here too and go to the sink, which is why this stays a
+        # single scatter: slicing the real rows off would put a Python integer that
+        # moves every step back inside the traced region. Day 52.
         self.k_pool[layer][plan.write_slots] = k[:, :, 0, :]
         self.v_pool[layer][plan.write_slots] = v[:, :, 0, :]
 
@@ -1137,14 +1195,14 @@ class BatchedCacheRows:
     def slot_mapping(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
         return self.cache.slot_mapping(device, rows=self.rows, plan=self.plan)
 
-    def plan_decode(self, device=None) -> DecodePlan:
+    def plan_decode(self, device=None, buckets=None) -> DecodePlan:
         """This view's rows, grown by one, with their addressing. See Day 50.
 
         Returns the plan rather than attaching it: a view that planned itself would
         be a view whose meaning changed after the forward already had it, and the
         caller wants `cache.view(rows, plan=plan)` anyway.
         """
-        return self.cache.plan_decode(rows=self.rows, device=device)
+        return self.cache.plan_decode(rows=self.rows, device=device, buckets=buckets)
 
     def context_bounds(self) -> tuple[int, int]:
         return self.cache.context_bounds(rows=self.rows)
