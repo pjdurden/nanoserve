@@ -1,0 +1,5 @@
+steps,rows,max_batch,prompt,allocations_fresh,allocations_buffered,writes,written_cells,moves,buffer_bytes,fresh_ms,buffered_ms
+8,3,8,16,24,0,24,72,0,256,0.56,0.666
+64,3,8,16,192,0,192,576,0,256,3.762,4.193
+128,3,8,16,384,0,384,1152,0,256,7.406,8.218
+512,3,8,16,1536,0,1536,4608,0,256,29.664,32.778

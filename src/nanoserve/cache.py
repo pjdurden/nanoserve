@@ -22,6 +22,7 @@ from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
 from .plan import DecodePlan
 from .buckets import DecodeBuckets
+from .inputs import DecodeInputs
 from .slots import SlotTable
 
 
@@ -567,6 +568,7 @@ class BatchedPagedKVCache:
         batch_size: int,
         max_model_len: int | None = None,
         bucket_decode: bool = False,
+        persist_inputs: bool = False,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -610,6 +612,12 @@ class BatchedPagedKVCache:
         self.decode_buckets = (
             DecodeBuckets(batch_size, self.max_model_len) if bucket_decode else None
         )
+        # Day 53. The four `[batch_size]` int64 vectors a decode step hands the
+        # forward, allocated once instead of built every step, or `None` for the
+        # Day-52 behaviour of a fresh tensor per input per step. One set covers every
+        # shape in a bucket set, because a buffer is indexed by batch position and
+        # every shape's window is a prefix of it. See `nanoserve.inputs`.
+        self.decode_inputs = DecodeInputs(batch_size) if persist_inputs else None
 
     @property
     def sink_slot(self) -> int:
@@ -759,6 +767,15 @@ class BatchedPagedKVCache:
         and write to `sink_slot`, and both halves are required: the write is one
         `index_put` over the padded batch, so a padded row writes K/V whether anyone
         wants it to or not. See `nanoserve.buckets`.
+
+        Day 53 changes where the three addressing tensors live and nothing about
+        what they say. With `persist_inputs`, `positions`, `write_slots` and
+        `context_lens` are written into `self.decode_inputs` and handed back as
+        windows, so a step allocates nothing on the input side and a replay has a
+        fixed address to read. The plan then carries host-side snapshots of the last
+        two, because Day 50's staleness gate and Day 51's window gate both used
+        those tensors as witnesses and a witness that shares storage with the thing
+        it witnesses is not one. See `nanoserve.inputs`.
         """
         buckets = self.decode_buckets if buckets is None else buckets
         rows = self._rows(rows)
@@ -794,28 +811,49 @@ class BatchedPagedKVCache:
             if pad_rows:
                 sink_slot = self.sink_slot
                 write_slots = write_slots + [sink_slot] * pad_rows
-        slot_mapping, context_lens = self.slot_table.read(rows, width, pad_rows=pad_rows)
+        # Padded rows sit at position 0. Any legal position would do (the row's
+        # output is discarded), and 0 is the one that cannot be mistaken for a
+        # neighbour's while reading a log.
+        positions = before + [0] * pad_rows
+        inputs = self.decode_inputs
+        if inputs is None:
+            slot_mapping, context_lens = self.slot_table.read(rows, width, pad_rows=pad_rows)
+            position_ids = torch.tensor(
+                [[n] for n in positions], dtype=torch.long, device=device
+            )
+            write_slot_ids = torch.tensor(write_slots, dtype=torch.long, device=device)
+            snapshots = {}
+        else:
+            # Day 53. The same three tensors, written into buffers that were
+            # allocated once, so what the forward is handed is a window at an
+            # address that will still be that buffer on step 500. The snapshots go
+            # with them and are not optional: they are the copies two older gates
+            # were using the tensors themselves as. See `nanoserve.inputs`.
+            inputs.to(device)
+            slot_mapping, context_lens = self.slot_table.read(
+                rows, width, pad_rows=pad_rows, lengths_writer=inputs.set_context_lens
+            )
+            position_ids = inputs.set_positions(positions)
+            write_slot_ids = inputs.set_write_slots(write_slots)
+            snapshots = {
+                "context_snapshot": tuple(after) + (0,) * pad_rows,
+                "write_snapshot": tuple(write_slots),
+            }
 
         self._mapping = None  # the tables grew; the cache's own addressing is stale
         self._step_slots = None
         self._step_rows = None
         return DecodePlan(
             rows=rows,
-            positions=torch.tensor(
-                # Padded rows sit at position 0. Any legal position would do (the
-                # row's output is discarded), and 0 is the one that cannot be
-                # mistaken for a neighbour's while reading a log.
-                [[n] for n in before] + [[0]] * pad_rows,
-                dtype=torch.long,
-                device=device,
-            ),
-            write_slots=torch.tensor(write_slots, dtype=torch.long, device=device),
+            positions=position_ids,
+            write_slots=write_slot_ids,
             slot_mapping=slot_mapping,
             context_lens=context_lens,
             min_ctx=min(after),
             max_ctx=max_ctx,
             pad_rows=pad_rows,
             sink_slot=sink_slot,
+            **snapshots,
         )
 
     def _ensure_pool(self, layer: int, k: torch.Tensor, v: torch.Tensor) -> None:

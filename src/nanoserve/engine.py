@@ -223,6 +223,7 @@ class Engine:
         compile_decode: str | None = None,
         max_model_len: int | None = None,
         bucket_decode: bool = False,
+        persist_inputs: bool = False,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -243,6 +244,12 @@ class Engine:
         one of a small closed set of shapes rather than a new one every step. It
         costs cells the kernel computes and nobody reads, and it buys the only
         property a replayed capture cannot do without. See `nanoserve.buckets`.
+
+        `persist_inputs` is Day 53 and it is the other half of the same want. The
+        step's four input tensors are allocated once and written in place, so what
+        the forward is handed is a window at an address that does not change for the
+        life of the process. A replay takes no arguments; it reads the buffers it
+        was recorded against. See `nanoserve.inputs`.
         """
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
@@ -254,6 +261,7 @@ class Engine:
                 batch_size=max_batch_size,
                 max_model_len=max_model_len,
                 bucket_decode=bucket_decode,
+                persist_inputs=persist_inputs,
             ),
             pad_id=pad_id,
             seed=seed,
@@ -418,7 +426,9 @@ class Engine:
             # list, every step. Tiny in bytes and not tiny in time: this is the phase
             # a captured graph makes disappear by writing into a fixed input buffer.
             # Day 48 removes the other one. See `_decode_input_ids`.
-            input_ids = self._decode_input_ids(requests, device)
+            values = self._decode_input_values(requests, device)
+            inputs = self.cache.decode_inputs
+            input_ids = None if inputs is not None else self._as_input_ids(values, device)
             # Day 50. The step's whole addressing, decided here rather than inside
             # the forward: this grows every row's table by one and hands back the
             # write slots, the read rectangle, the context lengths and the new
@@ -428,12 +438,18 @@ class Engine:
             # forward no longer does one.
             plan = plan_decode(self.cache, rows, device)
             view = self.cache.view(rows, plan=plan)
-            if plan.pad_rows:
+            if inputs is not None:
+                # Day 53. The tokens go into the buffer the forward already reads
+                # from, and the window is widened to the bucketed row count rather
+                # than concatenated onto. The padded rows keep whatever the buffer
+                # last held, which is a legal token id because nothing but one is
+                # ever written here, and those rows' logits are dropped below.
+                input_ids = inputs.set_input_ids(values, window=plan.graph_rows)
+            elif plan.pad_rows:
                 # Day 52. The rows the plan invented need a token each, and the
                 # forward wants one tensor. This is the last per-step allocation on
-                # the input side and it is `[pad, 1]` of zeros; a captured graph
-                # replaces it with a write into a fixed input buffer, which is the
-                # next thing this padding exists for.
+                # the input side and it is `[pad, 1]` of zeros; Day 53's buffers are
+                # what replace it, which is the next thing this padding exists for.
                 input_ids = torch.cat(
                     [input_ids, input_ids.new_zeros(plan.pad_rows, 1)], dim=0
                 )
@@ -503,6 +519,22 @@ class Engine:
         return TokenBatch(self.sampler.sample_batch_device(logits, rows), [i for i, _ in rows])
 
     def _decode_input_ids(self, requests, device) -> torch.Tensor:
+        """This step's input tokens as the `[rows, 1]` the model wants.
+
+        Day 53 splits this in two. What the token *is* is `_decode_input_values`
+        below and has not changed; what is here is the tensor it becomes, which is
+        the half a persistent input buffer replaces. Nothing outside this class
+        calls the pair, so the split costs a line and keeps the fast path readable.
+        """
+        return self._as_input_ids(self._decode_input_values(requests, device), device)
+
+    def _as_input_ids(self, values, device) -> torch.Tensor:
+        """A fresh `[rows, 1]` from either form the values come in. Day 52's path."""
+        if isinstance(values, torch.Tensor):
+            return values.unsqueeze(1)
+        return torch.tensor([[v] for v in values], dtype=torch.long, device=device)
+
+    def _decode_input_values(self, requests, device):
         """This step's input tokens, from the device if last step's are still on it.
 
         The fast path is the day. The token a decode row forwards is exactly the
@@ -520,15 +552,18 @@ class Engine:
         wrong text. When the rows differ the held tokens are not this step's input
         and the requests below need ints the engine does not have, so it pays for
         them here and goes back to deferring on the next step.
+
+        Returns a device tensor on the fast path and a list of host ints on the slow
+        one, and the caller decides what to do with each. Day 53 wants that
+        distinction: a tensor already on the device is copied straight into the
+        input buffer, and a list goes through the buffer's pinned staging mirror.
         """
         held = self.output.newest if self.defer_window else None
         if held is not None and held.request_ids == tuple(r.request_id for r in requests):
-            return held.tokens.unsqueeze(1)
+            return held.tokens
         if self.defer_window:
             self.collected_tokens += len(self.output.flush())
-        return torch.tensor(
-            [[r.output_token_ids[-1]] for r in requests], dtype=torch.long, device=device
-        )
+        return [r.output_token_ids[-1] for r in requests]
 
     def _collect(self, requests, tokens: TokenBatch) -> None:
         """Hand the step's tokens to the output path, and let it decide when to look.

@@ -347,7 +347,9 @@ class SlotTable:
 
     # --- reading --------------------------------------------------------------
 
-    def read(self, rows, width: int, *, pad_rows: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
+    def read(
+        self, rows, width: int, *, pad_rows: int = 0, lengths_writer=None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """The rectangle and the lengths, for a forward over `rows`.
 
         The rectangle is `slots[:n, :width]` when `rows` is a prefix of the table's,
@@ -359,6 +361,14 @@ class SlotTable:
         The lengths are always a fresh tensor and that is deliberate, not an
         oversight: see the module docstring. They are `[rows]`, so it costs `rows`
         int64, and it is what keeps a plan checkable after the cache has moved on.
+
+        `lengths_writer` is Day 53 and it is the one thing about the lengths that
+        does change. It takes the host list and returns the tensor, so a caller that
+        already keeps a persistent `[max_batch]` buffer can have them written in
+        place instead of allocating a fresh vector here every step. The table says
+        what the lengths are; where they land is the caller's business, and the
+        caller is the one that has to carry a snapshot once they land somewhere
+        shared. See `nanoserve.inputs`.
 
         `pad_rows` is Day 52. It widens the rectangle to `len(rows) + pad_rows` so
         that a batch can be padded up to a bucket and the forward's shape stops
@@ -406,11 +416,11 @@ class SlotTable:
             )
             mapping = self.slots[:, :width].index_select(0, index)
             self.gathers += 1
-        lengths = torch.tensor(
-            [self._lengths[r] for r in rows] + [0] * pad_rows,
-            dtype=torch.long,
-            device=self.slots.device,
-        )
+        values = [self._lengths[r] for r in rows] + [0] * pad_rows
+        if lengths_writer is None:
+            lengths = torch.tensor(values, dtype=torch.long, device=self.slots.device)
+        else:
+            lengths = lengths_writer(values)
         if pad_rows:
             self.pads += 1
             self.padded_cells += pad_rows * width
@@ -557,7 +567,10 @@ def check_window_intact(plan) -> None:
     indices, a legal pool, and the wrong sequence's keys.
 
     The witnesses are the plan's own copies. `write_slots` and `context_lens` were
-    taken at build time and cannot move; `slot_mapping` is the view. So the check is
+    taken at build time and cannot move (Day 53 makes both of them buffers the next
+    step writes through, and that is exactly why a plan over one carries a host-side
+    snapshot: `plan.context_list` and `plan.write_list` are the copies, wherever
+    they now live); `slot_mapping` is the view. So the check is
     the one Day 50 already wrote, "the write slot is the row's last real entry in
     the rectangle", read the other way round: there it was a statement about how a
     rectangle had been *constructed*, and over a window it is a statement about
@@ -567,10 +580,11 @@ def check_window_intact(plan) -> None:
     Comparing the window against the block tables instead would prove nothing: the
     window tracks them, so both sides move together and the check always passes.
     """
+    lengths, slots = plan.context_list, plan.write_list
     for i, row in enumerate(plan.rows):
-        n = int(plan.context_lens[i])
+        n = lengths[i]
         last = int(plan.slot_mapping[i, n - 1])
-        recorded = int(plan.write_slots[i])
+        recorded = slots[i]
         if last != recorded:
             raise SlotsUnsound(
                 f"row {row} was planned to write slot {recorded} and its window now "

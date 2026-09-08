@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The step's inputs stop moving, and the witness that moved with them</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A replayed CUDA graph takes no arguments. It re-runs the kernels it recorded, reading the buffers those kernels were recorded against,</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">so an input allocated fresh every step is an input the graph never sees. Day 53 allocates the four of them once and writes in place.</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">The cost is a gate: two older checks used the plan's own tensors as witnesses, and a witness that shares storage is not one.</text>
+
+  <!-- ===================== LEFT TOP: fresh tensors ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">Day 52: three tensors a step, three new addresses</text>
+  <rect x="50" y="162" width="530" height="200" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g>
+    <text x="72" y="188" font-size="10.5" font-weight="700" fill="#334155">step 1</text>
+    <rect x="72" y="196" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="210" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">positions [4,1]</text>
+    <rect x="72" y="220" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="234" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">write_slots [4]</text>
+    <rect x="72" y="244" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="258" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">context_lens [4]</text>
+    <text x="72" y="280" font-size="8.5" font-family="ui-monospace, monospace" fill="#b91c1c">0x..a10 a40 a70</text>
+  </g>
+  <g>
+    <text x="248" y="188" font-size="10.5" font-weight="700" fill="#334155">step 2</text>
+    <rect x="248" y="196" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="256" y="210" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">positions [4,1]</text>
+    <rect x="248" y="220" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="256" y="234" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">write_slots [4]</text>
+    <rect x="248" y="244" width="146" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="256" y="258" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">context_lens [4]</text>
+    <text x="248" y="280" font-size="8.5" font-family="ui-monospace, monospace" fill="#b91c1c">0x..c80 cb0 ce0</text>
+  </g>
+  <g>
+    <text x="424" y="188" font-size="10.5" font-weight="700" fill="#334155">step 3</text>
+    <rect x="424" y="196" width="132" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="432" y="210" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">positions [4,1]</text>
+    <rect x="424" y="220" width="132" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="432" y="234" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">write_slots [4]</text>
+    <rect x="424" y="244" width="132" height="20" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="432" y="258" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">context_lens [4]</text>
+    <text x="424" y="280" font-size="8.5" font-family="ui-monospace, monospace" fill="#b91c1c">0x..f00 f30 f60</text>
+  </g>
+
+  <line x1="72" y1="296" x2="556" y2="296" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="316" font-size="11" font-weight="700" fill="#b91c1c">1,536 allocations over a 512-step run, none at an address the next step reuses</text>
+  <text x="72" y="334" font-size="10.5" fill="#64748b">plus the engine's torch.cat for the padded row, and the sampler's own tensor that Day 47</text>
+  <text x="72" y="350" font-size="10.5" fill="#64748b">handed straight through as a view: zero copy, and a new pointer every step.</text>
+
+  <!-- ===================== RIGHT TOP: the buffers ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Day 53: four buffers, allocated once, written in place</text>
+  <rect x="620" y="162" width="530" height="200" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="756" y="186" font-size="9" fill="#64748b">the window the forward is handed: buffer[:graph_rows]</text>
+  <path d="M 756 190 L 756 196 L 844 196 L 844 190" fill="none" stroke="#4338ca" stroke-width="1.2"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">
+    <text x="640" y="216">input_ids</text>
+    <text x="640" y="244">positions</text>
+    <text x="640" y="272">write_slots</text>
+    <text x="640" y="300">context_lens</text>
+  </g>
+
+  <!-- input_ids -->
+  <rect x="756" y="202" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="778" y="202" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="800" y="202" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="822" y="202" width="22" height="18" fill="#fde68a" stroke="#d97706" stroke-width="0.9"/>
+  <rect x="844" y="202" width="88" height="18" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+  <text x="940" y="215" font-size="8.5" fill="#92400e">pad keeps a stale id: legal</text>
+  <!-- positions -->
+  <rect x="756" y="230" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="778" y="230" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="800" y="230" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="822" y="230" width="22" height="18" fill="#fde68a" stroke="#d97706" stroke-width="0.9"/>
+  <rect x="844" y="230" width="88" height="18" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+  <text x="940" y="243" font-size="8.5" fill="#92400e">pad written: 0</text>
+  <!-- write_slots -->
+  <rect x="756" y="258" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="778" y="258" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="800" y="258" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="822" y="258" width="22" height="18" fill="#fde68a" stroke="#d97706" stroke-width="0.9"/>
+  <rect x="844" y="258" width="88" height="18" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+  <text x="940" y="271" font-size="8.5" fill="#92400e">pad written: the sink slot</text>
+  <!-- context_lens -->
+  <rect x="756" y="286" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="778" y="286" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="800" y="286" width="22" height="18" fill="#c7d2fe" stroke="#818cf8" stroke-width="0.7"/>
+  <rect x="822" y="286" width="22" height="18" fill="#fde68a" stroke="#d97706" stroke-width="0.9"/>
+  <rect x="844" y="286" width="88" height="18" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7"/>
+  <text x="940" y="299" font-size="8.5" fill="#92400e">pad written: 0</text>
+
+  <text x="756" y="318" font-size="8.5" fill="#64748b">rows 0..2 real</text>
+  <text x="844" y="318" font-size="8.5" fill="#64748b">rows past the bucket: never read</text>
+
+  <line x1="640" y1="324" x2="1130" y2="324" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="640" y="340" font-size="11" font-weight="700" fill="#15803d">0 allocations. 0x..a10 on step 1 and on step 500, which is the whole property.</text>
+  <text x="640" y="355" font-size="10.5" fill="#64748b">A host write stages through pinned memory; the sampled tokens are copied device to device.</text>
+
+  <!-- ===================== LEFT BOTTOM: the disarmed gate ===================== -->
+  <text x="50" y="398" font-size="13.5" font-weight="700" fill="#334155">the cost: a witness that shares storage with what it witnesses</text>
+  <rect x="50" y="410" width="530" height="222" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+
+  <text x="72" y="436" font-size="10.5" font-weight="700" fill="#9a3412">step 1 builds a plan and something holds it</text>
+  <rect x="72" y="444" width="200" height="24" rx="3" fill="#ffffff" stroke="#fdba74" stroke-width="1"/>
+  <text x="82" y="460" font-size="9.5" font-family="ui-monospace, monospace" fill="#7c2d12">plan.context_lens -&gt; [4, 2]</text>
+
+  <text x="72" y="492" font-size="10.5" font-weight="700" fill="#9a3412">step 2 writes the same buffer</text>
+  <rect x="72" y="500" width="200" height="24" rx="3" fill="#ffffff" stroke="#fdba74" stroke-width="1"/>
+  <text x="82" y="516" font-size="9.5" font-family="ui-monospace, monospace" fill="#7c2d12">plan.context_lens -&gt; [5, 3]</text>
+  <line x1="272" y1="456" x2="272" y2="512" stroke="#b91c1c" stroke-width="1.2"/>
+  <path d="M 272 512 L 288 512" stroke="#b91c1c" stroke-width="1.2" marker-end="url(#arrowred)"/>
+  <text x="296" y="484" font-size="9" fill="#b91c1c">the held plan's own</text>
+  <text x="296" y="496" font-size="9" fill="#b91c1c">tensor moved under it</text>
+
+  <rect x="72" y="538" width="484" height="34" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="82" y="552" font-size="9.5" fill="#7f1d1d">check_plan_current asks the tables: they say [5, 3] and the plan now says [5, 3].</text>
+  <text x="82" y="565" font-size="9.5" font-weight="700" fill="#7f1d1d">The gate stops being able to fail rather than starting to.</text>
+
+  <rect x="72" y="582" width="484" height="34" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+  <text x="82" y="596" font-size="9.5" fill="#14532d">plan.context_snapshot = (4, 2), taken on the host from the list the tensor was written from.</text>
+  <text x="82" y="609" font-size="9.5" font-weight="700" fill="#14532d">Free, and not optional: check_snapshots_present is the line that says so.</text>
+
+  <!-- ===================== RIGHT BOTTOM: how many sets ===================== -->
+  <text x="620" y="398" font-size="13.5" font-weight="700" fill="#334155">how many buffer sets a capture list of 36 shapes needs</text>
+  <rect x="620" y="410" width="530" height="222" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="646" y="472" font-size="52" font-weight="700" fill="#4338ca">one</text>
+  <text x="756" y="452" font-size="10.5" fill="#334155">A graph is recorded per shape. A buffer is indexed by</text>
+  <text x="756" y="468" font-size="10.5" fill="#334155">batch position, so every shape's window is a prefix of</text>
+  <text x="756" y="484" font-size="10.5" fill="#334155">the same storage, and the largest row bucket covers all</text>
+  <text x="756" y="500" font-size="10.5" fill="#334155">36 of them. check_one_set_covers is that, as a gate.</text>
+
+  <line x1="646" y1="516" x2="1130" y2="516" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="646" y="536" font-size="10.5" font-weight="700" fill="#334155">and the answer the arithmetic gave that I did not ask for, at 256 rows:</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="646" y="558" fill="#334155">one set of 4 inputs</text>
+    <text x="940" y="558" fill="#15803d" text-anchor="end">8,192 bytes</text>
+    <text x="646" y="576" fill="#334155">a set per captured shape (36)</text>
+    <text x="940" y="576" fill="#334155" text-anchor="end">65,408 bytes</text>
+    <text x="960" y="576" fill="#64748b">8x</text>
+    <text x="646" y="594" fill="#334155">the Day-51 slot table, 8192 wide</text>
+    <text x="940" y="594" fill="#b91c1c" text-anchor="end">16,777,216 bytes</text>
+    <text x="960" y="594" fill="#b91c1c">2048x</text>
+  </g>
+  <text x="646" y="618" font-size="10.5" fill="#64748b">These buffers are worth having for their address and not for their size.</text>
+</svg>

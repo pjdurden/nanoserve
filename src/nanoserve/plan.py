@@ -127,6 +127,14 @@ class DecodePlan:
                   block maps to and no `BlockTable` can name. `None` when nothing is
                   padded. See `nanoserve.buckets` for why the write is not simply
                   sliced off instead.
+    context_snapshot,
+    write_snapshot:
+                  host-side copies of `context_lens` and `write_slots` as they were
+                  when the plan was built. Day 53, and empty unless the two tensors
+                  live in buffers somebody else writes through. They exist because
+                  a gate needs a witness that cannot move: `check_plan_current` and
+                  `check_window_intact` both read a plan's own tensors, and that was
+                  only sound while those tensors were copies. See `nanoserve.inputs`.
     min_ctx,
     max_ctx:      the bounds of `context_lens`, as Python ints, *for the host*.
                   Nothing inside a traced forward may read them; that is the whole
@@ -148,11 +156,30 @@ class DecodePlan:
     max_ctx: int
     pad_rows: int = 0
     sink_slot: int | None = None
+    context_snapshot: tuple[int, ...] = ()
+    write_snapshot: tuple[int, ...] = ()
 
     @property
     def batch_size(self) -> int:
         """Cache rows in this step. Padding is not one of them."""
         return len(self.rows)
+
+    @property
+    def context_list(self) -> list[int]:
+        """The lengths this plan was built with, as host ints. Day 53.
+
+        The snapshot when there is one and the tensor otherwise, and every gate that
+        asks a *held* plan what it used to say goes through here. The two sources
+        agree at build time by construction; they stop agreeing the moment the
+        tensor is a buffer somebody else writes through, and that is the only case
+        where the snapshot exists.
+        """
+        return list(self.context_snapshot) if self.context_snapshot else self.context_lens.tolist()
+
+    @property
+    def write_list(self) -> list[int]:
+        """The write slots this plan was built with, as host ints. Day 53."""
+        return list(self.write_snapshot) if self.write_snapshot else self.write_slots.tolist()
 
     @property
     def graph_rows(self) -> int:
@@ -404,11 +431,16 @@ def check_plan_current(plan: DecodePlan, cache) -> None:
     grows the tables, so planning twice and using the first plan writes the second
     step's token over the first step's slot. Nothing raises when that happens: the
     tables are consistent, the pool is legal, and one token is simply gone.
+
+    Day 53 changes where the lengths come from and not what is compared. Over a
+    persistent input buffer the plan's `context_lens` is storage the next step
+    writes through, so it would always agree with the tables and this gate would
+    stop being able to fail; `context_list` reads the plan's own snapshot instead.
     """
     inner = getattr(cache, "cache", None)
     cache = inner if inner is not None else cache
     now = [cache.tables[r].num_tokens for r in plan.rows]
-    want = plan.context_lens.tolist()[: plan.batch_size]
+    want = plan.context_list[: plan.batch_size]
     if now != want:
         raise PlanUnsound(
             f"this plan is stale: it was built when rows {list(plan.rows)} held "
