@@ -74,6 +74,7 @@ import torch
 
 from .batch import last_token_logits, pad_prompts
 from .cache import BatchedPagedKVCache, BlockAllocator
+from .captured import CapturedDecode, check_capture_ready
 from .compiled import CompiledDecode
 from .deferred import DeferredOutputProcessor
 from .output import OutputProcessor, TokenBatch
@@ -135,6 +136,8 @@ class Engine:
         seed: int | None = None,
         defer_window: int = 0,
         compile_decode: str | None = None,
+        capture_decode: bool = False,
+        capture_recorder=None,
     ):
         if cache.batch_size != scheduler.max_batch_size:
             raise ValueError(
@@ -184,6 +187,18 @@ class Engine:
             self._eager_forward if not compile_decode else model.forward,
             mode=compile_decode or "off",
         )
+        # Day 54. The capture sits in front of the compile rather than instead of
+        # it: dynamo produces the kernels and the graph records the launches, so
+        # `decode_forward.calls` counts the recordings and `decode_graphs.replays`
+        # counts the steps that did not need one. Always an object, "off" or not,
+        # for the same reason `decode_forward` always is.
+        if capture_decode:
+            check_capture_ready(cache)
+        self.decode_graphs = CapturedDecode(
+            self.decode_forward,
+            mode="capture" if capture_decode else "off",
+            recorder=capture_recorder,
+        )
         self.defer_window = defer_window
         self.output = (
             DeferredOutputProcessor(window=defer_window) if defer_window else OutputProcessor()
@@ -224,6 +239,8 @@ class Engine:
         max_model_len: int | None = None,
         bucket_decode: bool = False,
         persist_inputs: bool = False,
+        capture_decode: bool = False,
+        capture_recorder=None,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -250,7 +267,31 @@ class Engine:
         the forward is handed is a window at an address that does not change for the
         life of the process. A replay takes no arguments; it reads the buffers it
         was recorded against. See `nanoserve.inputs`.
+
+        `capture_decode` is Day 54 and it is what the other two were for. The first
+        step of each bucketed shape is recorded and every step after it is a replay,
+        which takes no arguments and re-runs the recorded kernels over the buffers
+        they were recorded against. It requires the other two, and requires them
+        loudly rather than switching them on quietly: a capture over an open shape
+        set or over a moving input is not a slower engine, it is a wrong one. See
+        `nanoserve.captured`.
         """
+        if capture_decode:
+            missing = [
+                name
+                for name, on in (
+                    ("bucket_decode", bucket_decode),
+                    ("persist_inputs", persist_inputs),
+                )
+                if not on
+            ]
+            if missing:
+                raise ValueError(
+                    f"capture_decode needs {' and '.join(missing)}: a recorded graph "
+                    "replays one shape over fixed addresses, so an open shape set or "
+                    "an input allocated per step leaves it reading storage nobody "
+                    "wrote"
+                )
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
             model,
@@ -267,6 +308,8 @@ class Engine:
             seed=seed,
             defer_window=defer_window,
             compile_decode=compile_decode,
+            capture_decode=capture_decode,
+            capture_recorder=capture_recorder,
         )
 
     @property
@@ -459,7 +502,14 @@ class Engine:
             # the same call when nothing is compiled, and when something is it is
             # the one place that knows how many distinct shapes this run has asked
             # a compiler to build for.
-            logits = self.decode_forward(input_ids, plan.positions, cache=view)
+            # Day 54. Through the capture, which replays a recorded graph when this
+            # step's shape has been seen and records it when it has not. In "off"
+            # mode this is one attribute lookup and then exactly the Day-49 call.
+            # What comes back on a replay is the graph's own output buffer, and it
+            # holds this step's logits only until the next replay starts, which is
+            # why the sampler below reads it in the same phase. See
+            # `captured.check_output_not_held`.
+            logits = self.decode_graphs(input_ids, plan.positions, cache=view)
 
         with timing.phase("sample", device=True):
             # Day 46 measured this phase at 86% to 89% of the whole host loop and

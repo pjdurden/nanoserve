@@ -1,0 +1,5 @@
+steps,rows,prompt,captures_open,captures_closed,replays_closed,reuse_closed,output_bytes_closed,eager_ms,replayed_ms
+8,2,16,8,1,8,0.875,512,9.619,10.889
+32,2,16,32,1,32,0.9688,512,36.402,45.251
+64,2,16,64,1,64,0.9844,512,74.882,77.126
+128,2,16,128,2,128,0.9844,1024,152.503,158.508

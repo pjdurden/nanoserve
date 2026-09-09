@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The step gets recorded, and the five gates become the preconditions</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A recorded graph is a list of kernel launches bound to the addresses they were launched with. replay() takes no arguments: it re-runs those</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">kernels over whatever those addresses now hold, and writes into whatever address the output was at. Days 49 to 53 made every one of those</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">addresses stand still. Day 54 spends them: the gates they ended on run before anything is recorded.</text>
+
+  <!-- ===================== LEFT TOP: what a replay is ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">A replay takes no arguments, so the plan it holds is step 1's forever</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <rect x="72" y="182" width="150" height="34" rx="5" fill="#312e81" stroke="#312e81"/>
+  <text x="82" y="197" font-size="10" font-family="ui-monospace, monospace" fill="#e0e7ff">graph.replay()</text>
+  <text x="82" y="210" font-size="8.5" font-family="ui-monospace, monospace" fill="#a5b4fc">no arguments</text>
+  <text x="72" y="234" font-size="9.5" fill="#64748b">holds the step-1 DecodePlan</text>
+  <text x="72" y="248" font-size="9.5" fill="#64748b">and the step-1 cache view.</text>
+  <text x="72" y="266" font-size="9.5" font-weight="700" fill="#15803d">Sound, because every field</text>
+  <text x="72" y="280" font-size="9.5" font-weight="700" fill="#15803d">it reads is a window.</text>
+
+  <path d="M 226 199 L 268 199" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="274" y="182" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="195" fill="#3730a3">input_ids[:r]</text>
+    <text x="404" y="195" fill="#64748b">Day 53</text>
+    <rect x="274" y="205" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="218" fill="#3730a3">positions[:r]</text>
+    <text x="404" y="218" fill="#64748b">Day 53</text>
+    <rect x="274" y="228" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="241" fill="#3730a3">write_slots[:r]</text>
+    <text x="404" y="241" fill="#64748b">Day 53</text>
+    <rect x="274" y="251" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="264" fill="#3730a3">context_lens[:r]</text>
+    <text x="404" y="264" fill="#64748b">Day 53</text>
+    <rect x="274" y="274" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="287" fill="#3730a3">table[:r, :w]</text>
+    <text x="404" y="287" fill="#64748b">Day 51</text>
+    <rect x="274" y="297" width="176" height="19" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="281" y="310" fill="#b91c1c">plan.rows = (0, 1)</text>
+    <text x="386" y="310" fill="#b91c1c">python!</text>
+  </g>
+  <text x="466" y="292" font-size="8.5" fill="#15803d">storage:</text>
+  <text x="466" y="304" font-size="8.5" fill="#15803d">says what</text>
+  <text x="466" y="316" font-size="8.5" fill="#15803d">this step</text>
+  <text x="466" y="328" font-size="8.5" fill="#15803d">wrote</text>
+  <text x="72" y="306" font-size="9" fill="#b91c1c">The one field that is not</text>
+  <text x="72" y="319" font-size="9" fill="#b91c1c">storage is the row tuple,</text>
+  <text x="72" y="332" font-size="9" fill="#b91c1c">so it gets its own line:</text>
+  <text x="72" y="347" font-size="9" font-family="ui-monospace, monospace" fill="#b91c1c">check_replay_rows</text>
+  <line x1="72" y1="356" x2="558" y2="356" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="368" font-size="10.5" fill="#64748b">Rebind an input instead of writing into it and the replay quietly computes the previous step's answer.</text>
+
+  <!-- ===================== RIGHT TOP: the preconditions ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">The gates split by what they read, and the split is a sync decision</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">once, at capture: these read tensor VALUES (a device sync)</text>
+  <g font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">
+    <rect x="642" y="192" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="204">check_shape_in_set</text><text x="872" y="204" fill="#64748b">Day 52 . the shape is one the set promised</text>
+    <rect x="642" y="213" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="225">check_pad_inert</text><text x="872" y="225" fill="#64748b">Day 52 . the invented rows write to the sink</text>
+    <rect x="642" y="234" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="246">check_mapping_is_window</text><text x="872" y="246" fill="#64748b">Day 51 . the rectangle is a table window</text>
+    <rect x="642" y="255" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="267">check_window_intact</text><text x="872" y="267" fill="#64748b">Day 51 . nobody rewrote it underneath</text>
+    <rect x="642" y="276" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="288">check_step_inputs_persistent</text><text x="872" y="288" fill="#64748b">Day 53 . all four inputs are windows</text>
+    <rect x="642" y="297" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="309">check_snapshots_present</text><text x="872" y="309" fill="#64748b">Day 53 . the witnesses are host copies</text>
+  </g>
+
+  <text x="642" y="333" font-size="10.5" font-weight="700" fill="#15803d">every replay: these read an ADDRESS or a python tuple (free)</text>
+  <g font-size="9" font-family="ui-monospace, monospace" fill="#166534">
+    <rect x="642" y="341" width="238" height="17" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="650" y="353">check_addresses_stable</text>
+    <rect x="890" y="341" width="238" height="17" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="898" y="353">check_replay_rows</text>
+  </g>
+  <text x="642" y="369" font-size="10" fill="#64748b">A value gate on every replay would be the sync Days 47 and 48 spent two days removing.</text>
+
+  <!-- ===================== LEFT BOTTOM: the output ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The output is a fixed buffer too, and that is the quiet half</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10" fill="#64748b">every replay writes into the same storage</text>
+  <rect x="72" y="454" width="130" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1"/>
+  <text x="80" y="471" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">step N replay</text>
+  <path d="M 206 467 L 244 467" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <rect x="250" y="454" width="150" height="26" rx="4" fill="#312e81"/>
+  <text x="258" y="471" font-size="9" font-family="ui-monospace, monospace" fill="#e0e7ff">logits @ 0x..7c0</text>
+  <rect x="72" y="490" width="130" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1"/>
+  <text x="80" y="507" font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">step N+1 replay</text>
+  <path d="M 206 503 L 244 503 L 244 482" fill="none" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="410" y="466" font-size="9" fill="#b91c1c">same</text>
+  <text x="410" y="478" font-size="9" fill="#b91c1c">address,</text>
+  <text x="410" y="490" font-size="9" fill="#b91c1c">new values</text>
+
+  <line x1="72" y1="530" x2="558" y2="530" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="550" font-size="11" font-weight="700" fill="#334155">Why Day 48's deferred window survives a capture</text>
+  <rect x="72" y="560" width="230" height="52" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="82" y="576" font-size="9" font-weight="700" fill="#166534">sampler runs OUTSIDE the graph</text>
+  <text x="82" y="590" font-size="8.5" fill="#166534">so the window holds N tensors,</text>
+  <text x="82" y="602" font-size="8.5" fill="#166534">one per step, each its own storage</text>
+  <rect x="320" y="560" width="238" height="52" rx="5" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="330" y="576" font-size="9" font-weight="700" fill="#b91c1c">if it ran INSIDE it</text>
+  <text x="330" y="590" font-size="8.5" fill="#b91c1c">the window would be N views on one</text>
+  <text x="330" y="602" font-size="8.5" fill="#b91c1c">buffer, all holding the newest token</text>
+  <text x="72" y="628" font-size="10" font-family="ui-monospace, monospace" fill="#b91c1c">check_output_not_held</text>
+  <text x="212" y="628" font-size="10" fill="#64748b">: a captured step's result lives exactly one step.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the pool ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">One shared pool, and the multiple is not the one I guessed</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">256 rows x 8192 tokens, 32 heads, fp32 scores. Every capture is handed the first one's pool.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="470" font-weight="700" fill="#334155">width mult</text>
+    <text x="742" y="470" font-weight="700" fill="#334155">shapes</text>
+    <text x="822" y="470" font-weight="700" fill="#334155">shared</text>
+    <text x="932" y="470" font-weight="700" fill="#334155">private</text>
+    <text x="1060" y="470" font-weight="700" fill="#334155">ratio</text>
+    <text x="642" y="490" fill="#475569">2048</text><text x="742" y="490" fill="#475569">36</text>
+    <text x="822" y="490" fill="#15803d">268.4 MB</text><text x="932" y="490" fill="#b91c1c">1,339.6 MB</text><text x="1060" y="490" fill="#475569">5.0x</text>
+    <text x="642" y="510" fill="#475569">512</text><text x="742" y="510" fill="#475569">144</text>
+    <text x="822" y="510" fill="#15803d">268.4 MB</text><text x="932" y="510" fill="#b91c1c">4,554.5 MB</text><text x="1060" y="510" fill="#475569">17.0x</text>
+    <text x="642" y="530" fill="#475569">128</text><text x="742" y="530" fill="#475569">576</text>
+    <text x="822" y="530" fill="#15803d">268.4 MB</text><text x="932" y="530" fill="#b91c1c">17,414.2 MB</text><text x="1060" y="530" fill="#475569">64.9x</text>
+  </g>
+  <text x="642" y="552" font-size="10" fill="#64748b">The shared column never moves: a pool is sized by the largest shape, not by the list.</text>
+
+  <line x1="642" y1="564" x2="1128" y2="564" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="584" font-size="11" font-weight="700" fill="#b91c1c">268 MB is one score rectangle, and no pool sharing touches it</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="600" fill="#475569">[rows, heads, 1, ctx] scores</text><text x="960" y="600" fill="#b91c1c">268,435,456 bytes</text>
+    <text x="642" y="615" fill="#475569">the Day-51 slot table</text><text x="960" y="615" fill="#475569">16,777,216 bytes</text>
+    <text x="642" y="630" fill="#475569">the Day-53 input buffers</text><text x="960" y="630" fill="#475569">8,192 bytes</text>
+  </g>
+</svg>
