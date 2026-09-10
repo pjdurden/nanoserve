@@ -77,11 +77,13 @@ from .cache import BatchedPagedKVCache, BlockAllocator
 from .captured import CapturedDecode, check_capture_ready
 from .compiled import CompiledDecode
 from .deferred import DeferredOutputProcessor
+from .loader import EMBED
 from .output import OutputProcessor, TokenBatch
 from .plan import plan_decode
 from .profiler import NULL_RECORDER
 from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
+from .warmup import warm_decode, warm_shapes
 
 
 class Engine:
@@ -329,6 +331,34 @@ class Engine:
 
     def has_unfinished(self) -> bool:
         return self.scheduler.has_unfinished()
+
+    def warm_decode(self, shapes=None, *, device=None, max_rows=None, max_width=None):
+        """Record the whole capture list now, off synthetic batches. Day 55.
+
+        Call it once, after `build` and before the door opens. Every shape in the
+        bucket set is presented by a batch whose rows are *all* padding, so the
+        forward runs, the graph records, and no table grows and no block is spent.
+        The first real decode of the process is then a replay rather than a
+        recording, which is the whole point: Day 54's capture works and it happens
+        in front of whoever is waiting for the first token.
+
+        `device` defaults to wherever the weights are, because the warm batch has to
+        be recorded on the device the real steps will run on and the cache does not
+        know that until its first K/V arrives. See `nanoserve.warmup`.
+        """
+        if self.decode_graphs.mode == "off":
+            raise ValueError(
+                "this engine was built without capture_decode, so there is no capture "
+                "list to warm: every decode step is a fresh forward and nothing is "
+                "recorded at any point, warm or otherwise"
+            )
+        if device is None:
+            device = self.model.weights[EMBED].device
+        if shapes is None:
+            shapes = warm_shapes(
+                self.cache.decode_buckets, max_rows=max_rows, max_width=max_width
+            )
+        return warm_decode(self.decode_graphs, self.cache, shapes, device=device)
 
     # --- one iteration --------------------------------------------------------
 

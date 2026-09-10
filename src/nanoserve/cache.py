@@ -948,7 +948,13 @@ class BatchedPagedKVCache:
               `_planned_write`, and `nanoserve.plan` for why.
         """
         if plan is not None:
-            rows = plan.rows if rows is None else self._rows(rows)
+            # Day 55. An *empty* selection is read the same way `None` is, as "the
+            # rows this plan addresses", and on a warm-up plan that is no rows at
+            # all: a synthetic batch is every row padding, so it presents a shape
+            # without naming a sequence. `_rows` still refuses the empty tuple, and
+            # should: a scheduled view with nothing in it is a forward with nothing
+            # in it. See `nanoserve.warmup`.
+            rows = plan.rows if not rows else self._rows(rows)
             if valid is not None:
                 raise ValueError(
                     "a planned write takes no key mask: a plan is a decode step's "
@@ -1136,7 +1142,13 @@ class BatchedPagedKVCache:
             # `context_bounds=(lo, hi)` on purpose, and the difference is the day:
             # two ints that change every step are two guards that fail every step,
             # whether they are read here or handed in.
-            rows = plan.rows if rows is None else self._rows(rows)
+            # Day 55. An *empty* selection is read the same way `None` is, as "the
+            # rows this plan addresses", and on a warm-up plan that is no rows at
+            # all: a synthetic batch is every row padding, so it presents a shape
+            # without naming a sequence. `_rows` still refuses the empty tuple, and
+            # should: a scheduled view with nothing in it is a forward with nothing
+            # in it. See `nanoserve.warmup`.
+            rows = plan.rows if not rows else self._rows(rows)
             self.write(layer, k, v, rows=rows, plan=plan)
             return paged_attention_batched_reference(
                 q,

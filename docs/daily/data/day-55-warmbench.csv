@@ -1,0 +1,5 @@
+steps,rows,prompt,width_multiple,cold_lazy,cold_lazy_predicted,cold_warm,warmed,warm_ms,lazy_ms,warmed_run_ms
+8,2,16,32,1,1,0,4,8.537,10.619,17.316
+32,2,16,32,2,2,0,4,8.027,38.458,44.325
+64,2,16,32,3,3,0,6,12.177,77.023,85.73
+128,2,16,32,5,5,0,10,20.916,156.736,201.098

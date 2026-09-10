@@ -189,6 +189,17 @@ class SlotTable:
         return self.slots.device
 
     @property
+    def address(self) -> int:
+        """Where the buffer is. Day 55, and it is the number nobody was watching.
+
+        `InputBuffer.address` has existed since Day 53 and `check_addresses_stable`
+        compares four of them on every replay. This is the same number for the
+        larger buffer: the rectangles those graphs read are windows on *this*, and
+        `to` below reallocates. See `warmup.check_table_stable`.
+        """
+        return self.slots.untyped_storage().data_ptr()
+
+    @property
     def cells(self) -> int:
         """Entries in the buffer, occupied and reserved alike."""
         return self.max_batch_size * self.max_model_len
@@ -232,9 +243,9 @@ class SlotTable:
             )
         return row
 
-    def _rows(self, rows) -> tuple[int, ...]:
+    def _rows(self, rows, *, allow_empty: bool = False) -> tuple[int, ...]:
         rows = tuple(self._row(r) for r in rows)
-        if not rows:
+        if not rows and not allow_empty:
             raise ValueError("a read covers at least one row")
         if len(set(rows)) != len(rows):
             raise ValueError(f"rows must be distinct, got {list(rows)}")
@@ -380,7 +391,13 @@ class SlotTable:
         masked. The length is what makes the padding safe, and it is the reason the
         lengths are built here rather than pointed at.
         """
-        rows = self._rows(rows)
+        # Day 55. An empty selection is legal when the read is *all* padding, and
+        # only then. That read is the warm-up's: `slots[:pad, :width]`, a window at
+        # the buffer's own address over rows no sequence owns, which is what a
+        # capture needs to record a shape before anything has been served. An empty
+        # read with nothing padded is still a read with nothing in it. See
+        # `nanoserve.warmup`.
+        rows = self._rows(rows, allow_empty=int(pad_rows) > 0)
         width = int(width)
         pad_rows = int(pad_rows)
         if pad_rows < 0:

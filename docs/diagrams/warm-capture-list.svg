@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The capture list moves to startup, and the dummy batch is all padding</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 54's capture works and it happens in front of a client: the first step of each shape takes a recording, and a run crosses a width bucket</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">every width_multiple tokens, so the stall comes back for as long as it generates. A warm batch is the answer Day 52 already wrote down: a</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">padded row reads nothing and writes to the sink, so a batch whose rows are ALL padding presents a shape and owns nothing.</text>
+
+  <!-- ===================== LEFT TOP: what a warm batch is ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">A warm batch: rows = (), pad_rows = the whole shape</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <rect x="72" y="182" width="156" height="34" rx="5" fill="#312e81" stroke="#312e81"/>
+  <text x="82" y="197" font-size="10" font-family="ui-monospace, monospace" fill="#e0e7ff">warmup_plan(shape)</text>
+  <text x="82" y="210" font-size="8.5" font-family="ui-monospace, monospace" fill="#a5b4fc">no plan_decode, no reserve</text>
+  <text x="72" y="234" font-size="9.5" fill="#64748b">No table grows. No block is</text>
+  <text x="72" y="248" font-size="9.5" fill="#64748b">taken. Nothing is a sequence.</text>
+  <text x="72" y="268" font-size="9.5" font-weight="700" fill="#15803d">Every buffer is the real one:</text>
+  <text x="72" y="282" font-size="9.5" font-weight="700" fill="#15803d">that is the requirement, not</text>
+  <text x="72" y="296" font-size="9.5" font-weight="700" fill="#15803d">a shortcut.</text>
+
+  <path d="M 232 199 L 268 199" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="274" y="182" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="195" fill="#3730a3">input_ids[:r] = 0</text>
+    <rect x="274" y="205" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="218" fill="#3730a3">positions[:r] = 0</text>
+    <rect x="274" y="228" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="241" fill="#3730a3">write_slots = sink</text>
+    <rect x="274" y="251" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="264" fill="#3730a3">context_lens = 0</text>
+    <rect x="274" y="274" width="176" height="19" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="281" y="287" fill="#3730a3">table[:r, :w]</text>
+    <rect x="274" y="297" width="176" height="19" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="281" y="310" fill="#166534">plan.rows = ()</text>
+    <text x="392" y="310" fill="#15803d">empty!</text>
+  </g>
+  <text x="466" y="196" font-size="8.5" fill="#15803d">the same</text>
+  <text x="466" y="208" font-size="8.5" fill="#15803d">addresses a</text>
+  <text x="466" y="220" font-size="8.5" fill="#15803d">real step</text>
+  <text x="466" y="232" font-size="8.5" fill="#15803d">writes</text>
+  <text x="466" y="244" font-size="8.5" fill="#15803d">through</text>
+  <text x="72" y="316" font-size="9" fill="#15803d">Day 54's one non-storage field</text>
+  <text x="72" y="329" font-size="9" fill="#15803d">is now empty, so the gate on it</text>
+  <text x="72" y="342" font-size="9" font-family="ui-monospace, monospace" fill="#15803d">check_replay_rows</text>
+  <text x="72" y="355" font-size="9" fill="#15803d">has nothing it can be wrong about.</text>
+  <line x1="72" y1="360" x2="558" y2="360" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="370" font-size="10.5" fill="#64748b">A warm graph is unbound. Warming up front deletes the field, it does not merely guard it.</text>
+
+  <!-- ===================== RIGHT TOP: the gates pass unchanged ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Day 54's six preconditions pass on a batch of nothing, unchanged</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">not special cased. vacuous, which is different and better.</text>
+  <g font-size="9" font-family="ui-monospace, monospace" fill="#3730a3">
+    <rect x="642" y="192" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="204">check_shape_in_set</text><text x="872" y="204" fill="#64748b">the shape came from the set</text>
+    <rect x="642" y="213" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="225">check_pad_inert</text><text x="872" y="225" fill="#64748b">every row is padded, all at sink</text>
+    <rect x="642" y="234" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="246">check_mapping_is_window</text><text x="872" y="246" fill="#64748b">() is a prefix of everything</text>
+    <rect x="642" y="255" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="267">check_window_intact</text><text x="872" y="267" fill="#64748b">loops over zero real rows</text>
+    <rect x="642" y="276" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="288">check_step_inputs_persistent</text><text x="872" y="288" fill="#64748b">written through the real buffers</text>
+    <rect x="642" y="297" width="486" height="17" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="0.8"/>
+    <text x="650" y="309">check_snapshots_present</text><text x="872" y="309" fill="#64748b">(0,)*r and (sink,)*r</text>
+  </g>
+
+  <text x="642" y="333" font-size="10.5" font-weight="700" fill="#b91c1c">the hole warming made reachable: nobody was watching the table</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="341" width="238" height="17" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="650" y="353" fill="#166534">check_addresses_stable</text>
+    <text x="812" y="353" fill="#64748b">8 KB</text>
+    <rect x="890" y="341" width="238" height="17" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="898" y="353" fill="#b91c1c">check_table_stable</text>
+    <text x="1052" y="353" fill="#b91c1c">16 MB</text>
+  </g>
+  <text x="642" y="369" font-size="10" fill="#64748b">The rectangles are windows on the slot table, and SlotTable.to reallocates. Day 55 adds the line.</text>
+
+  <!-- ===================== LEFT BOTTOM: where the recording happens ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">Lazy: one recording per width bucket, in somebody's latency</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10" fill="#64748b">2 rows, 16-token prompt, width multiple 32. The cold column is recordings inside the decode loop.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="470" font-weight="700" fill="#334155">generated</text>
+    <text x="192" y="470" font-weight="700" fill="#334155">cold: lazy</text>
+    <text x="300" y="470" font-weight="700" fill="#334155">predicted</text>
+    <text x="412" y="470" font-weight="700" fill="#334155">cold: warmed</text>
+    <text x="72" y="490" fill="#475569">8</text><text x="192" y="490" fill="#b91c1c">1</text>
+    <text x="300" y="490" fill="#475569">1</text><text x="412" y="490" fill="#15803d">0</text>
+    <text x="72" y="508" fill="#475569">32</text><text x="192" y="508" fill="#b91c1c">2</text>
+    <text x="300" y="508" fill="#475569">2</text><text x="412" y="508" fill="#15803d">0</text>
+    <text x="72" y="526" fill="#475569">64</text><text x="192" y="526" fill="#b91c1c">3</text>
+    <text x="300" y="526" fill="#475569">3</text><text x="412" y="526" fill="#15803d">0</text>
+    <text x="72" y="544" fill="#475569">128</text><text x="192" y="544" fill="#b91c1c">5</text>
+    <text x="300" y="544" fill="#475569">5</text><text x="412" y="544" fill="#15803d">0</text>
+  </g>
+  <text x="72" y="566" font-size="10" fill="#64748b">The predicted column is lazy_captures(), and it matches: this is a rate, not a one-off.</text>
+
+  <line x1="72" y1="578" x2="558" y2="578" stroke="#e2e8f0" stroke-width="1"/>
+  <path d="M 82 600 L 82 620" stroke="#b91c1c" stroke-width="1.6"/>
+  <text x="94" y="598" font-size="10" font-weight="700" fill="#b91c1c">lazy: the stall lands on one token</text>
+  <text x="94" y="612" font-size="9" fill="#64748b">p99 inter-token, and on nothing else. Throughput</text>
+  <text x="94" y="625" font-size="9" fill="#64748b">looks fine, which is why it hides.</text>
+
+  <!-- ===================== RIGHT BOTTOM: what warming costs ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">Warming is not free, and the whole closed set is not affordable</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">256 rows x 8192 tokens, width multiple 128, at 50 ms a graph. Startup cost, once.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="470" font-weight="700" fill="#334155">warm list</text>
+    <text x="812" y="470" font-weight="700" fill="#334155">shapes</text>
+    <text x="922" y="470" font-weight="700" fill="#334155">at startup</text>
+    <text x="642" y="490" fill="#475569">the whole set</text>
+    <text x="812" y="490" fill="#b91c1c">576</text><text x="922" y="490" fill="#b91c1c">28.80s</text>
+    <text x="642" y="510" fill="#475569">max_rows=8</text>
+    <text x="812" y="510" fill="#475569">256</text><text x="922" y="510" fill="#475569">12.80s</text>
+    <text x="642" y="530" fill="#475569">max_rows=8, ctx&lt;=2048</text>
+    <text x="812" y="530" fill="#15803d">64</text><text x="922" y="530" fill="#15803d">3.20s</text>
+  </g>
+  <text x="642" y="552" font-size="10" fill="#64748b">A lazy run generating 8192 tokens stalls 3.20s in total. The full warm list costs 9x that.</text>
+
+  <line x1="642" y1="564" x2="1128" y2="564" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="584" font-size="11" font-weight="700" fill="#334155">The budget is a statement about one number: a width</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="600" fill="#475569">64 MB free</text><text x="828" y="600" fill="#475569">widest capture 1,953 tokens</text>
+    <text x="642" y="615" fill="#475569">268 MB free</text><text x="828" y="615" fill="#475569">widest capture 8,178 tokens</text>
+    <text x="642" y="630" fill="#475569">1,000 MB free</text><text x="828" y="630" fill="#15803d">the whole list fits</text>
+  </g>
+</svg>
