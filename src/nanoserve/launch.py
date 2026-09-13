@@ -80,12 +80,15 @@ from pathlib import Path
 
 import torch
 
+from .captured import DEFAULT_CAPTURE_LIMIT, shared_pool_bytes
+from .compiled import DecodeShape
 from .config import ModelConfig
 from .engine import Engine
-from .loader import Weights, load_weights
+from .loader import EMBED, Weights, load_weights
 from .model import LlamaModel
 from .server import create_app
 from .serving import AsyncEngine
+from .warmup import WarmupReport, warm_budget_bytes, warm_shapes, width_ceiling
 
 
 class PoolTooSmall(RuntimeError):
@@ -96,6 +99,26 @@ class PoolTooSmall(RuntimeError):
     rejects any request whose worst case exceeds the whole pool, so every caller
     gets a 400 and `/health` says ok. Failing at boot puts the error where the
     person who chose the numbers is standing.
+    """
+
+
+class CaptureTooSmall(RuntimeError):
+    """The capture list cannot be trimmed to anything this process could record.
+
+    Day 56's `PoolTooSmall`, raised for the same reason: what is left over does not
+    hold the *smallest* member of the thing being sized. A byte budget under one
+    width bucket is not a server without graphs, it is an out-of-memory error
+    scheduled for the first decode, because a lazy recording wants the same arena in
+    front of a client rather than at boot.
+    """
+
+
+class BootUnsound(AssertionError):
+    """A boot step taken in an order, or against an object, that makes it a lie.
+
+    An assertion rather than an error, because every one of these is a thing
+    `build_app` does correctly by construction. They are checked so that the next
+    caller who wires a process by hand finds out at the call instead of in a token.
     """
 
 
@@ -476,6 +499,398 @@ def place_weights(
     return Weights(tensors, weights.config)
 
 
+# --- the second sizing decision: which shapes get a graph -------------------------
+
+
+@dataclass(frozen=True)
+class CapturePlan:
+    """The capture list this process will hold, as a value a human can read.
+
+    `KVPoolPlan`'s sibling, and the resemblance is the point: both turn numbers that
+    arrive from different places into one integer nothing in the code can be read
+    off, and both are kept as a record so a server that will not start can explain
+    itself in a line without having built anything.
+
+    What is different is *when*. The pool is planned before a block exists, off a
+    probe of a card holding only the weights. The list is planned after that, and its
+    own budget is a second probe with the pool already spoken for, which is why this
+    is a separate record made by a separate call rather than three more fields on the
+    first one.
+
+    shapes:         the list, biggest first, exactly as `warm_decode` will walk it.
+    max_rows:       the row ceiling. The scheduler's slot count unless a flag is
+                    lower, because no batch wider than a slot count can be presented.
+    max_width:      the context ceiling, and the one number the other three
+                    constraints all turn into.
+    width_bound_by: which constraint set it. "served", "flag", "budget" or "limit".
+    num_heads:      query heads, which is what a score rectangle is counted in.
+    full_count:     shapes in the untrimmed bucket set, so the trim is visible.
+    budget_bytes:   what the probe said was left, or None when nobody asked.
+    limit:          graphs this process will hold at all.
+    """
+
+    shapes: tuple[DecodeShape, ...]
+    max_rows: int
+    max_width: int
+    width_bound_by: str
+    num_heads: int
+    full_count: int
+    budget_bytes: int | None = None
+    limit: int = DEFAULT_CAPTURE_LIMIT
+
+    @property
+    def count(self) -> int:
+        return len(self.shapes)
+
+    @property
+    def trimmed(self) -> int:
+        """Shapes the bucket set holds that this list will not record."""
+        return self.full_count - self.count
+
+    @property
+    def widest(self) -> DecodeShape:
+        """The shape the arena is sized by. First, because the list is descending."""
+        return self.shapes[0]
+
+    @property
+    def pool_bytes(self) -> int:
+        """What the shared capture arena costs: a max over the list, not a sum."""
+        return shared_pool_bytes(self.shapes, self.num_heads)
+
+    def as_dict(self) -> dict:
+        """The shape `/health` reports, under its own key rather than beside the pool."""
+        return {
+            "shapes": self.count,
+            "shapes_in_set": self.full_count,
+            "max_rows": self.max_rows,
+            "max_width": self.max_width,
+            "width_bound_by": self.width_bound_by,
+            "workspace_bytes": self.pool_bytes,
+            "capture_limit": self.limit,
+        }
+
+    def describe(self) -> str:
+        """One line, printed at boot, next to the pool's."""
+        why = {
+            "served": "the context this server sells",
+            "flag": "the width you asked for",
+            "budget": "what the card had left",
+            "limit": "the graph limit",
+        }[self.width_bound_by]
+        return (
+            f"CUDA graphs: {self.count} of {self.full_count} shapes, rows <= "
+            f"{self.max_rows}, context <= {self.max_width} (capped by {why}), "
+            f"{self.pool_bytes / 1024**2:.1f} MiB of workspace"
+        )
+
+
+def width_from_limit(buckets, *, row_count: int, limit: int) -> int:
+    """The widest context bucket that keeps the list inside `limit` graphs.
+
+    Day 55 ended on "a budget is not a statement about the length of the capture
+    list, it is a statement about one width", because a shared arena is sized by its
+    largest member. The graph limit turns out to be the same kind of statement from
+    the opposite direction: the list is `rows x widths`, so a cap on the *count* is a
+    cap on how far up the width axis it may go. Two constraints with nothing in
+    common reduce to the same knob, which is why `CapturePlan` has one ceiling and a
+    field saying who set it.
+
+    The width axis is truncated in whole rows. Keeping half a row would warm a shape
+    for four rows and not for eight at the same context, and the eight-row shape is
+    exactly what the scheduler presents the moment it admits one more request: the
+    hole would be in the part of the list a busy server uses most.
+
+    Dropping the *widest* widths rather than the narrowest is the direction that
+    costs least. A run crosses the width axis from the bottom, so a shape left out at
+    the top is recorded once, late, by a request that has already streamed thousands
+    of tokens; a shape left out at the bottom is recorded in the first seconds of
+    every request the server ever answers.
+    """
+    if row_count < 1:
+        raise ValueError(f"a bucket set has at least one row bucket; got {row_count}")
+    if limit < 1:
+        raise ValueError(f"a capture holds at least one graph; got {limit}")
+    keep = limit // row_count
+    if keep < 1:
+        raise CaptureTooSmall(
+            f"a limit of {limit} graphs cannot hold one row bucket's worth of this "
+            f"set, which is {row_count} rows x 1 width: every width bucket has to be "
+            "recorded for every row bucket or the list has a hole in it at the "
+            "context where the scheduler admits one more request"
+        )
+    return buckets.widths[min(keep, len(buckets.widths)) - 1]
+
+
+def plan_capture(
+    engine: Engine,
+    plan: KVPoolPlan,
+    *,
+    max_rows: int | None = None,
+    max_width: int | None = None,
+    budget_bytes: int | None = None,
+    utilization: float = 0.90,
+    probe=None,
+    device=None,
+    limit: int | None = None,
+) -> CapturePlan:
+    """Decide which shapes this process records, from four numbers and three sources.
+
+    The rows come from the scheduler, because a slot count is the widest batch that
+    can ever be presented and nothing else in the process knows it. The width comes
+    from the smallest of three things that each cap it, and the day's finding is that
+    all three *are* width caps:
+
+    served: `plan.max_model_len`, the context this deployment sells. The default, and
+            the only one of the four that is a promise to a caller.
+    flag:   what the operator asked for, when they know their traffic is shorter than
+            their limit and would rather have the startup seconds back.
+    budget: `width_ceiling` of what the card has left. Day 55's inversion.
+    limit:  `width_from_limit` of how many graphs this process will hold.
+
+    The budget is probed here rather than taken from `build_engine`'s, and the
+    difference is the whole reason this is a second call. `kv_budget_bytes` ran on a
+    card holding the weights; this one runs on a card that is also about to hold the
+    pool. It is not holding it *yet*: `BatchedPagedKVCache` allocates a layer's pool
+    on its first write, so at this moment the driver cannot see it and would report
+    it as free. That is what `reserved_bytes` is for, and `plan.pool_bytes` is
+    exactly the number it wants.
+    """
+    buckets = getattr(engine.cache, "decode_buckets", None)
+    if buckets is None:
+        raise ValueError(
+            "this engine was built without bucket_decode, so its decode steps do not "
+            "land on a closed set of shapes and there is no list to capture: a graph "
+            "per distinct shape is a graph per step"
+        )
+    limit = engine.decode_graphs.limit if limit is None else limit
+    num_heads = engine.model.config.num_attention_heads
+
+    rows = plan.max_batch_size if max_rows is None else min(max_rows, plan.max_batch_size)
+    row_count = sum(1 for r in buckets.rows if r <= rows)
+    if row_count < 1:
+        raise CaptureTooSmall(
+            f"no row bucket in this set is within max_rows={rows}: the set rounds up, "
+            "so a ceiling below the smallest bucket excludes every batch a step "
+            "could present"
+        )
+
+    if budget_bytes is None and device is None:
+        device = engine.model.weights[EMBED].device
+    if budget_bytes is None and torch.device(device).type == "cuda":
+        budget_bytes = warm_budget_bytes(
+            device,
+            reserved_bytes=plan.pool_bytes,
+            utilization=utilization,
+            probe=probe,
+        )
+
+    # Four candidates, strictly improving, so a ceiling that ties with the served
+    # context is not reported as the one that bit. A boot line blaming a flag that
+    # changed nothing sends somebody to the wrong knob.
+    candidates = [("served", plan.max_model_len)]
+    if max_width is not None:
+        candidates.append(("flag", int(max_width)))
+    if budget_bytes is not None:
+        candidates.append(
+            ("budget", width_ceiling(rows=rows, num_heads=num_heads, budget_bytes=budget_bytes))
+        )
+    candidates.append(("limit", width_from_limit(buckets, row_count=row_count, limit=limit)))
+    bound_by, width = candidates[0]
+    for name, value in candidates[1:]:
+        if value < width:
+            bound_by, width = name, value
+
+    # Down to a bucket, because the ceiling is a number and the list is a set. A
+    # budget that buys 300 tokens of context buys the 256 bucket, and reporting 300
+    # would name a width no graph in the list was recorded at.
+    snapped = [w for w in buckets.widths if w <= width]
+    width = snapped[-1] if snapped else width
+
+    if width < buckets.widths[0]:
+        raise CaptureTooSmall(
+            f"a context ceiling of {width} tokens ({bound_by}) is under this set's "
+            f"narrowest width bucket of {buckets.widths[0]}: there is no shape left to "
+            "record, and the first real decode would want the same arena in front of "
+            "a client. Raise the budget, or build without capture_decode"
+        )
+    shapes = warm_shapes(buckets, max_rows=rows, max_width=width)
+    return CapturePlan(
+        shapes=shapes,
+        max_rows=rows,
+        max_width=width,
+        width_bound_by=bound_by,
+        num_heads=num_heads,
+        full_count=len(buckets.shapes),
+        budget_bytes=budget_bytes,
+        limit=limit,
+    )
+
+
+def warm_engine(
+    engine: Engine, capture: CapturePlan, *, device=None, serving=None
+) -> WarmupReport:
+    """Record the planned list now, before anything is serving. Day 56.
+
+    Three lines of work and two gates, and the gates are the content. A warm-up
+    writes the persistent input buffers and reads a window on the slot table, which
+    are the same addresses a real decode step uses, so a walk taken while the bridge
+    is running is two writers on one buffer and the symptom is a token rather than a
+    traceback. `build_app` cannot reach that state, because it warms before the
+    `AsyncEngine` exists; `serving` is here for a caller who warms a process that has
+    one already.
+    """
+    check_capture_matches_cache(capture, engine.cache)
+    if serving is not None:
+        check_warm_before_serving(serving)
+    check_capture_limit(capture, engine.decode_graphs)
+    return engine.warm_decode(capture.shapes, device=device)
+
+
+# --- what the process says about itself -------------------------------------------
+
+
+def boot_info(
+    plan: KVPoolPlan, capture: CapturePlan | None = None, report: WarmupReport | None = None
+) -> dict:
+    """The `/health` payload: every decision this launch made on somebody's behalf.
+
+    The capture decision is nested rather than merged. Flattened, `max_width` would
+    sit next to `max_model_len` and invite the reading that one is derived from the
+    other, when in fact they are a promise to a caller and a memory ceiling that
+    happen to be measured in the same unit.
+
+    The warm-up's numbers go in the same place because "how many shapes did you
+    decide to record" and "how many did you actually record" are only useful next to
+    each other. A server whose list is 60 and whose graphs are 0 is a server that was
+    started with warming off, and that is a thing you want to find out at 3am from a
+    health check rather than from a latency histogram.
+    """
+    info = plan.as_dict()
+    if capture is not None:
+        graphs = capture.as_dict()
+        if report is not None:
+            graphs.update(
+                graphs_held=report.graphs,
+                cold=len(report.cold),
+                warmup_seconds=round(report.seconds, 3),
+                ms_per_graph=round(report.per_capture_s * 1e3, 1),
+            )
+        info["cuda_graphs"] = graphs
+    return info
+
+
+def boot_lines(
+    plan: KVPoolPlan, capture: CapturePlan | None = None, report: WarmupReport | None = None
+) -> tuple[str, ...]:
+    """What `serve.py` prints, built here so the CLI stays flags and `uvicorn.run`."""
+    lines = [plan.describe()]
+    if capture is not None:
+        lines.append(capture.describe())
+    if report is not None:
+        lines.append(report.render())
+    return tuple(lines)
+
+
+# --- gates -------------------------------------------------------------------------
+
+
+def check_warm_before_serving(serving) -> None:
+    """Refuse a warm-up behind a bridge that is already stepping.
+
+    The one ordering rule of the boot path. Day 53 moved the step's inputs into
+    buffers that do not move, which is what makes a replay possible and also means
+    every decode in the process writes the same four tensors. A warm batch writes
+    them too. Run the two at once and the graph records a step whose `input_ids` were
+    overwritten halfway through by a real one, or a real step reads the warm batch's
+    made-up tokens, and neither of those raises anything.
+    """
+    if getattr(serving, "running", False):
+        raise BootUnsound(
+            "this bridge's loop is already running, so a warm-up would write the "
+            "persistent decode buffers underneath a step in flight: warm between "
+            "building the engine and starting the loop, which is the window "
+            "build_app does it in"
+        )
+
+
+def check_capture_matches_cache(capture: CapturePlan, cache) -> None:
+    """Refuse a list that was planned against some other cache's bucket set.
+
+    Two arguments, no type says they belong together, and a mismatch is not a
+    tidiness problem: a shape wider than this cache's slot table is a rectangle that
+    is not a window on anything, and a shape with more rows than the cache has rows
+    is a plan addressing slots that do not exist.
+    """
+    buckets = getattr(cache, "decode_buckets", None)
+    if buckets is None:
+        raise BootUnsound(
+            "this cache has no bucket set, so no capture list belongs to it: a shape "
+            "it never rounds to is a graph no step will ever replay"
+        )
+    if capture.max_rows > cache.batch_size:
+        raise BootUnsound(
+            f"this list is planned for up to {capture.max_rows} rows and the cache "
+            f"has {cache.batch_size}: a plan cannot address a slot that does not exist"
+        )
+    stray = [s for s in capture.shapes if s not in buckets.shapes]
+    if stray:
+        raise BootUnsound(
+            f"{len(stray)} shape(s) in this list, {stray[0]} first, are not in this "
+            "cache's bucket set: the list was planned against a different cache, and "
+            "a shape this one never rounds to is a graph no step will replay"
+        )
+
+
+def check_capture_limit(capture: CapturePlan, captured) -> None:
+    """Refuse a list longer than the graphs this process will hold.
+
+    `CapturedDecode` refuses past its limit, which mid-warm-up means a boot that
+    fails on the 65th shape after paying for 64 recordings. Asked here it is a
+    division. Graphs already held count, because warming is not always the first
+    thing in the process to record one.
+    """
+    held = set(getattr(captured, "graphs", {}))
+    total = len(held | set(capture.shapes))
+    if total > captured.limit:
+        raise BootUnsound(
+            f"this list needs {total} graphs and the capture's limit is "
+            f"{captured.limit}: trim it with max_rows or max_width, or raise the "
+            "limit and pay the arena for it"
+        )
+
+
+def check_boot_info(info: dict) -> None:
+    """Refuse a health payload that does not say what this process decided.
+
+    Both failures it catches are a server that is up and lying about itself. One is
+    a payload with no pool in it, which is the number nothing in the code can be read
+    off. The other is subtler and is the reason this gate exists: a payload that says
+    the graphs are on while some shape is still cold. Nothing else in the process
+    would notice, because a cold shape is not an error, it is a recording that has
+    not happened yet and will happen in front of whoever asks for that context first.
+    """
+    if "num_blocks" not in info:
+        raise BootUnsound(
+            "this payload names no pool: the block count is the one number a reader "
+            "cannot derive, and it is the first thing you want when a server is "
+            "preempting more than you expected"
+        )
+    graphs = info.get("cuda_graphs")
+    if graphs is None:
+        return
+    if graphs.get("shapes", 0) < 1:
+        raise BootUnsound(
+            "this payload reports a capture with no shapes in it: an engine built "
+            "with capture_decode and an empty list records a graph per step"
+        )
+    if "graphs_held" in graphs and graphs.get("cold"):
+        raise BootUnsound(
+            f"this payload says the capture is warm and {graphs['cold']} shape(s) are "
+            "still cold: the server is up, the graphs are on, and somebody's first "
+            "token at that context still pays for a recording"
+        )
+
+
 # --- wiring it together ----------------------------------------------------------
 
 
@@ -491,6 +906,10 @@ def build_engine(
     kv_cache_bytes: int | None = None,
     num_blocks: int | None = None,
     profile: bool = True,
+    bucket_decode: bool = False,
+    persist_inputs: bool = False,
+    capture_decode: bool = False,
+    capture_recorder=None,
     load=load_weights,
     read_config=ModelConfig.from_json,
     probe=None,
@@ -512,6 +931,17 @@ def build_engine(
     Returns the engine and the plan, because the plan is what `/health` reports and
     what the boot line prints, and recovering it from the engine afterwards would
     mean rederiving a decision that was already made.
+
+    Day 56 adds the three flags of Weeks 12 and 13, passed straight through to
+    `Engine.build` without being bundled. `Engine.build` refuses two of the three
+    loudly and this function does not soften that: the missing halves are not
+    performance settings, and a capture over an open shape set or a moving input is
+    not a slower engine, it is a wrong one. The bundling lives in `serve.py`, one
+    layer up, where `--cuda-graphs` is a thing an operator can reasonably mean.
+
+    What it does *not* do is warm. The capture list is a second sizing decision made
+    against a second probe, and it is `plan_capture` and `warm_engine`, called after
+    this returns. See `build_app`.
     """
     resolved_device = resolve_device(device, cuda_available=cuda_available)
     config = read_config(weights_dir)
@@ -568,6 +998,10 @@ def build_engine(
         # num_blocks * block_size]` int64 would be hundreds of megabytes of pure
         # addressing on a real card. See `nanoserve.slots.check_table_fits`.
         max_model_len=plan.max_model_len,
+        bucket_decode=bucket_decode,
+        persist_inputs=persist_inputs,
+        capture_decode=capture_decode,
+        capture_recorder=capture_recorder,
     )
     return engine, plan
 
@@ -579,6 +1013,10 @@ def build_app(
     tokenizer=None,
     eos_token_id: int | None = None,
     max_idle_schedules: int = 256,
+    warm: bool = True,
+    warm_rows: int | None = None,
+    warm_width: int | None = None,
+    warm_bytes: int | None = None,
     **engine_kwargs,
 ):
     """The whole server, from a path. What `serve.py` calls and nothing else does.
@@ -589,8 +1027,35 @@ def build_app(
     tell. `eos_token_id` is read off it rather than accepted per request, because a
     stop token is a property of the model this process loaded and letting a caller
     choose one is how a request never stops.
+
+    Day 56 puts three more steps between the engine and the app, and their *position*
+    is the day. The list is planned after the pool, because its budget is what is left
+    once the pool is spoken for. The warm-up runs after that and before the
+    `AsyncEngine` is constructed, which is not a preference: a warm batch writes the
+    same persistent decode buffers a real step does, so the only safe window is the
+    one where no loop exists to race. This function cannot pass a `serving` to
+    `warm_engine` because there is not one yet, and that is the proof the order is
+    right rather than a comment claiming it.
+
+    `warm=False` keeps the graphs and records them lazily, the Day-54 way. It is the
+    control a benchmark needs and not a flag a deployment should want.
     """
     engine, plan = build_engine(weights_dir, **engine_kwargs)
+
+    capture = report = None
+    if engine.decode_graphs.mode != "off":
+        capture = plan_capture(
+            engine,
+            plan,
+            max_rows=warm_rows,
+            max_width=warm_width,
+            budget_bytes=warm_bytes,
+            utilization=engine_kwargs.get("utilization", 0.90),
+            probe=engine_kwargs.get("probe"),
+        )
+        if warm:
+            report = warm_engine(engine, capture)
+
     if tokenizer is None:
         from transformers import AutoTokenizer
 
@@ -605,11 +1070,13 @@ def build_app(
         model_name=model_name,
         eos_token_id=eos_token_id,
         vocab_size=engine.model.config.vocab_size,
-        info=plan.as_dict(),
+        info=boot_info(plan, capture, report),
     )
     # Hung off the app so a test (and a debugger attached to a live server) can
     # reach the same objects the handlers are holding.
     app.state.plan = plan
+    app.state.capture = capture
+    app.state.warmup = report
     app.state.engine = engine
     app.state.serving = serving
     return app

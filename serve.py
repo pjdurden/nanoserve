@@ -20,6 +20,15 @@ either shrinks the pool it leaves behind, and the boot line prints what you got.
 
 A CPU launch has no VRAM to divide, so it needs `--kv-cache-bytes` (or
 `--num-blocks`) spelled out. On a GPU both are optional and the launcher measures.
+
+Day 56 adds `--cuda-graphs`, which is Weeks 12 and 13 switched on: the decode shape
+is rounded to a closed set, its inputs are held at addresses that do not move, and
+every shape in the set is recorded once at startup off a batch of pure padding. It
+prints a second boot line, because the capture list is a second sizing decision and
+it is made against a second probe: what the card has left *after* the KV pool. The
+list is `row buckets x width buckets`, so it can outgrow what one process will hold,
+and when it does the width is what gives. `--warm-rows` and `--warm-width` are how
+you trim it on purpose instead of letting the graph limit do it for you.
 """
 
 import argparse
@@ -30,7 +39,7 @@ try:
 except ImportError:
     sys.exit("uvicorn not installed; pip install -e '.[server]' (or use .venv/bin/python)")
 
-from nanoserve.launch import build_app
+from nanoserve.launch import boot_lines, build_app
 
 
 def main() -> None:
@@ -67,6 +76,28 @@ def main() -> None:
         help="estimate the activation reserve on paper instead of measuring it",
     )
     p.add_argument("--model-name", default="nanoserve", help="the name /v1/completions serves")
+    p.add_argument(
+        "--cuda-graphs",
+        action="store_true",
+        help="bucket the decode shape, hold its inputs still, and record a graph per shape",
+    )
+    p.add_argument(
+        "--no-warm",
+        action="store_true",
+        help="record the graphs lazily, mid-run, instead of at startup",
+    )
+    p.add_argument(
+        "--warm-rows",
+        type=int,
+        default=None,
+        help="only record shapes up to this many rows (default: the slot count)",
+    )
+    p.add_argument(
+        "--warm-width",
+        type=int,
+        default=None,
+        help="only record shapes up to this context (default: the served length)",
+    )
     args = p.parse_args()
 
     print(f"loading {args.weights} ...", file=sys.stderr, flush=True)
@@ -82,10 +113,23 @@ def main() -> None:
         kv_cache_bytes=args.kv_cache_bytes,
         num_blocks=args.num_blocks,
         profile=not args.no_profile,
+        # Day 56. One flag, three switches, and the bundling is allowed here and
+        # nowhere below: `Engine.build` refuses two out of three, because a capture
+        # over an open shape set or an input allocated per step is not a slower
+        # engine, it is a wrong one. An operator asking for CUDA graphs means all
+        # three, and should not have to know that.
+        bucket_decode=args.cuda_graphs,
+        persist_inputs=args.cuda_graphs,
+        capture_decode=args.cuda_graphs,
+        warm=not args.no_warm,
+        warm_rows=args.warm_rows,
+        warm_width=args.warm_width,
     )
-    # The one line that says what the launcher decided on your behalf. Every number
-    # in it was either a flag you passed or a division against what the card had left.
-    print(app.state.plan.describe(), file=sys.stderr, flush=True)
+    # The lines that say what the launcher decided on your behalf. Every number in
+    # them was either a flag you passed or a division against what the card had left,
+    # and with graphs on there are two such divisions made at two different moments.
+    for line in boot_lines(app.state.plan, app.state.capture, app.state.warmup):
+        print(line, file=sys.stderr, flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

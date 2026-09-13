@@ -12,7 +12,7 @@ The rule of the build is **correctness before speed**. Every numerical piece is 
 
 ## Status
 
-**Day 52 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 46 onward are the measurement and optimization pass.
+**Day 56 of 100.** The v1 engine is feature-complete: a request arrives over HTTP, the scheduler admits it into a live batch, the model runs one forward pass over a paged KV cache through a hand-written Triton kernel, and tokens stream back over SSE. Days 46 onward are the measurement and optimization pass.
 
 Every numerical piece is checked against HuggingFace before anything is optimized. **1375 tests green.**
 
@@ -36,6 +36,7 @@ Every numerical piece is checked against HuggingFace before anything is optimize
 | OpenAI-compatible server, FastAPI over the sync engine loop | Week 11 acceptance test over a real socket | done, days 37-41 |
 | SSE streaming (including the token that is half a character) | | done, day 39 |
 | Serving benchmark, TTFT split, latency-throughput curve | five parts that sum exactly | done, days 42-48 |
+| torch.compile, bucketed decode shapes, CUDA graph capture warmed at startup | what each one buys, measured | done, days 49-56 |
 | Speculative decoding, tensor parallelism, prefix caching, quantization | | out of scope for v1, see roadmap |
 
 Daily build log: [docs/daily/](docs/daily/). Full 100-day plan: [docs/PLAN.md](docs/PLAN.md).

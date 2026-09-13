@@ -286,6 +286,13 @@ class AsyncEngine:
 
     @property
     def running(self) -> bool:
+        """Whether there is a loop task and it has not fallen over.
+
+        Day 56 gives this a second reader. A decode step writes buffers that every
+        other decode step writes too, so anything else that touches them (the Day-55
+        capture warm-up, most of all) has to happen while this is False. See
+        `launch.check_warm_before_serving`.
+        """
         return self._task is not None and not self._task.done()
 
     @property
