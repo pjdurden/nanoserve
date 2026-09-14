@@ -504,9 +504,40 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         """Liveness plus what the loop is doing, which is what you want at 3am."""
-        return {"status": "ok", "model": model_name, **info, **serving.stats()}
+        return health_payload(model_name, info, serving.stats())
 
     return app
+
+
+def health_payload(model_name: str, info: dict, stats: dict) -> dict:
+    """One reading of this process: what it decided, and what it has done since.
+
+    A module-level function rather than three lines in the handler because the merge
+    it does is a decision and a decision wants a test. Day 57 gave `AsyncEngine.stats`
+    a `cuda_graphs` section, and Day 56's boot info already had one. Merged with
+    `**`, the second silently wins, and what is lost is the half a reader is more
+    likely to want: a payload reporting 40,000 replays and nothing about how many
+    shapes this server promised to hold, or how many of them were cold when the door
+    opened.
+
+    So the live half is nested under `runtime` inside the boot half. Not because
+    nesting is tidier, but because the two are different kinds of claim. The boot
+    keys are promises, fixed for the life of the process. The runtime keys are
+    counters, true at the instant they were read and stale by the time they are
+    printed. A reader who cannot tell those apart will quote a counter as a
+    configuration.
+
+    Either half can be missing. A server launched without the graphs publishes no
+    section at all, which is how `capture_from_health` tells "switched off" from
+    "switched on and broken"; an engine wired by hand and served by an app nobody
+    launched has counters and no boot decision, and its counters still arrive.
+    """
+    payload = {"status": "ok", "model": model_name, **info, **stats}
+    boot = info.get("cuda_graphs")
+    live = stats.get("cuda_graphs")
+    if boot is not None and live is not None:
+        payload["cuda_graphs"] = {**boot, "runtime": live}
+    return payload
 
 
 def _sse(payload: dict) -> str:

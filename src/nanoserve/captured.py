@@ -56,6 +56,18 @@ intermediate is 268 MB. That is not the capture's fault and no pool sharing touc
 it: it is the reference read, and it is the same reason Day 52 has to bucket the
 width axis at all when vLLM's capture list is over batch sizes only.
 
+**The precondition Day 57 found, added here because it belongs next to the model
+above.** A replay reads two kinds of address and they are indexed differently. The
+persistent input buffers are written in *batch* order, so row j is the j-th request
+of this step. The read rectangle is the window `slots[:rows, :width]`, which is
+*cache row* order and begins at row zero. They are the same index only while the
+scheduler's rows are `(0, 1, ... n-1)`, and a decode over rows `(1,)` therefore
+computes that request's next token over cache row 0's keys and values, with every
+gate on this page passing. `rows_are_a_prefix` is the one-line question, a step that
+fails it runs the forward instead of replaying, and `scattered_calls` counts how
+often that happened. The real fix is a scheduler that keeps its running rows
+compacted, which is what a persistent batch is for.
+
 **And on CPU none of this is fast.** `eager_recorder` records nothing. It reproduces
 a capture's *semantics* (fixed input addresses, one fixed output buffer, a replay
 that takes no arguments) and none of its speed, which is what makes every
@@ -334,6 +346,7 @@ class CapturedDecode:
         self.captures = 0
         self.replays = 0
         self.eager_calls = 0
+        self.scattered_calls = 0
 
     # --- running it -----------------------------------------------------------
 
@@ -353,6 +366,22 @@ class CapturedDecode:
         plan = getattr(cache, "plan", None)
         if plan is None or not args:
             self.eager_calls += 1
+            return self.fn(*args, **kwargs)
+        if not rows_are_a_prefix(plan):
+            # Day 57, and it is a correctness branch rather than a performance one.
+            # A recorded read is `slots[:rows, :width]`, a window at the table's own
+            # address, so the kernels address cache rows 0..rows-1 and nothing else.
+            # Every other thing a step hands the forward is a persistent buffer
+            # written in batch order: row j of `input_ids`, `positions` and
+            # `context_lens` is the *j-th request of this step*. The two line up only
+            # while the scheduler's rows are `(0, 1, ... n-1)`. The moment one request
+            # finishes and its neighbour keeps going alone in row 1, a replay reads
+            # row 0's history under row 1's token and the answer is another request's
+            # continuation, with nothing raised anywhere. `check_mapping_is_window`
+            # says this at record time and says the fix is on the scheduler's side;
+            # until it is, this step runs the forward it would have run without a
+            # capture, over the gathered rectangle the plan actually built.
+            self.scattered_calls += 1
             return self.fn(*args, **kwargs)
         input_ids = args[0]
         shape = decode_shape(input_ids, cache)
@@ -419,6 +448,20 @@ class CapturedDecode:
         return (self.calls - self.captures) / self.calls
 
     @property
+    def replay_share(self) -> float:
+        """Share of calls that actually replayed a graph. Day 57.
+
+        Not the same question as `reuse`, and the difference is the day: reuse asks
+        whether the recordings were worth making, and a run that never records again
+        is 100% reused whether it replays every step or falls through to eager on
+        half of them. This is the number that says what fraction of the loop the
+        capture is covering.
+        """
+        if not self.calls:
+            return 0.0
+        return self.replays / self.calls
+
+    @property
     def output_bytes(self) -> int:
         """What the recorded outputs weigh. One buffer a shape, held for the run."""
         return sum(g.output_bytes for g in self.graphs.values())
@@ -427,12 +470,198 @@ class CapturedDecode:
         """Whether `tensor` is some graph's output storage. A one-step value."""
         return any(g.owns(tensor) for g in self.graphs.values())
 
+    def stats(self) -> CaptureStats:
+        """This capture's counters, as a value that can leave the process. Day 57."""
+        return CaptureStats.of(self)
+
+    def as_dict(self) -> dict:
+        """What `/health` publishes. The same name `KVPoolPlan` and `CapturePlan` use."""
+        return self.stats().as_dict()
+
     def render(self) -> str:
         return (
             f"{self.count} graphs over {self.calls} calls ({self.captures} captures, "
-            f"{self.replays} replays, {self.eager_calls} eager, {self.reuse:.0%} "
-            f"reuse), {self.output_bytes} bytes of output buffers"
+            f"{self.replays} replays, {self.eager_calls} eager, "
+            f"{self.scattered_calls} scattered, {self.reuse:.0%} reuse), "
+            f"{self.output_bytes} bytes of output buffers"
         )
+
+
+# --- the same counters, as something that fits on a socket ----------------------------
+
+
+@dataclass(frozen=True)
+class CaptureStats:
+    """What a capture has done, without the capture. Day 57.
+
+    Six integers and a mode, which is the whole of what a reader outside the process
+    can be told, and it is enough for both of Day 54's gates: they read `calls`,
+    `eager_calls`, `captures` and `reuse` and nothing else. That is why they are
+    typed against an interface rather than against `CapturedDecode` now. One gate,
+    two callers: the process holding the object, and a harness holding a dict that
+    came off `/health`.
+
+    `mode` is in the payload because zero replays means two different things and
+    they are different mornings. A server with the capture switched off is doing
+    exactly what it was launched to do; a server with it switched on and no replays
+    is either idle or falling through to eager, and only the counters next to it can
+    say which.
+
+    Frozen, because a reading is a moment. Two of them make a window, which is what
+    `since` is for: a counter is cumulative, so every claim about a *run* ("this
+    server recorded nothing while it was serving") is a subtraction and not a
+    number.
+    """
+
+    mode: str = "off"
+    graphs: int = 0
+    calls: int = 0
+    captures: int = 0
+    replays: int = 0
+    eager_calls: int = 0
+    scattered_calls: int = 0
+
+    @property
+    def count(self) -> int:
+        """Graphs held, under the name `CapturedDecode` uses for it."""
+        return self.graphs
+
+    @property
+    def replay_share(self) -> float:
+        """Share of calls that replayed a graph rather than running the forward."""
+        if not self.calls:
+            return 0.0
+        return self.replays / self.calls
+
+    @property
+    def reuse(self) -> float:
+        """Share of calls that landed on a graph that already existed.
+
+        The same formula the object computes, over the same counters, which is the
+        point: a reading and the object it was read from have to agree or the gate
+        means one thing locally and another over a socket.
+        """
+        if not self.calls:
+            return 0.0
+        return (self.calls - self.captures) / self.calls
+
+    @classmethod
+    def of(cls, captured: CapturedDecode) -> CaptureStats:
+        return cls(
+            mode=captured.mode,
+            graphs=captured.count,
+            calls=captured.calls,
+            captures=captured.captures,
+            replays=captured.replays,
+            eager_calls=captured.eager_calls,
+            scattered_calls=captured.scattered_calls,
+        )
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> CaptureStats:
+        """Rebuild a reading from the JSON it went over the wire as.
+
+        Every field has a default, so a payload from an older process is missing
+        counters rather than unreadable. The mode is the one that must not be
+        guessed at: absent, it is "off", which is the reading that makes a gate
+        refuse rather than pass.
+        """
+        return cls(
+            mode=payload.get("mode", "off"),
+            graphs=int(payload.get("graphs", 0)),
+            calls=int(payload.get("calls", 0)),
+            captures=int(payload.get("captures", 0)),
+            replays=int(payload.get("replays", 0)),
+            eager_calls=int(payload.get("eager_calls", 0)),
+            scattered_calls=int(payload.get("scattered_calls", 0)),
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "mode": self.mode,
+            "graphs": self.graphs,
+            "calls": self.calls,
+            "captures": self.captures,
+            "replays": self.replays,
+            "eager_calls": self.eager_calls,
+            "scattered_calls": self.scattered_calls,
+            "reuse": round(self.reuse, 4),
+            "replay_share": round(self.replay_share, 4),
+        }
+
+    def since(self, earlier: CaptureStats) -> CaptureStats:
+        """The window between two readings: what happened between them.
+
+        A negative component is refused rather than clamped. Counters only go up, so
+        the difference going backwards is not a small number, it is a reading from a
+        different process: a server that restarted between the two polls, or two
+        arms of a comparison whose readings got swapped. Both of those produce a
+        window that would pass every check in this module.
+        """
+        if earlier.mode != self.mode:
+            raise ValueError(
+                f"these readings are of a capture in mode {earlier.mode!r} and one in "
+                f"mode {self.mode!r}: a process does not change mode, so this window "
+                "spans two of them"
+            )
+        window = CaptureStats(
+            mode=self.mode,
+            graphs=self.graphs - earlier.graphs,
+            calls=self.calls - earlier.calls,
+            captures=self.captures - earlier.captures,
+            replays=self.replays - earlier.replays,
+            eager_calls=self.eager_calls - earlier.eager_calls,
+            scattered_calls=self.scattered_calls - earlier.scattered_calls,
+        )
+        negative = [
+            name
+            for name in (
+                "graphs",
+                "calls",
+                "captures",
+                "replays",
+                "eager_calls",
+                "scattered_calls",
+            )
+            if getattr(window, name) < 0
+        ]
+        if negative:
+            raise ValueError(
+                f"this window cannot have run {', '.join(negative)} backwards: a "
+                "capture's counters only go up, so the later reading came from a "
+                "different process than the earlier one"
+            )
+        return window
+
+    def render(self) -> str:
+        return (
+            f"{self.graphs} graphs over {self.calls} calls ({self.captures} captures, "
+            f"{self.replays} replays, {self.eager_calls} eager, "
+            f"{self.scattered_calls} scattered, {self.reuse:.0%} reuse, "
+            f"{self.replay_share:.0%} replayed)"
+        )
+
+
+def rows_are_a_prefix(plan) -> bool:
+    """Whether this step's rows are `(0, 1, ... n-1)`, which is what a replay needs.
+
+    The cheapest gate in this module and the one that turned out to matter most. It
+    reads a Python tuple the host already built, so it costs nothing on a device, and
+    it is the difference between a replay that computes this step and one that
+    computes a rearrangement of it.
+
+    Why a prefix and not "the same rows as the recording": a recorded graph holds no
+    row set at all worth speaking of. What it holds is addresses, and every address
+    it holds is either a persistent input buffer written in batch order or the window
+    `slots[:rows, :width]` at the slot table's own address. Both of those are indexed
+    from zero. So a graph recorded over three rows replays a four-row step of the same
+    bucket correctly (Day 55's warm batch records over *no* rows at all and replays
+    everything), and no graph can replay a step over rows `(1, 2, 3)`, however it was
+    recorded: row 0 of the window is cache row 0, and this step's first request is in
+    cache row 1.
+    """
+    rows = tuple(int(r) for r in plan.rows)
+    return rows == tuple(range(len(rows)))
 
 
 def _decode_inputs(cache):
@@ -613,13 +842,17 @@ def check_replay_rows(graph: CapturedGraph, plan) -> None:
         )
 
 
-def check_all_shapes_captured(captured: CapturedDecode) -> None:
+def check_all_shapes_captured(captured: CapturedDecode | CaptureStats) -> None:
     """Refuse a run that quietly went eager for some of its steps.
 
     The failure with no symptom, again, and it is the third time it has turned up in
     this week: Day 49's dynamo fallback, Day 52's shape outside the set, and now a
     step whose view carried no plan. The process keeps producing the right tokens and
     the capture bought nothing for those steps.
+
+    Takes a `CaptureStats` as readily as the object (Day 57), because the caller who
+    most needs to ask this is outside the process: a run's counters published on
+    `/health`, or the window between two readings of them.
     """
     if captured.eager_calls:
         raise CaptureUnsound(
@@ -630,13 +863,46 @@ def check_all_shapes_captured(captured: CapturedDecode) -> None:
         )
 
 
-def check_replays_dominate(captured: CapturedDecode, *, min_reuse: float = 0.5) -> None:
+def check_no_scattered_rows(captured: CapturedDecode | CaptureStats) -> None:
+    """Refuse a run the capture had to sit out because the rows were not a prefix.
+
+    Day 57's gate, and the number behind it is the one that decides whether a capture
+    is worth anything to *this* engine rather than in principle. A scattered step is
+    not wrong (it runs the same forward the eager engine runs, over the gathered
+    rectangle the plan built) and it is not free either: it is a step that paid for a
+    graph it could not use.
+
+    The fix this asks for is not in this module. A scheduler that hands out row 5
+    while rows 0 to 4 are idle produces a batch no recorded window addresses, and the
+    answer production engines reach for is a persistent batch: keep the running rows
+    compacted so a step is always `(0, 1, ... n-1)` and the question never comes up.
+    Until then the share is the honest measure of what the week bought.
+    """
+    scattered = captured.scattered_calls
+    if scattered:
+        calls = max(captured.calls, 1)
+        raise CaptureUnsound(
+            f"{scattered} of {captured.calls} decode calls ({scattered / calls:.0%}) "
+            "ran the forward instead of a replay because the step's rows were not a "
+            "prefix of the table's: a recorded read is a window from row zero, so a "
+            "batch sitting in rows (1, 2) is one no graph in the list addresses"
+        )
+
+
+def check_replays_dominate(
+    captured: CapturedDecode | CaptureStats, *, min_reuse: float = 0.5
+) -> None:
     """Refuse a run that recorded about as often as it replayed.
 
     The same shape of gate as Day 49's `check_graph_reused` and for the same reason.
     A capture is worth having when one recording serves many steps; a run whose
     captures track its calls has paid the recording cost every step, holds a graph
     per step in the pool, and got the replay speed on none of them.
+
+    A `CaptureStats` window is the other subject this takes (Day 57), and over a
+    window the bar means something stronger: a warm server's window has no captures
+    in it at all, so anything under 100% reuse there is a recording that happened in
+    front of a client.
     """
     if captured.calls < 1:
         raise ValueError(f"a run has at least one call; got {captured.calls}")

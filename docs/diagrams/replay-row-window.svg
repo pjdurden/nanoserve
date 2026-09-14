@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The acceptance test, and the row the replay was reading</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A recorded decode reads two things: persistent input buffers, written in batch order, and the slot table window slots[:rows], which</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">starts at cache row zero. They line up while the scheduler's rows are (0, 1, ... n-1) and not otherwise. Two requests of different</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">lengths break that on the step the shorter one finishes, and nothing in the process raises: the tokens are simply somebody else's.</text>
+
+  <!-- ===================== LEFT TOP: aligned ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">rows = (0, 1): a prefix, so batch order IS row order</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="184" font-size="10.5" font-weight="700" fill="#334155">what the step writes</text>
+  <text x="330" y="184" font-size="10.5" font-weight="700" fill="#334155">what the graph reads</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="72" y="192" width="196" height="34" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="206" fill="#3730a3">input_ids[0] = r0 token</text>
+    <text x="80" y="219" fill="#64748b">positions[0], context_lens[0]</text>
+    <rect x="72" y="232" width="196" height="34" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="246" fill="#3730a3">input_ids[1] = r1 token</text>
+    <text x="80" y="259" fill="#64748b">positions[1], context_lens[1]</text>
+
+    <rect x="330" y="192" width="196" height="34" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="338" y="206" fill="#166534">slots[0] = cache row 0</text>
+    <text x="338" y="219" fill="#64748b">r0's blocks</text>
+    <rect x="330" y="232" width="196" height="34" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="338" y="246" fill="#166534">slots[1] = cache row 1</text>
+    <text x="338" y="259" fill="#64748b">r1's blocks</text>
+  </g>
+  <path d="M 272 209 L 324 209" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <path d="M 272 249 L 324 249" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+
+  <line x1="72" y1="282" x2="558" y2="282" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="302" font-size="10.5" fill="#64748b">The graph holds neither tensor's contents. It holds their addresses, and both are</text>
+  <text x="72" y="317" font-size="10.5" fill="#64748b">indexed from zero: the buffers by position in the batch, the window by cache row.</text>
+  <text x="72" y="340" font-size="11" font-weight="700" fill="#15803d">Row j of the batch is cache row j. This is the whole precondition,</text>
+  <text x="72" y="356" font-size="11" font-weight="700" fill="#15803d">and until today nothing on the replay path checked it.</text>
+
+  <!-- ===================== RIGHT TOP: misaligned ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">rows = (1,): r0 finished, and nothing moves a running request</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">what the step writes</text>
+  <text x="900" y="184" font-size="10.5" font-weight="700" fill="#334155">what the graph reads</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="192" width="196" height="34" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="650" y="206" fill="#3730a3">input_ids[0] = r1 token</text>
+    <text x="650" y="219" fill="#64748b">the batch has one row now</text>
+
+    <rect x="900" y="192" width="196" height="34" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="908" y="206" fill="#b91c1c">slots[0] = cache row 0</text>
+    <text x="908" y="219" fill="#b91c1c">r0's blocks. r0 is gone.</text>
+
+    <rect x="900" y="236" width="196" height="30" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="908" y="249" fill="#64748b">slots[1] = cache row 1</text>
+    <text x="908" y="261" fill="#64748b">r1's blocks, not read</text>
+  </g>
+  <path d="M 842 209 L 894 209" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+  <text x="642" y="246" font-size="10" font-weight="700" fill="#b91c1c">r1's next token, computed</text>
+  <text x="642" y="260" font-size="10" font-weight="700" fill="#b91c1c">over r0's history.</text>
+  <text x="642" y="276" font-size="9.5" fill="#64748b">No exception. Addresses stable,</text>
+  <text x="642" y="289" font-size="9.5" fill="#64748b">shape in the set, pool shared.</text>
+
+  <line x1="642" y1="300" x2="1128" y2="300" stroke="#fecaca" stroke-width="1"/>
+  <text x="642" y="320" font-size="10.5" fill="#64748b">Day 54's check_replay_rows compares this step's rows with the recorded step's, and a</text>
+  <text x="642" y="335" font-size="10.5" fill="#64748b">warm graph records over rows = (), so the field it guards is empty exactly here.</text>
+  <text x="642" y="358" font-size="11" font-weight="700" fill="#15803d">The fix: rows_are_a_prefix(plan). Fails it, run the forward.</text>
+
+  <!-- ===================== LEFT BOTTOM: coverage ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">How much of a decode loop can replay at all, measured</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10" fill="#64748b">Same engine, same warm list. The only thing that changes is how uneven the generations are.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="470" font-weight="700" fill="#334155">slots</text>
+    <text x="142" y="470" font-weight="700" fill="#334155">gen lengths</text>
+    <text x="290" y="470" font-weight="700" fill="#334155">steps</text>
+    <text x="368" y="470" font-weight="700" fill="#334155">scattered</text>
+    <text x="478" y="470" font-weight="700" fill="#334155">replayed</text>
+
+    <text x="72" y="490" fill="#475569">4</text><text x="142" y="490" fill="#475569">all 16</text>
+    <text x="290" y="490" fill="#475569">30</text><text x="368" y="490" fill="#15803d">0</text>
+    <text x="478" y="490" fill="#15803d">100%</text>
+
+    <text x="72" y="508" fill="#475569">4</text><text x="142" y="508" fill="#475569">8 / 16</text>
+    <text x="290" y="508" fill="#475569">31</text><text x="368" y="508" fill="#b91c1c">10</text>
+    <text x="478" y="508" fill="#b45309">68%</text>
+
+    <text x="72" y="526" fill="#475569">8</text><text x="142" y="526" fill="#475569">all 16</text>
+    <text x="290" y="526" fill="#475569">30</text><text x="368" y="526" fill="#15803d">0</text>
+    <text x="478" y="526" fill="#15803d">100%</text>
+
+    <text x="72" y="544" fill="#475569">8</text><text x="142" y="544" fill="#475569">8 / 16</text>
+    <text x="290" y="544" fill="#475569">31</text><text x="368" y="544" fill="#b91c1c">17</text>
+    <text x="478" y="544" fill="#b45309">45%</text>
+
+    <text x="72" y="562" fill="#475569">8</text><text x="142" y="562" fill="#475569">4 / 8 / 16 / 32</text>
+    <text x="290" y="562" fill="#475569">47</text><text x="368" y="562" fill="#b91c1c">35</text>
+    <text x="478" y="562" fill="#b91c1c">26%</text>
+
+    <text x="72" y="580" fill="#475569">16</text><text x="142" y="580" fill="#475569">4 / 32</text>
+    <text x="290" y="580" fill="#475569">51</text><text x="368" y="580" fill="#b91c1c">17</text>
+    <text x="478" y="580" fill="#b45309">67%</text>
+  </g>
+  <line x1="72" y1="594" x2="558" y2="594" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="612" font-size="10.5" fill="#64748b">Uniform lengths finish together and hold the prefix. Mixed lengths punch holes in it, and</text>
+  <text x="72" y="627" font-size="10.5" font-weight="700" fill="#b91c1c">more slots make it worse: 8 slots over four lengths replays a quarter of its steps.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the counters ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">A claim about a run is a difference of two readings</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">/health publishes what the boot decided and what the loop has done. Both, nested, not either.</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="458" width="230" height="58" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="650" y="472" fill="#3730a3">cuda_graphs</text>
+    <text x="650" y="486" fill="#64748b">shapes, max_width, graphs_held</text>
+    <text x="650" y="499" fill="#64748b">a promise, fixed for the process</text>
+    <text x="650" y="512" fill="#64748b">cold: 0, width_bound_by: served</text>
+
+    <rect x="898" y="458" width="230" height="58" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="906" y="472" fill="#166534">cuda_graphs.runtime</text>
+    <text x="906" y="486" fill="#64748b">calls, captures, replays, eager,</text>
+    <text x="906" y="499" fill="#64748b">scattered, reuse, replay_share</text>
+    <text x="906" y="512" fill="#64748b">a counter, true at the instant read</text>
+  </g>
+  <path d="M 876 487 L 892 487" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="642" y="536" font-size="9.5" fill="#b91c1c">Two dicts wanted the same key. {**info, **stats} keeps the second and loses the first.</text>
+
+  <line x1="642" y1="548" x2="1128" y2="548" stroke="#e2e8f0" stroke-width="1"/>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="558" width="140" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="650" y="575" fill="#475569">read before</text>
+    <rect x="812" y="558" width="140" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="820" y="575" fill="#475569">read after</text>
+    <rect x="982" y="558" width="146" height="26" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="990" y="575" fill="#166534">after.since(before)</text>
+  </g>
+  <path d="M 786 571 L 806 571" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M 956 571 L 976 571" stroke="#15803d" stroke-width="1.4" marker-end="url(#arrowgreen)"/>
+  <text x="642" y="602" font-size="10.5" fill="#64748b">"Nothing was recorded while this server was serving" is a subtraction. The counters are</text>
+  <text x="642" y="617" font-size="10.5" fill="#64748b">cumulative, so a warm server's captures equal the length of its list forever, and the number</text>
+  <text x="642" y="632" font-size="10.5" font-weight="700" fill="#334155">that matters is how many arrived after the door opened. Zero, or somebody's p99.</text>
+</svg>

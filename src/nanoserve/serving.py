@@ -474,7 +474,7 @@ class AsyncEngine:
         """What a health endpoint reports: the loop's work and the engine's."""
         scheduler = self.engine.scheduler
         latency = self.latency_report()
-        return {
+        stats = {
             "iterations": self.engine.iterations,
             "steps": self.steps,
             "idle_waits": self.idle_waits,
@@ -493,6 +493,18 @@ class AsyncEngine:
             "ttft_p99_s": latency.ttft_p99_s,
             "queue_share": latency.queue_share,
         }
+        # Day 57. What the capture has done since this process started, which until
+        # today nothing outside the process could ask. Day 56 published the boot
+        # *decision*: how many shapes this server means to hold and whether it warmed
+        # them. That is a statement about a moment before the first request, and a
+        # server whose list is quietly recording at the top of the width axis, or
+        # falling through to eager, reports exactly the same thing as one replaying
+        # every step. Cumulative, because a counter is; the claims are differences of
+        # two readings and `CaptureStats.since` is where that is written down.
+        graphs = getattr(self.engine, "decode_graphs", None)
+        if graphs is not None and graphs.mode != "off":
+            stats["cuda_graphs"] = graphs.as_dict()
+        return stats
 
     def _new_id(self) -> str:
         self._next_id += 1
