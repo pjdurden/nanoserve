@@ -210,6 +210,10 @@ class Engine:
         # a caller who built the pair by hand cannot forget it, and because the
         # engine is the only object that knows what a slot means physically.
         scheduler.on_release = self._release_row
+        # Day 58. The other half of the same split, installed the same way and for
+        # the same reason: the scheduler decides which row moves where, and this is
+        # the only object that knows what a row means physically.
+        scheduler.compactor.on_move = self._move_row
         # What the run cost, in the vocabulary Day 29 measured static batching in.
         self.iterations = 0
         self.issued_tokens = 0
@@ -243,6 +247,7 @@ class Engine:
         persist_inputs: bool = False,
         capture_decode: bool = False,
         capture_recorder=None,
+        compact_rows: bool = False,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -277,6 +282,14 @@ class Engine:
         loudly rather than switching them on quietly: a capture over an open shape
         set or over a moving input is not a slower engine, it is a wrong one. See
         `nanoserve.captured`.
+
+        `compact_rows` is Day 58 and it is what the capture was worth a quarter of
+        without. The scheduler keeps the running requests in rows `(0, 1, ... n-1)`,
+        moving a survivor down into the hole a completion left, so a decode step's
+        rows are always the window a recorded graph reads. Independent of the other
+        three rather than required by them: the engine is correct either way, and one
+        with the capture off pays a row copy per completion for nothing. See
+        `nanoserve.compact`.
         """
         if capture_decode:
             missing = [
@@ -297,7 +310,12 @@ class Engine:
         allocator = BlockAllocator(num_blocks=num_blocks, block_size=block_size)
         return cls(
             model,
-            Scheduler(allocator, max_batch_size=max_batch_size, lookahead=defer_window),
+            Scheduler(
+                allocator,
+                max_batch_size=max_batch_size,
+                lookahead=defer_window,
+                compact_rows=compact_rows,
+            ),
             BatchedPagedKVCache(
                 model.config,
                 allocator,
@@ -438,6 +456,17 @@ class Engine:
         of the slot attending over a stranger's K/V.
         """
         self.cache.reset_row(slot)
+
+    def _move_row(self, src: int, dst: int) -> None:
+        """Carry a cache row into an empty one, for the scheduler's compaction.
+
+        Called from inside `Scheduler.schedule`, between the growth and admission,
+        for a running request whose row the scheduler is sliding down onto the
+        prefix. The blocks do not move and the K/V does not move: what moves is the
+        row's `BlockTable` and its slot table addressing, which is why a completion
+        costs a row of int64 rather than a recompute. See `nanoserve.compact`.
+        """
+        self.cache.move_row(src, dst)
 
     def _prefill(self, requests, timing) -> None:
         """Run the admitted rows' context, and emit one token each.

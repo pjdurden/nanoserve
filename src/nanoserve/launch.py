@@ -909,6 +909,7 @@ def build_engine(
     bucket_decode: bool = False,
     persist_inputs: bool = False,
     capture_decode: bool = False,
+    compact_rows: bool = False,
     capture_recorder=None,
     load=load_weights,
     read_config=ModelConfig.from_json,
@@ -932,8 +933,8 @@ def build_engine(
     what the boot line prints, and recovering it from the engine afterwards would
     mean rederiving a decision that was already made.
 
-    Day 56 adds the three flags of Weeks 12 and 13, passed straight through to
-    `Engine.build` without being bundled. `Engine.build` refuses two of the three
+    Day 56 adds the three flags of Weeks 12 and 13, and Day 58 a fourth, passed
+    straight through to `Engine.build` without being bundled. `Engine.build` refuses two of the three
     loudly and this function does not soften that: the missing halves are not
     performance settings, and a capture over an open shape set or a moving input is
     not a slower engine, it is a wrong one. The bundling lives in `serve.py`, one
@@ -1001,6 +1002,12 @@ def build_engine(
         bucket_decode=bucket_decode,
         persist_inputs=persist_inputs,
         capture_decode=capture_decode,
+        # Day 58. Passed through like the other three and bundled like none of them.
+        # A persistent batch is what makes a capture cover the whole decode loop
+        # instead of the quarter of it where the rows happened to line up, and it is
+        # still a scheduler decision an operator can hold separately: `serve.py` is
+        # where `--cuda-graphs` turns it on, one layer up. See `nanoserve.compact`.
+        compact_rows=compact_rows,
         capture_recorder=capture_recorder,
     )
     return engine, plan

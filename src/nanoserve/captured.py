@@ -85,6 +85,7 @@ from dataclasses import dataclass, field
 import torch
 
 from .buckets import check_pad_inert, check_shape_in_set
+from .compact import is_compact
 from .compiled import DecodeShape, check_single_graph, decode_shape
 from .inputs import (
     check_addresses_stable,
@@ -659,9 +660,14 @@ def rows_are_a_prefix(plan) -> bool:
     everything), and no graph can replay a step over rows `(1, 2, 3)`, however it was
     recorded: row 0 of the window is cache row 0, and this step's first request is in
     cache row 1.
+
+    Day 58 moved the question itself into `nanoserve.compact`, where the scheduler's
+    answer to it lives, and left this as the plan-shaped door onto it. One definition,
+    because "these rows are a prefix" is now asked on the decode path every step and
+    on the scheduling path every schedule, and two copies of it that drifted would
+    mean a batch the scheduler calls compact and the capture declines to replay.
     """
-    rows = tuple(int(r) for r in plan.rows)
-    return rows == tuple(range(len(rows)))
+    return is_compact(plan.rows)
 
 
 def _decode_inputs(cache):
@@ -872,11 +878,13 @@ def check_no_scattered_rows(captured: CapturedDecode | CaptureStats) -> None:
     rectangle the plan built) and it is not free either: it is a step that paid for a
     graph it could not use.
 
-    The fix this asks for is not in this module. A scheduler that hands out row 5
-    while rows 0 to 4 are idle produces a batch no recorded window addresses, and the
-    answer production engines reach for is a persistent batch: keep the running rows
-    compacted so a step is always `(0, 1, ... n-1)` and the question never comes up.
-    Until then the share is the honest measure of what the week bought.
+    The fix this asks for is not in this module, and since Day 58 it exists:
+    `Scheduler(compact_rows=True)` moves a survivor down into the hole a completion
+    left, so a step is always `(0, 1, ... n-1)` and the question never comes up. This
+    gate is therefore a statement about the *scheduler* a capture was pointed at. It
+    passes on a persistent batch and it fails on the Day-57 engine, which is still a
+    supported configuration and still answers correctly: a scattered step runs the
+    forward, so what the share measures is coverage and not correctness.
     """
     scattered = captured.scattered_calls
     if scattered:

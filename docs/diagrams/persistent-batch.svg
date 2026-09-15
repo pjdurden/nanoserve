@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The persistent batch, and the move that is only a relabel</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 57 made a misaligned step run the forward instead of replaying somebody else's history, and then measured what that cost:</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">four generation lengths over eight slots replayed 26% of its decode steps. The scheduler's freedom to hand out any free row is</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">what buys that. Take it away, keep the running rows at (0, 1, ... n-1), and the question a replay asks has one answer forever.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">Free rows: r1 finishes, and nothing moves a running request</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+
+  <text x="72" y="184" font-size="10.5" font-weight="700" fill="#334155">the slot table, after the reap</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="72" y="192" width="230" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="209" fill="#3730a3">row 0   r0   120 tokens</text>
+    <rect x="72" y="222" width="230" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8" stroke-dasharray="3 2"/>
+    <text x="80" y="239" fill="#94a3b8">row 1   free   r1 finished</text>
+    <rect x="72" y="252" width="230" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="80" y="269" fill="#3730a3">row 2   r2    48 tokens</text>
+
+    <rect x="330" y="192" width="228" height="86" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="338" y="209" fill="#b91c1c">plan.rows = (0, 2)</text>
+    <text x="338" y="226" fill="#64748b">the graph reads slots[:2]</text>
+    <text x="338" y="243" fill="#64748b">which is rows 0 and 1</text>
+    <text x="338" y="262" fill="#b91c1c">row 1 is empty. no replay.</text>
+  </g>
+  <path d="M 306 235 L 324 235" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#arrowred)"/>
+
+  <line x1="72" y1="292" x2="558" y2="292" stroke="#fecaca" stroke-width="1"/>
+  <text x="72" y="312" font-size="10.5" fill="#64748b">The step is correct: rows_are_a_prefix says no, and it runs the forward over the gathered</text>
+  <text x="72" y="327" font-size="10.5" fill="#64748b">rectangle the plan already built. Right tokens, and a graph nobody could use.</text>
+  <text x="72" y="350" font-size="11" font-weight="700" fill="#b91c1c">One hole is enough. Every step from here on is scattered,</text>
+  <text x="72" y="366" font-size="11" font-weight="700" fill="#b91c1c">until r0 finishes too and the batch falls back onto row 0.</text>
+
+  <!-- ===================== RIGHT TOP: after ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Persistent batch: the survivor slides down into the hole</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">what a move actually carries</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="192" width="230" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="650" y="209" fill="#3730a3">row 0   r0   120 tokens</text>
+    <rect x="642" y="222" width="230" height="26" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="650" y="239" fill="#166534">row 1   r2    48 tokens</text>
+    <rect x="642" y="252" width="230" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8" stroke-dasharray="3 2"/>
+    <text x="650" y="269" fill="#94a3b8">row 2   free</text>
+
+    <rect x="900" y="192" width="228" height="86" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="0.8"/>
+    <text x="908" y="209" fill="#166534">BlockTable moved by reference</text>
+    <text x="908" y="226" fill="#166534">slot table row: 48 int64 copied</text>
+    <text x="908" y="243" fill="#166534">request.slot = 1</text>
+    <text x="908" y="262" fill="#64748b">the K/V pool is not touched</text>
+  </g>
+  <path d="M 876 235 L 894 235" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <path d="M 757 252 L 757 246" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+
+  <line x1="642" y1="292" x2="1128" y2="292" stroke="#bbf7d0" stroke-width="1"/>
+  <text x="642" y="312" font-size="10.5" fill="#64748b">A block id is a name for a place in the pool, so a row move renames who holds it. A 2,000-token</text>
+  <text x="642" y="327" font-size="10.5" fill="#64748b">row costs 2,000 int64 of addressing and none of the megabytes its context occupies.</text>
+  <text x="642" y="350" font-size="11" font-weight="700" fill="#15803d">plan.rows = (0, 1). The window slots[:2] is exactly this batch,</text>
+  <text x="642" y="366" font-size="11" font-weight="700" fill="#15803d">so a graph recorded before any of these requests existed replays it.</text>
+
+  <!-- ===================== LEFT BOTTOM: where it runs ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">Where the compaction runs is the whole safety argument</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="72" y="440" width="112" height="28" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="80" y="458" fill="#475569">1. reap</text>
+    <rect x="196" y="440" width="112" height="28" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="204" y="458" fill="#475569">2. grow</text>
+    <rect x="320" y="440" width="112" height="28" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="1.2"/>
+    <text x="328" y="458" fill="#166534">3. compact</text>
+    <rect x="444" y="440" width="112" height="28" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+    <text x="452" y="458" fill="#475569">4. admit</text>
+  </g>
+  <path d="M 188 454 L 192 454" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M 312 454 L 316 454" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M 436 454 L 440 454" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <text x="72" y="494" font-size="10.5" fill="#64748b"><tspan font-weight="700" fill="#334155">After the growth</tspan>, because a preemption releases a row halfway through step 2,</text>
+  <text x="72" y="509" font-size="10.5" fill="#64748b">and those holes have to be swept too.</text>
+  <text x="72" y="532" font-size="10.5" fill="#64748b"><tspan font-weight="700" fill="#334155">Before admission</tspan>, because a newcomer put into a hole still leaves the survivor</text>
+  <text x="72" y="547" font-size="10.5" fill="#64748b">above it out of place: both orders end in a prefix, and only this one avoids</text>
+  <text x="72" y="562" font-size="10.5" fill="#64748b">paying a move for a row that has just arrived.</text>
+  <text x="72" y="585" font-size="10.5" fill="#64748b"><tspan font-weight="700" fill="#334155">Inside schedule at all</tspan>, because the row this copies into is storage a captured</text>
+  <text x="72" y="600" font-size="10.5" fill="#64748b">graph holds the address of and reads on every replay.</text>
+  <text x="72" y="623" font-size="11" font-weight="700" fill="#b91c1c">A compaction taken mid-step is a write under a replay in flight.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the number ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">What the column does, and what it cost to move it</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">Same eight workloads, same warm capture list, same pool. Only the scheduler differs.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="470" font-weight="700" fill="#334155">slots</text>
+    <text x="700" y="470" font-weight="700" fill="#334155">gen lengths</text>
+    <text x="840" y="470" font-weight="700" fill="#334155">free rows</text>
+    <text x="938" y="470" font-weight="700" fill="#334155">persistent</text>
+    <text x="1046" y="470" font-weight="700" fill="#334155">moves</text>
+    <text x="1100" y="470" font-weight="700" fill="#334155">cells</text>
+
+    <text x="642" y="490" fill="#475569">4</text><text x="700" y="490" fill="#475569">all 16</text>
+    <text x="840" y="490" fill="#15803d">100%</text><text x="938" y="490" fill="#15803d">100%</text>
+    <text x="1046" y="490" fill="#475569">0</text><text x="1100" y="490" fill="#475569">0</text>
+
+    <text x="642" y="508" fill="#475569">4</text><text x="700" y="508" fill="#475569">8 / 16</text>
+    <text x="840" y="508" fill="#b45309">68%</text><text x="938" y="508" fill="#15803d">100%</text>
+    <text x="1046" y="508" fill="#475569">3</text><text x="1100" y="508" fill="#475569">33</text>
+
+    <text x="642" y="526" fill="#475569">8</text><text x="700" y="526" fill="#475569">8 / 16</text>
+    <text x="840" y="526" fill="#b45309">45%</text><text x="938" y="526" fill="#15803d">100%</text>
+    <text x="1046" y="526" fill="#475569">6</text><text x="1100" y="526" fill="#475569">66</text>
+
+    <text x="642" y="544" fill="#475569">8</text><text x="700" y="544" fill="#475569">4 / 32</text>
+    <text x="840" y="544" fill="#b45309">74%</text><text x="938" y="544" fill="#15803d">100%</text>
+    <text x="1046" y="544" fill="#475569">11</text><text x="1100" y="544" fill="#475569">217</text>
+
+    <text x="642" y="562" fill="#475569">8</text><text x="700" y="562" fill="#475569">4 / 8 / 16 / 32</text>
+    <text x="840" y="562" fill="#b91c1c">26%</text><text x="938" y="562" fill="#15803d">100%</text>
+    <text x="1046" y="562" fill="#475569">8</text><text x="1100" y="562" fill="#475569">80</text>
+
+    <text x="642" y="580" fill="#475569">16</text><text x="700" y="580" fill="#475569">4 / 32</text>
+    <text x="840" y="580" fill="#b45309">67%</text><text x="938" y="580" fill="#15803d">100%</text>
+    <text x="1046" y="580" fill="#475569">23</text><text x="1100" y="580" fill="#475569">461</text>
+  </g>
+  <line x1="642" y1="594" x2="1128" y2="594" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="612" font-size="10.5" fill="#64748b">The worst row: 8 row moves carrying 80 int64 of addressing, 640 bytes, bought back the</text>
+  <text x="642" y="627" font-size="10.5" font-weight="700" fill="#15803d">35 decode steps that had been falling through to the forward. A move is paid for by a completion.</text>
+</svg>

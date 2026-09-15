@@ -147,6 +147,27 @@ def test_a_plain_launch_has_no_buckets_no_buffers_and_no_capture():
     assert engine.cache.decode_buckets is None
     assert engine.cache.decode_inputs is None
     assert engine.decode_graphs.mode == "off"
+    assert engine.scheduler.compactor.mode == "off"
+
+
+def test_compact_rows_reaches_the_scheduler_as_a_persistent_batch():
+    """Day 58's flag, threaded the same way the other three are and bundled the same
+    way none of them are: `serve.py` turns it on with `--cuda-graphs` because a
+    capture without it replays a quarter of the loop, and this layer keeps it
+    separate because it is a scheduler decision that is correct on its own."""
+    engine, _ = _build(compact_rows=True)
+    assert engine.scheduler.compactor.mode == "on"
+    assert engine.scheduler.compactor.on_move == engine._move_row
+
+
+def test_a_capture_can_be_launched_without_the_persistent_batch():
+    """The control the benchmark needs, and the configuration Day 57 measured. Not
+    refused the way `capture_decode` refuses its two halves, because this one is a
+    coverage setting rather than a correctness one: the rows a graph cannot address
+    run the forward and answer correctly."""
+    engine, _ = _graphed(compact_rows=False)
+    assert engine.decode_graphs.mode == "capture"
+    assert engine.scheduler.compactor.mode == "off"
 
 
 def test_bucket_decode_reaches_the_cache_as_a_shape_set():

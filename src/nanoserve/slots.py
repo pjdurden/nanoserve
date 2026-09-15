@@ -176,6 +176,13 @@ class SlotTable:
         self.windows = 0
         self.gathers = 0
         self.moves = 0
+        # Day 58. Rows carried into a hole to keep the running set a prefix, and what
+        # those copies cost. Separate from `resynced_cells` on purpose: a resync
+        # rebuilds a row from its block table because the mirror fell behind, and this
+        # copies a row that was already correct to a different address. They are the
+        # same number of cells and different mornings.
+        self.row_moves = 0
+        self.row_moved_cells = 0
         # Day 52. Reads that were widened past the rows the caller asked for, and
         # the cells that cost. Padding a batch up to a row bucket is what keeps the
         # forward's shape constant; these two say how often and how much.
@@ -355,6 +362,42 @@ class SlotTable:
 
     def reset_all(self) -> None:
         self._lengths = [0] * self.max_batch_size
+
+    def move_row(self, src: int, dst: int) -> None:
+        """Carry a row's addressing into an empty row. Day 58's persistent batch.
+
+        One device row copy of `length(src)` cells, inside the buffer rather than out
+        of it: the storage is the same storage and the address does not change, which
+        is the property every recorded window depends on and `warmup.check_table_stable`
+        watches. Nothing is cleared behind it, for the same reason `reset` clears
+        nothing: what is past a row's length is padding, and the next tenant
+        overwrites from column 0.
+
+        `dst` must be empty, and the refusal is not defensive tidiness. A compaction
+        moves a stray into a *hole*, so a destination that still holds tokens means
+        the plan was built against a different occupancy than the table has, and
+        going ahead would overwrite a live request's addressing with another's:
+        Day 57's bug again, arriving by the other door.
+        """
+        src, dst = self._row(src), self._row(dst)
+        if src == dst:
+            raise ValueError(
+                f"row {src} cannot move to the same row: a move copies into a row "
+                "nobody is holding, and this one is held by the row being moved"
+            )
+        if self._lengths[dst]:
+            raise ValueError(
+                f"row {dst} still holds {self._lengths[dst]} token(s), so it is not a "
+                f"hole: moving row {src} onto it would overwrite a live request's "
+                "addressing, which is exactly the misread this move exists to prevent"
+            )
+        n = self._lengths[src]
+        if n:
+            self.slots[dst, :n] = self.slots[src, :n]
+        self._lengths[dst] = n
+        self._lengths[src] = 0
+        self.row_moves += 1
+        self.row_moved_cells += n
 
     # --- reading --------------------------------------------------------------
 

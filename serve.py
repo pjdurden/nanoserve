@@ -29,6 +29,15 @@ it is made against a second probe: what the card has left *after* the KV pool. T
 list is `row buckets x width buckets`, so it can outgrow what one process will hold,
 and when it does the width is what gives. `--warm-rows` and `--warm-width` are how
 you trim it on purpose instead of letting the graph limit do it for you.
+
+Day 58 adds the persistent batch, and `--cuda-graphs` turns it on because without it
+the recording covers about a quarter of what it was made for. A graph reads the
+window `slots[:rows]`, so it can only replay a step whose rows are `(0, 1, ... n-1)`,
+and that stops being true the moment one request in a batch finishes before its
+neighbour. Compaction moves the survivor down into the hole instead of leaving it
+where it was, which costs one row of addressing per completion and nothing of the
+K/V. `--no-persistent-batch` separates the two again, for measuring one without the
+other.
 """
 
 import argparse
@@ -82,6 +91,18 @@ def main() -> None:
         help="bucket the decode shape, hold its inputs still, and record a graph per shape",
     )
     p.add_argument(
+        "--persistent-batch",
+        action="store_true",
+        default=None,
+        help="keep the running rows compacted (default: on with --cuda-graphs)",
+    )
+    p.add_argument(
+        "--no-persistent-batch",
+        dest="persistent_batch",
+        action="store_false",
+        help="leave a survivor in whatever row it was in, the Day-57 behaviour",
+    )
+    p.add_argument(
         "--no-warm",
         action="store_true",
         help="record the graphs lazily, mid-run, instead of at startup",
@@ -121,6 +142,14 @@ def main() -> None:
         bucket_decode=args.cuda_graphs,
         persist_inputs=args.cuda_graphs,
         capture_decode=args.cuda_graphs,
+        # Day 58, and the tri-state is the honest shape of the question. Unset, the
+        # persistent batch follows the capture, because a capture without it replays
+        # a quarter of the loop and that is not what an operator asking for CUDA
+        # graphs means. Set either way, it is held on its own: compaction is a
+        # scheduler property, it is correct with the graphs off, and separating the
+        # two is how a benchmark attributes a number to one of them.
+        compact_rows=args.cuda_graphs if args.persistent_batch is None
+        else args.persistent_batch,
         warm=not args.no_warm,
         warm_rows=args.warm_rows,
         warm_width=args.warm_width,

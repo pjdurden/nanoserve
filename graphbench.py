@@ -28,13 +28,18 @@ un-optimised: Day 49's compile already collapses some of the launches a graph wo
 have saved, so this is a three-way question measured two ways at a time, and
 `--no-compile` is the third arm if you want to separate them.
 
-**And expect a share of the steps to not be replaying at all.** Day 57 found that a
-recorded read is a window from cache row zero, so a step whose scheduler rows are not
-`(0, 1, ... n-1)` cannot replay any graph in the list and runs the forward instead.
-That happens the moment one request in a batch finishes before its neighbour, which
-is most of the time on a real workload. `replay_share` in the table is the fraction
-of decode steps the capture actually covered, and it is the number that says how much
-of the graphed arm's speedup was even available.
+**`replay_share` is the column to read first, and Day 58 is what moved it.** Day 57
+found that a recorded read is a window from cache row zero, so a step whose scheduler
+rows are not `(0, 1, ... n-1)` cannot replay any graph in the list and runs the
+forward instead. That happens the moment one request in a batch finishes before its
+neighbour, which is most of the time on a real workload, and it left four generation
+lengths over eight slots replaying 26% of their decode steps. The persistent batch
+moves the survivor down into the hole instead of leaving it where it was, and the
+column goes to 100%. `--no-compact` is the control: same two arms, same list, the
+Day-57 coverage.
+
+    cd ~/nanoserve && .venv/bin/python graphbench.py --coverage \
+        --csv docs/daily/data/day-58-graphbench.csv
 
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
@@ -82,7 +87,7 @@ COVERAGE_BLOCK = 16
 COVERAGE_LEN = 512
 
 
-def _toy_engine(slots: int):
+def _toy_engine(slots: int, compact: bool = False):
     """A graphed, warmed engine over a two-layer random model. No weights, no device."""
     from nanoserve.captured import eager_recorder
     from nanoserve.config import ModelConfig
@@ -112,12 +117,15 @@ def _toy_engine(slots: int):
         persist_inputs=True,
         capture_decode=True,
         capture_recorder=eager_recorder,
+        compact_rows=compact,
     )
     engine.warm_decode()
     return engine
 
 
-def coverage_row(*, slots: int, requests: int, lengths: tuple[int, ...]) -> dict:
+def coverage_row(
+    *, slots: int, requests: int, lengths: tuple[int, ...], compact: bool = False
+) -> dict:
     """How much of one workload's decode the capture could replay at all.
 
     The question Day 57 has to answer before any speedup is worth quoting, and it
@@ -126,11 +134,16 @@ def coverage_row(*, slots: int, requests: int, lengths: tuple[int, ...]) -> dict
     what the kernels do. `lengths` is the generation budget, cycled over the
     requests, so `(16,)` is a batch that finishes together and `(4, 64)` is one where
     every short request leaves a hole in the middle of the row space.
+
+    `compact` is Day 58's persistent batch, and it is the only thing that differs
+    between the two halves of the table below. Nothing about the capture list, the
+    bucket set or the pool changes: the same eight workloads are run against a
+    scheduler that fills holes and one that does not.
     """
     from nanoserve.captured import CaptureStats
     from nanoserve.scheduler import Request
 
-    engine = _toy_engine(slots)
+    engine = _toy_engine(slots, compact=compact)
     graphs = engine.decode_graphs
     # The day's own instrument, used on the day's own benchmark: the counters are
     # cumulative and the warm-up is already in them, so the run is a window.
@@ -142,7 +155,9 @@ def coverage_row(*, slots: int, requests: int, lengths: tuple[int, ...]) -> dict
     while engine.has_unfinished():
         engine.step()
     served = CaptureStats.of(graphs).since(before)
+    table = engine.cache.slot_table
     return {
+        "compact": compact,
         "slots": slots,
         "requests": requests,
         "lengths": "/".join(str(x) for x in lengths),
@@ -152,11 +167,22 @@ def coverage_row(*, slots: int, requests: int, lengths: tuple[int, ...]) -> dict
         "replay_share": round(served.replay_share, 4),
         "graphs_held": graphs.count,
         "recorded_while_serving": served.captures,
+        # Day 58's price, in the currency it is actually paid in. `row_moves` is one
+        # per completion that left a hole; `row_moved_cells` is the int64 of
+        # addressing those copies carried, and the K/V they address did not move.
+        "row_moves": table.row_moves,
+        "moved_cells": table.row_moved_cells,
     }
 
 
 def run_coverage(args) -> list[dict]:
-    """The table: what share of a real decode loop this engine's capture can cover."""
+    """The table: what share of a real decode loop this engine's capture can cover.
+
+    Both schedulers, same eight workloads, so the two shares sit next to each other
+    and the only thing between them is whether the running rows were compacted. The
+    last two columns are what the second half paid for its 100%: one row move per
+    completion that left a hole, and the int64 of addressing those moves copied.
+    """
     plans = [
         (4, 8, (16,)),
         (4, 8, (8, 16)),
@@ -167,22 +193,26 @@ def run_coverage(args) -> list[dict]:
         (8, 16, (4, 8, 16, 32)),
         (16, 32, (4, 32)),
     ]
+    modes = [False] if args.no_compact else [False, True]
     rows = [
-        coverage_row(slots=slots, requests=requests, lengths=lengths)
+        coverage_row(slots=slots, requests=requests, lengths=lengths, compact=compact)
+        for compact in modes
         for slots, requests, lengths in plans
     ]
     header = (
-        f"{'slots':>6} {'requests':>9} {'gen lengths':>14} {'decode steps':>13} "
-        f"{'replayed':>9} {'scattered':>10} {'share':>7}"
+        f"{'batch':>10} {'slots':>6} {'requests':>9} {'gen lengths':>14} "
+        f"{'decode steps':>13} {'replayed':>9} {'scattered':>10} {'share':>7} "
+        f"{'moves':>6} {'cells':>7}"
     )
     print("what share of a decode loop can replay at all, by workload shape:")
     print(header)
     print("-" * len(header))
     for r in rows:
+        label = "persistent" if r["compact"] else "free rows"
         print(
-            f"{r['slots']:>6} {r['requests']:>9} {r['lengths']:>14} "
+            f"{label:>10} {r['slots']:>6} {r['requests']:>9} {r['lengths']:>14} "
             f"{r['decode_calls']:>13} {r['replayed']:>9} {r['scattered']:>10} "
-            f"{r['replay_share']:>6.0%}"
+            f"{r['replay_share']:>6.0%} {r['row_moves']:>6} {r['moved_cells']:>7}"
         )
     return rows
 
@@ -203,9 +233,10 @@ def schedule_for(kind: str, n: int, *, rate: float | None, seed: int) -> list[fl
 def build_one(args, *, graphs: bool):
     """One arm's app: the same launcher call with the week's three flags on or off.
 
-    Both arms get the same pool, the same served context and the same compile
-    setting. The only difference between the two processes is the capture, which is
-    what makes the difference between the two reports attributable to it.
+    Both arms get the same pool, the same served context, the same compile setting
+    and the same scheduler. The only difference between the two processes is the
+    capture, which is what makes the difference between the two reports attributable
+    to it.
     """
     from nanoserve.launch import build_app
 
@@ -221,7 +252,12 @@ def build_one(args, *, graphs: bool):
         compile_decode=None if args.no_compile else args.compile,
         bucket_decode=graphs,
         persist_inputs=graphs,
-        capture_decode=graphs,
+        # Day 58, and it goes to *both* arms on purpose. A persistent batch is a
+        # scheduler property, not a capture one: giving it only to the graphed arm
+        # would make the difference between the two reports attributable to two
+        # changes at once, and the eager arm pays the same row copy per completion
+        # for none of the benefit.
+        compact_rows=not args.no_compact,
         warm=not args.no_warm,
         warm_rows=args.warm_rows,
         warm_width=args.warm_width,
@@ -307,6 +343,11 @@ def main() -> None:
     target.add_argument("--no-warm", action="store_true", help="record lazily, the control")
     target.add_argument("--warm-rows", type=int, default=None)
     target.add_argument("--warm-width", type=int, default=None)
+    target.add_argument(
+        "--no-compact",
+        action="store_true",
+        help="leave the running rows where the scheduler put them, the Day-57 engine",
+    )
     target.add_argument(
         "--allow-cpu",
         action="store_true",

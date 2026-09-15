@@ -702,6 +702,43 @@ class BatchedPagedKVCache:
         self.slot_table.reset(index)
         return self.tables[index].detach()
 
+    def move_row(self, src: int, dst: int) -> None:
+        """Move a row's whole tenancy into an empty row. Day 58's persistent batch.
+
+        The physical half of a compaction, and what makes it affordable is what it
+        does *not* do: the K/V stays exactly where it is. A block id is a name for a
+        place in the pool, so what changes hands is the `BlockTable` holding those
+        names (a host object, moved by reference) and the slot table's row of
+        addressing (one device row copy of that row's own length). Nothing in the
+        pool is read, nothing is written, and no token is computed twice.
+
+        The tables are *swapped* rather than assigned, which is how `src` comes back
+        as a row nobody is holding: the empty table that was sitting in the
+        destination lands in the source, so the invariant that every row index has a
+        `BlockTable` survives a move that only one row was involved in.
+
+        Called from the scheduler's compaction, which runs between steps. That is the
+        only safe window and it is not a preference: the row this writes is storage a
+        captured graph holds the address of, and a copy into it while a replay is in
+        flight is a read of half-moved addressing. See `nanoserve.compact`.
+        """
+        (src,), (dst,) = self._rows([src]), self._rows([dst])
+        if src == dst:
+            raise ValueError(f"row {src} cannot move to itself")
+        if self.tables[dst].num_tokens:
+            raise ValueError(
+                f"row {dst} still holds {self.tables[dst].num_tokens} token(s), so it "
+                f"is not a hole: moving row {src} onto it would hand the destination's "
+                "request a stranger's blocks"
+            )
+        self.tables[src], self.tables[dst] = self.tables[dst], self.tables[src]
+        self.slot_table.move_row(src, dst)
+        # The read rectangle was built for a row set that no longer means what it
+        # meant. Day 51's mirror is moved above; this is the Day-50 cache of the
+        # gathered mapping, and it has to be rebuilt rather than reindexed.
+        self._mapping = None
+        self._mapping_rows = None
+
     @property
     def cached_tokens(self) -> int:
         """Total real tokens held across every row, i.e. slots actually in use."""

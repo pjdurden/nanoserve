@@ -11,6 +11,14 @@ This is the week's claim asked the other way round: two servers, the same weight
 the same requests, one launched with the graphs and one without, and what falls out
 is a comparison rather than an assertion.
 
+Day 58 closes the one claim this file was written to fail. `check_arm_replayed_every_step`
+was an assertion about coverage rather than correctness, and it failed on every crowd:
+a recorded read is a window from cache row zero, so a batch sitting in rows `(1, 2)`
+replayed nothing. With the persistent batch the scheduler never produces one, and the
+arm both arms are compared on is a server whose whole decode loop is replays. Pointed
+at `--no-persistent-batch` this file reports the Day-57 numbers unchanged, which is
+what makes it a measurement of the flag rather than a description of the engine.
+
   1. **A replay answers what an eager forward would.** Byte-identical text per
      client, across two processes, under a crowd. Everything else in the week is an
      optimisation; this is the thing that must not have changed, and the honest place
@@ -461,19 +469,25 @@ def check_arm_replayed(arm: ArmReport, *, min_reuse: float = 0.5) -> None:
 def check_arm_replayed_every_step(arm: ArmReport) -> None:
     """Refuse an arm whose capture sat out part of the loop. Day 57's finding.
 
-    Kept apart from `check_arm_replayed` because the two say different things and
-    only one of them is currently true of this engine. That one is about the capture
-    being *used*: the graphs were recorded once, they are being replayed, and nothing
-    is recording in front of a client. This one is about the capture being used
-    *everywhere*, and it fails on any run where a request finished before its
-    neighbour, because the scheduler leaves the survivor in whatever row it was in
-    and a recorded read is a window from row zero.
+    Kept apart from `check_arm_replayed` because the two say different things. That
+    one is about the capture being *used*: the graphs were recorded once, they are
+    being replayed, and nothing is recording in front of a client. This one is about
+    the capture being used *everywhere*, and what it is really asking about is the
+    scheduler. It failed on any run where a request finished before its neighbour,
+    because the scheduler left the survivor in whatever row it was in and a recorded
+    read is a window from row zero.
+
+    Day 58 is why it passes now. A server launched with the persistent batch moves the
+    survivor down into the hole, so every decode step's rows are `(0, 1, ... n-1)` and
+    every step can replay. Pointed at a server launched `--no-persistent-batch`, this
+    still fails and should: the arm answers correctly (a scattered step runs the same
+    forward an engine with no capture runs) and it is paying for a capture list it can
+    only use on the steps where the rows happened to line up.
 
     A separate function because a failure here is a number to act on and not a bug to
-    fix in a hurry: the steps it names ran the same forward an engine with no capture
-    runs, so the tokens are right and what was lost is the launch overhead the week
-    was spent removing. The share is the argument for a persistent batch, which is
-    what vLLM and SGLang keep for exactly this reason.
+    fix in a hurry, and because it names a different flag than the one it is being run
+    next to. The persistent batch is what vLLM and SGLang keep, for exactly this
+    reason.
     """
     if not arm.graphed:
         raise AcceptanceFailure(

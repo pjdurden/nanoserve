@@ -759,6 +759,10 @@ def _app(**kw):
         persist_inputs=True,
         capture_decode=True,
         capture_recorder=eager_recorder,
+        # Day 58, and on both arms rather than only the graphed one: a persistent
+        # batch is a scheduler property, and the comparison below is only
+        # attributable to the capture while it is the one thing that differs.
+        compact_rows=True,
     )
     defaults.update(kw)
     return build_app(**defaults)
@@ -802,9 +806,12 @@ def test_the_week_s_acceptance_run_over_two_sockets():
     bursts against a tiny model. Splitting it into four tests would quadruple that to
     assert four things about the same two arms.
 
-    The coverage claim is asserted as the failure it currently is, with the share in
-    the message. That is not a test written around a bug: it is this engine's number,
-    and a green tick here would say the capture covers a loop it does not cover.
+    The coverage claim was written on Day 57 as the failure it then was, with the
+    share in the message, and Day 58 is what closed it: both arms are launched with
+    the persistent batch, so the graphed arm's rows are `(0, 1, ... n-1)` on every
+    decode step and the whole loop replays. `test_a_server_without_the_persistent_batch_replays_part_of_its_loop`
+    below is the control that this assertion is measuring a flag and not describing
+    an engine.
     """
     graphs, eager = _both_arms(_app(), _eager_app())
 
@@ -819,9 +826,40 @@ def test_the_week_s_acceptance_run_over_two_sockets():
     assert graphs.boot["graphs_held"] == graphs.boot["shapes"]
     assert not eager.graphed
 
+    check_arm_replayed_every_step(graphs)
+    assert graphs.served.replay_share == 1.0
+    assert graphs.served.scattered_calls == 0
+
+
+def test_a_server_without_the_persistent_batch_replays_part_of_its_loop():
+    """The control for the claim above, and the reason it is a measurement.
+
+    Same weights, same capture list, same warm-up, `--no-persistent-batch`: the
+    server answers correctly, the capture is used, nothing is recorded in front of a
+    client, and a share of its decode steps still cannot replay anything. That share
+    is Day 57's finding and it is a property of the scheduler, so this is the arm
+    that says `check_arm_replayed_every_step` is asking about a flag rather than
+    describing an engine.
+
+    One arm, because there is nothing to compare: the claim is about one server's own
+    counters, and a second uvicorn would double the cost of the file to assert the
+    same number twice.
+    """
+
+    async def scenario():
+        with live_server(_app(compact_rows=False)) as server:
+            return await run_arm(
+                server.base_url, PLANS, burst_arrivals(len(PLANS)), name="graphs"
+            )
+
+    arm = asyncio.run(asyncio.wait_for(scenario(), 120.0))
+
+    check_arm_was_crowded(arm)
+    check_arm_replayed(arm)
+    check_nothing_recorded_while_serving(arm)
     with pytest.raises(AcceptanceFailure, match="not a prefix"):
-        check_arm_replayed_every_step(graphs)
-    assert 0.0 < graphs.served.replay_share < 1.0
+        check_arm_replayed_every_step(arm)
+    assert 0.0 < arm.served.replay_share < 1.0
 
 
 def test_a_lazily_recorded_server_is_caught_by_the_window_and_not_by_its_tokens():

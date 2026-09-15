@@ -88,6 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .cache import BlockAllocator, KVCacheExhausted
+from .compact import RowCompactor, RowMove
 from .latency import RequestTimeline
 from .sampling import SamplingParams
 
@@ -325,6 +326,12 @@ class SchedulerOutput:
                event that costs the caller latency for somebody else's benefit,
                and because a rising count is the signal that the pool is too small
                for the offered load.
+    moved:     rows this iteration rearranged to keep the running set a prefix of
+               the table. Day 58, and empty on a scheduler built without
+               `compact_rows`. Reported for the same reason `preempted` is: it is
+               work the caller did not ask for, done on somebody else's behalf, and
+               the only place a trace could otherwise notice a request's slot id
+               changing under it.
 
     Frozen, like `PaddedBatch`: a decision about one iteration. The next iteration
     is a new one.
@@ -334,6 +341,7 @@ class SchedulerOutput:
     admitted: tuple[Request, ...] = ()
     finished: tuple[Request, ...] = ()
     preempted: tuple[Request, ...] = ()
+    moved: tuple[RowMove, ...] = ()
     num_waiting: int = 0
 
     @property
@@ -383,6 +391,15 @@ class Scheduler:
                     passes its cache-row reset here so the row is emptied while
                     the scheduler still knows whose it was and before anybody else
                     can be handed it.
+    compact_rows:   Day 58's persistent batch. Keep the running requests in rows
+                    `(0, 1, ... n-1)` by moving a survivor down into the hole a
+                    completion left, instead of leaving it where it was. Off by
+                    default, because every day from 31 to 57 ran without it and is
+                    correct; on, it is what makes a captured decode replayable on
+                    every step rather than on the quarter of them where the rows
+                    happened to line up. The tensor half goes through
+                    `compactor.on_move`, which the engine installs next to
+                    `on_release`. See `nanoserve.compact`.
 
     The engine's loop is three lines and this object is the first of them:
 
@@ -407,6 +424,7 @@ class Scheduler:
         watermark_blocks: int | None = None,
         lookahead: int = 0,
         on_release: Callable[[int], None] | None = None,
+        compact_rows: bool = False,
     ):
         if max_batch_size < 1:
             raise ValueError(f"max_batch_size must be at least 1, got {max_batch_size}")
@@ -456,6 +474,12 @@ class Scheduler:
         # the tests assert that a finished row's slot is the one refilled.
         self._free_slots: list[int] = list(range(max_batch_size))
         heapq.heapify(self._free_slots)
+        # Day 58. The persistent batch, or a switched-off object standing where one
+        # would be. Always constructed, "on" or not, the same way `Engine` always
+        # holds a `CapturedDecode`: `schedule` below reads the same three lines
+        # whether anybody is compacting or not, and the counters exist to be read
+        # either way. `on_move` is installed by the engine, next to `on_release`.
+        self.compactor = RowCompactor(mode="on" if compact_rows else "off")
         self._by_id: dict[str, Request] = {}
         self._arrivals = 0
         # What preemption has cost, in the two currencies it is paid in.
@@ -578,9 +602,10 @@ class Scheduler:
         return self.allocator.blocks_for_length(target) - len(request.block_ids)
 
     def schedule(self) -> SchedulerOutput:
-        """Reap, grow (preempting if the pool is dry), admit, and hand back the batch."""
+        """Reap, grow (preempting if the pool is dry), compact, admit, hand back."""
         finished = self._release_finished()
         preempted = self._grow_running()
+        moved = self._compact()
         admitted = self._admit()
         self.running.sort(key=lambda r: r.slot)
         return SchedulerOutput(
@@ -588,8 +613,40 @@ class Scheduler:
             admitted=tuple(admitted),
             finished=tuple(finished),
             preempted=tuple(preempted),
+            moved=moved,
             num_waiting=self.num_waiting,
         )
+
+    def _compact(self) -> tuple[RowMove, ...]:
+        """Slide the running rows down onto `(0, 1, ... n-1)`. Day 58.
+
+        **Where this sits is the whole safety argument.** After the growth rather
+        than after the reap, because a preemption releases a row halfway through
+        `_grow_running` and those holes need sweeping too. Before admission, because
+        a newcomer put into a hole would still leave the survivor above it out of
+        place: both orders end in a prefix, and only this one avoids paying a move
+        for a row that has just arrived. And inside `schedule` at all, because the
+        row `on_move` copies is storage a captured graph reads on every replay, so
+        the only moment it may be written is one where no step is in flight.
+
+        The two halves are ordered the way `_release_resources` orders its two: the
+        physical move first, through the callback, while the free list still says the
+        destination belongs to nobody; then the request's slot id, which is the only
+        thing anywhere that still points at the old row.
+        """
+        moves = self.compactor.compact([r.slot for r in self.running])
+        if not moves:
+            return ()
+        where = {move.src: move.dst for move in moves}
+        for request in self.running:
+            if request.slot in where:
+                request.slot = where[request.slot]
+        # Rebuilt rather than patched: after a compaction the free rows are exactly
+        # the ones past the running count, and deriving that is shorter than tracking
+        # which of the old holes were filled by which stray.
+        self._free_slots = list(range(len(self.running), self.max_batch_size))
+        heapq.heapify(self._free_slots)
+        return moves
 
     def _release_finished(self) -> list[Request]:
         """Take back the slots and blocks of everything that finished.
