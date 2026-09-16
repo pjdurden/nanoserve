@@ -703,6 +703,49 @@ def workspace_bytes(
     return score_cells(shape, num_heads) * itemsize
 
 
+def streamed_score_cells(shape: DecodeShape, num_heads: int, block: int) -> int:
+    """Entries a *streaming* read holds instead: one tile of scores per program.
+
+    Day 59. `paged_attention_batched_kernel` walks each row's history a `block` of
+    keys at a time and folds every tile into an online softmax, so the widest thing
+    alive at any instant is the tile it is currently scoring. The `context_width`
+    axis leaves the expression entirely and a constant the caller picks takes its
+    place, which is why a kernel's capture list can be over batch sizes only: the
+    width no longer buys a different amount of memory, so there is nothing to bucket.
+
+    `block` here is the score tile, not `block_size`: it is how many keys one program
+    folds per step, and it has nothing to do with how many slots a KV block holds.
+    A tile wider than the context is charged the context, because a row's program
+    never holds keys that do not exist.
+    """
+    if num_heads < 1:
+        raise ValueError(f"a forward has at least one head; got {num_heads}")
+    if block < 1:
+        raise ValueError(f"a tile holds at least one key; got {block}")
+    return shape.rows * num_heads * shape.query_len * min(block, shape.context_width)
+
+
+def streamed_workspace_bytes(
+    shape: DecodeShape, num_heads: int, block: int, itemsize: int = ACTIVATION_ITEMSIZE
+) -> int:
+    """What that tile weighs, the same question `workspace_bytes` asks of the row."""
+    if itemsize < 1:
+        raise ValueError(f"an entry is at least one byte; got {itemsize}")
+    return streamed_score_cells(shape, num_heads, block) * itemsize
+
+
+def workspace_saving(shape: DecodeShape, num_heads: int, block: int) -> float:
+    """How many times the rectangle covers the tile, which is one ratio and not four.
+
+    `rows`, `num_heads` and `query_len` appear identically in both terms and cancel,
+    so this is `context_width / block` and nothing else. The saving is a property of
+    the width axis alone: it does not grow with the batch and it does not shrink on a
+    small model. That is the honest shape of the claim, and it is also why the
+    shape that sets the shared pool (the widest capture) is the shape it helps most.
+    """
+    return score_cells(shape, num_heads) / streamed_score_cells(shape, num_heads, block)
+
+
 def shared_pool_bytes(
     shapes: Sequence[DecodeShape], num_heads: int, itemsize: int = ACTIVATION_ITEMSIZE
 ) -> int:

@@ -68,7 +68,10 @@ from nanoserve.captured import (
     private_pool_bytes,
     score_cells,
     shared_pool_bytes,
+    streamed_score_cells,
+    streamed_workspace_bytes,
     workspace_bytes,
+    workspace_saving,
 )
 from nanoserve.compiled import DecodeShape
 from nanoserve.config import ModelConfig
@@ -588,6 +591,56 @@ def test_workspace_bytes_refuses_nonsense():
         workspace_bytes(shape, 0)
     with pytest.raises(ValueError, match="at least one byte"):
         workspace_bytes(shape, 8, itemsize=0)
+
+
+def test_streamed_score_cells_replaces_the_width_with_a_tile():
+    """Day 59. The streaming read holds one tile of scores per program, not a row."""
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    assert streamed_score_cells(shape, num_heads=8, block=128) == 4 * 8 * 128
+
+
+def test_a_tile_wider_than_the_context_is_charged_the_context():
+    """A short row's program still only ever holds the keys that exist."""
+    shape = DecodeShape(rows=4, context_width=64)
+
+    assert streamed_score_cells(shape, num_heads=8, block=128) == 4 * 8 * 64
+    assert streamed_score_cells(shape, 8, block=128) == score_cells(shape, 8)
+
+
+def test_streamed_workspace_bytes_prices_the_tile():
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    assert streamed_workspace_bytes(shape, 8, block=128) == 4 * 8 * 128 * ACTIVATION_ITEMSIZE
+    assert streamed_workspace_bytes(shape, 8, block=128, itemsize=2) == 4 * 8 * 128 * 2
+
+
+def test_streamed_workspace_bytes_refuses_nonsense():
+    shape = DecodeShape(rows=4, context_width=128)
+    with pytest.raises(ValueError, match="at least one head"):
+        streamed_workspace_bytes(shape, 0, block=32)
+    with pytest.raises(ValueError, match="at least one key"):
+        streamed_workspace_bytes(shape, 8, block=0)
+    with pytest.raises(ValueError, match="at least one byte"):
+        streamed_workspace_bytes(shape, 8, block=32, itemsize=0)
+
+
+def test_the_saving_is_the_width_over_the_tile_and_nothing_else():
+    """Not the batch size, not the head count: they cancel. Only the width axis."""
+    wide = DecodeShape(rows=256, context_width=8192)
+    narrow = DecodeShape(rows=1, context_width=8192)
+
+    assert workspace_saving(wide, 32, block=128) == pytest.approx(64.0)
+    assert workspace_saving(narrow, 1, block=128) == pytest.approx(64.0)
+
+
+def test_the_widest_capture_is_where_the_saving_lives():
+    """The shape that sets the shared pool is the shape the tile helps most."""
+    buckets = DecodeBuckets(256, 8192, width_multiple=2048)
+    widest = max(buckets.shapes, key=lambda s: s.context_width)
+
+    assert workspace_saving(widest, 32, block=128) > 60.0
+    assert streamed_workspace_bytes(widest, 32, block=128) < workspace_bytes(widest, 32)
 
 
 def test_a_shared_pool_is_sized_by_the_largest_shape_and_a_private_one_by_all_of_them():

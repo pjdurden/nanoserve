@@ -25,6 +25,8 @@ then score", so the kernel has a fixed target to match instead of a moving one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 
 from ..layers import repeat_kv
@@ -241,6 +243,269 @@ def paged_attention_batched_reference(
 
     weights = torch.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
     return torch.matmul(weights, v)
+
+
+@dataclass(frozen=True)
+class StreamedWork:
+    """What a streaming batched read walks, against what a rectangle would.
+
+    Day 59. The oracle's cost is a rectangle: every row is gathered and scored out
+    to `max_ctx`, so a batch pays its longest history once per row whether that row
+    has four tokens or four thousand. The kernel's cost is a sum: each row walks
+    `cdiv(len, block)` tiles of its own and stops. This is that pair of numbers,
+    which is the only part of the day's claim that can be checked without a card.
+
+    rows:          sequences in the batch.
+    context_width: the width of the `[rows, max_ctx]` mapping. Usually the longest
+                   history, but under Day 52's bucketing it is the bucket, and the
+                   padding between the two is charged to the rectangle alone.
+    block:         the score tile, how many keys one program folds per step. Not
+                   `block_size`: this has nothing to do with how many slots a KV
+                   block holds, and the two are free to differ.
+    tiles:         tiles actually walked, summed over rows.
+
+    Frozen because it is a measurement, and a measurement that can be edited after
+    the fact is a note.
+    """
+
+    rows: int
+    context_width: int
+    block: int
+    tiles: int
+
+    @property
+    def rectangle_tiles(self) -> int:
+        """The same count for a read that gives every row the widest row's history."""
+        return self.rows * cdiv(self.context_width, self.block)
+
+    @property
+    def wasted_tiles(self) -> int:
+        """Tiles the rectangle walks over padding. The batch's length spread, in tiles."""
+        return self.rectangle_tiles - self.tiles
+
+    @property
+    def ragged_saving(self) -> float:
+        """How many times over the rectangle covers the streamed walk.
+
+        1.0 on a uniform batch, and that is the honest answer rather than a
+        disappointing one: the ragged win *is* the length spread. A batch whose rows
+        are all the same length has nothing to skip, and the streaming read is still
+        worth having there for the memory, which is a different number.
+        """
+        return self.rectangle_tiles / self.tiles
+
+    def render(self) -> str:
+        """One line, for a bench table."""
+        return (
+            f"{self.rows} rows x {self.context_width} wide in {self.block}-key tiles: "
+            f"{self.tiles} walked against {self.rectangle_tiles} rectangle "
+            f"({self.ragged_saving:.2f}x)"
+        )
+
+
+def streamed_work(context_lens, block: int, context_width: int | None = None) -> StreamedWork:
+    """Count the tiles a streamed batched read walks for these context lengths.
+
+    context_lens:  the per-row history lengths, as a tensor (what the planned decode
+                   path holds) or any sequence of ints.
+    block:         the score tile, as in `paged_attention_batched_kernel`.
+    context_width: the mapping's width; defaults to the longest row, which is what
+                   an unbucketed mapping is.
+
+    Pure host arithmetic: it walks no memory and touches no pool, so a bench can ask
+    it about a 256-row batch at an 8192-token width on a laptop.
+    """
+    if block < 1:
+        raise ValueError(f"a tile holds at least one key; got {block}")
+    lens = [int(n) for n in context_lens]
+    if not lens:
+        raise ValueError("a decode batch has at least one row; got no context lengths")
+    if min(lens) < 1:
+        raise ValueError(
+            "context_lens must be at least 1 for every row: a query with no visible "
+            "key softmaxes over nothing, and here it also walks no tiles"
+        )
+    longest = max(lens)
+    width = longest if context_width is None else context_width
+    if longest > width:
+        raise ValueError(
+            f"a row cannot hold more history than the mapping's width: longest "
+            f"{longest} > context_width {width}"
+        )
+    return StreamedWork(
+        rows=len(lens),
+        context_width=width,
+        block=block,
+        tiles=sum(cdiv(n, block) for n in lens),
+    )
+
+
+def paged_attention_batched_kernel(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+    block: int = 32,
+    context_bounds: tuple[int, int] | None = None,
+    validated: bool = False,
+) -> torch.Tensor:
+    """The decode read for a whole batch, streamed: no gather, no score rectangle.
+
+    Day 59, and it is `paged_attention_kernel` one axis wider against
+    `paged_attention_batched_reference` as the oracle. Same inputs, same output to a
+    few ulps, and the two things the oracle builds are both gone:
+
+    * the `[batch, max_ctx, n_kv, d]` gather, which is the contiguous history paging
+      exists to avoid, re-materialised for every row at the longest row's length;
+    * the `[batch, n_q, 1, max_ctx]` score rectangle, which is what Day 54's
+      `workspace_bytes` prices, 268 MB at 256 rows and an 8192-token width, and the
+      single largest live tensor a captured decode region holds.
+
+    q, k_pool, v_pool, slot_mapping, context_lens, n_rep, scale, context_bounds,
+    validated: exactly as in `paged_attention_batched_reference`, including the
+    refusals, because a kernel that accepts inputs its oracle rejects is a kernel
+    that cannot be compared to it.
+    block: how many keys one program folds per step. A pure performance knob (the
+           SRAM tile on hardware); any value returns the same attention, and the
+           tests parametrise over that. It is *not* `block_size`: this is a tile of
+           the score, not a tile of the pool, and the two are unrelated.
+
+    Returns [batch, n_q, 1, d], the attention output before o_proj.
+
+    **The grid is `(row, query head)`, which is the grid vLLM's paged kernel
+    launches, and the reason is the accumulator.** One program keeps a running max,
+    a running denominator and one `d`-wide weighted-V sum. Those are registers, so
+    the unit of work has to be small enough that they fit, and a whole row's heads
+    would be `n_q` times that for no gain: the heads share the slot lookup and
+    nothing else, since each reads its own KV head's channels out of the tile.
+
+    **Each program walks its own row's length and no one else's.** `cdiv(ctx, block)`
+    tiles, where `ctx` is this row's `context_lens` entry. That is the ragged half of
+    the day and `streamed_work` counts it: a four-token row next to a two-thousand
+    token row costs one tile here and two thousand columns of rectangle there.
+
+    **The padding is never loaded, which is a stronger statement than "masked off".**
+    The oracle indexes the pool with the whole rectangle and then kills the result,
+    so its pad entries must be *legal* slots and their contents really are read. A
+    masked `load` neutralises the offset before it indexes, so here the pad may be
+    -1 and the slot it names may hold NaN. Both are tested, because that difference
+    is exactly what it means for the read to be ragged rather than rectangular.
+
+    Still a model and not the fast path: the loop below is tlsim on the CPU, so it is
+    slower than the oracle by a wide margin and always will be. What it pins is the
+    arithmetic and the access pattern, so the Triton version has a fixed target.
+    """
+    if q.ndim != 4:
+        raise ValueError(f"q must be [batch, n_q, 1, d]; got {tuple(q.shape)}")
+    if q.shape[2] != 1:
+        raise ValueError(
+            f"the batched read is the decode read: one new token per row, got "
+            f"seq_q={q.shape[2]}. A ragged prefill goes through the dense masked path"
+        )
+    if k_pool.ndim != 3 or k_pool.shape != v_pool.shape:
+        raise ValueError(
+            "k_pool and v_pool must have the same shape [num_slots, n_kv, d]; got "
+            f"{tuple(k_pool.shape)} and {tuple(v_pool.shape)}"
+        )
+    if slot_mapping.ndim != 2:
+        raise ValueError(
+            f"slot_mapping must be [batch, max_ctx]; got {tuple(slot_mapping.shape)}"
+        )
+    batch, n_q, _, d = q.shape
+    max_ctx = slot_mapping.shape[1]
+    if slot_mapping.shape[0] != batch or context_lens.shape != (batch,):
+        raise ValueError(
+            f"slot_mapping and context_lens must have one row each per sequence "
+            f"(batch={batch}); got {tuple(slot_mapping.shape)} and "
+            f"{tuple(context_lens.shape)}"
+        )
+    if block < 1:
+        raise ValueError(f"a tile holds at least one key; got {block}")
+    if validated and context_bounds is not None:
+        raise ValueError(
+            "a read is either validated by its caller or handed bounds to validate "
+            "with, not both: validated=True says the check already happened, and "
+            "context_bounds says do it here with these two numbers"
+        )
+    if not validated:
+        shortest, longest = (
+            context_bounds
+            if context_bounds is not None
+            else (int(context_lens.min()), int(context_lens.max()))
+        )
+        if shortest < 1:
+            raise ValueError(
+                "context_lens must be at least 1 for every row: a query with no visible "
+                "key softmaxes over nothing (0/0). A decode query always has its own token"
+            )
+        if longest > max_ctx:
+            raise ValueError(
+                f"context_lens claims more history than the mapping holds: max "
+                f"{longest} > max_ctx {max_ctx}"
+            )
+    if scale is None:
+        scale = d**-0.5
+
+    num_slots, n_kv, _ = k_pool.shape
+    channels = n_kv * d
+
+    # Flatten everything to the 1-D buffers tlsim addresses. A token's K/V is
+    # `channels` contiguous elements at `slot * channels`; row i's mapping is the
+    # `max_ctx` entries at `i * max_ctx`.
+    slots = slot_mapping.to(torch.long).reshape(batch * max_ctx)
+    lens = context_lens.to(torch.long)
+    k_flat = k_pool.reshape(num_slots * channels)
+    v_flat = v_pool.reshape(num_slots * channels)
+    q_rows = q[:, :, 0, :].to(torch.float32)  # [batch, n_q, d], one query per row and head
+    head_kv = arange(0, n_q) // n_rep  # query head -> its KV head (GQA)
+    chan = arange(0, d)  # the channel ramp inside one head of one token
+    out_flat = torch.zeros(batch * n_q * d, dtype=q.dtype)
+
+    def kernel(prog, s_buf, len_buf, k_buf, v_buf, dst) -> None:
+        # This program owns one row's one query head.
+        i = prog.program_id(0)
+        h = prog.program_id(1)
+        # The row's own length, read as a scalar: a real kernel loads this from the
+        # context_lens pointer and uses it as a dynamic loop bound, which is the
+        # whole reason the walk is ragged instead of rectangular.
+        ctx = int(load(len_buf, arange(i, i + 1))[0])
+        qi = q_rows[i, h]  # [d]
+        # This query head's slice of a token's channels, the GQA read: several query
+        # heads land on the same KV head and each takes the same `d` columns.
+        head_cols = int(head_kv[h]) * d + chan  # [d]
+        base = i * max_ctx  # where this row's mapping starts in the flat buffer
+        # Online-softmax state: running max, denominator, weighted-V sum. These are
+        # the registers a flash kernel keeps, and none of them has max_ctx in it.
+        m = torch.tensor(float("-inf"))
+        denom = torch.zeros(())
+        acc = torch.zeros(d)
+        for b in range(cdiv(ctx, block)):
+            pos = b * block + arange(0, block)  # positions in *this row's* history
+            valid = pos < ctx  # guards the ragged last tile
+            # Each key's physical slot, then the block pointer into the pool. Masked
+            # lanes never index either buffer, so the padding past `ctx` is not read.
+            row_slots = load(s_buf, base + pos, mask=valid, other=0)  # [block]
+            ptr = row_slots[:, None] * channels + head_cols[None, :]  # [block, d]
+            k_tile = load(k_buf, ptr, mask=valid[:, None], other=0.0).to(torch.float32)
+            v_tile = load(v_buf, ptr, mask=valid[:, None], other=0.0).to(torch.float32)
+            s = scale * (k_tile * qi[None, :]).sum(dim=1)  # [block] this tile's scores
+            # Masked-off keys score -inf so their weight is exactly zero: a masked
+            # load returned zeros, which would otherwise score a spurious 0, not -inf.
+            s = torch.where(valid, s, torch.full_like(s, float("-inf")))
+            # Fold the tile in: rescale the running state to the new max, then add.
+            m_new = torch.maximum(m, s.max())
+            alpha = torch.exp(m - m_new)
+            p = torch.exp(s - m_new)  # [block] unnormalised tile weights
+            denom = denom * alpha + p.sum()
+            acc = acc * alpha + (p[:, None] * v_tile).sum(dim=0)
+            m = m_new
+        store(dst, (i * n_q + h) * d + chan, (acc / denom).to(q.dtype))
+
+    launch((batch, n_q), kernel, slots, lens, k_flat, v_flat, out_flat)
+    return out_flat.reshape(batch, n_q, 1, d)
 
 
 def paged_attention_kernel(

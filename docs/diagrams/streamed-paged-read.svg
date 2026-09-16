@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The rectangle and the tile: the batched decode read, streamed</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Every decode step in this engine, replayed or not, ends in the same read. The oracle gathers the whole [rows, max_ctx] mapping</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">and scores it into a [rows, heads, 1, ctx] rectangle before it masks. That intermediate is the largest live tensor a captured</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">decode region holds, it is what the shared graph pool is sized by, and it is the reason the capture list buckets the width at all.</text>
+
+  <!-- ===================== LEFT TOP: the rectangle ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">The oracle: gather the rectangle, then mask it</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+
+  <text x="72" y="184" font-size="10.5" font-weight="700" fill="#334155">two rows, one shared pool, max_ctx = 2048</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="72" y="192" width="20" height="24" rx="3" fill="#c7d2fe" stroke="#a5b4fc" stroke-width="0.8"/>
+    <rect x="94" y="192" width="208" height="24" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8" stroke-dasharray="3 2"/>
+    <text x="100" y="208" fill="#b91c1c">padding: read, scored, then killed</text>
+    <text x="310" y="208" fill="#475569">row 0: 4 real</text>
+
+    <rect x="72" y="222" width="230" height="24" rx="3" fill="#c7d2fe" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="310" y="238" fill="#475569">row 1: 2048 real</text>
+  </g>
+  <text x="72" y="268" font-size="10.5" fill="#64748b">The mapping is a rectangle, so the short row is given the long row's width</text>
+  <text x="72" y="283" font-size="10.5" fill="#64748b">in K/V gathered and in scores computed. Its padding must be a legal slot:</text>
+  <text x="72" y="298" font-size="10.5" fill="#64748b">the gather really indexes it, and a -1 would wrap onto the end of the pool.</text>
+
+  <line x1="72" y1="312" x2="558" y2="312" stroke="#fecaca" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="332" fill="#b91c1c">scores = q @ k.T          [rows, heads, 1, max_ctx]</text>
+  </g>
+  <text x="72" y="356" font-size="11" font-weight="700" fill="#b91c1c">256 rows, 32 heads, 8192 wide, fp32: 268.4 MB of one intermediate.</text>
+
+  <!-- ===================== RIGHT TOP: the tile ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">The kernel: one program per (row, head), one tile at a time</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">what one program holds, start to finish</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="642" y="192" width="120" height="24" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="650" y="208" fill="#166534">k tile [block, d]</text>
+    <rect x="770" y="192" width="120" height="24" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="778" y="208" fill="#166534">v tile [block, d]</text>
+    <rect x="898" y="192" width="230" height="24" rx="3" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="906" y="208" fill="#3730a3">m, denom, acc[d]: the registers</text>
+  </g>
+  <text x="642" y="240" font-size="10.5" fill="#64748b">The history streams past that state and is never held whole. The running max</text>
+  <text x="642" y="255" font-size="10.5" fill="#64748b">is rescaled per tile, the denominator and the weighted-V sum follow it, and</text>
+  <text x="642" y="270" font-size="10.5" fill="#64748b">what comes out is the same softmax reassociated: equal to a few ulps, not bits.</text>
+  <text x="642" y="293" font-size="10.5" fill="#64748b">Masked lanes never index the pool, so the padding may be -1 and the slot it</text>
+  <text x="642" y="308" font-size="10.5" fill="#64748b">names may hold NaN. Both are tested. That is what a ragged read actually means.</text>
+
+  <line x1="642" y1="322" x2="1128" y2="322" stroke="#bbf7d0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="342" fill="#15803d">scores live in [rows, heads, 1, block]</text>
+  </g>
+  <text x="642" y="366" font-size="11" font-weight="700" fill="#15803d">Same 256 x 32 x 8192 step, 128-key tiles: 4.19 MB. The width axis is gone.</text>
+
+  <!-- ===================== LEFT BOTTOM: the walk ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The other half: each program walks its own row's length</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10.5" fill="#64748b">A batch of eight rows at a 2048 width, one long and seven short:</text>
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <text x="72" y="470" font-weight="700" fill="#334155">rectangle</text>
+    <rect x="150" y="458" width="390" height="16" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="158" y="470" fill="#b91c1c">8 rows x 16 tiles = 128 tiles, every row charged the widest one</text>
+
+    <text x="72" y="500" font-weight="700" fill="#334155">streamed</text>
+    <rect x="150" y="488" width="49" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="158" y="500" fill="#166534">16</text>
+    <rect x="203" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="221" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="239" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="257" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="275" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="293" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <rect x="311" y="488" width="14" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="336" y="500" fill="#166534">30 tiles: 16 long, 2 each short</text>
+  </g>
+  <path d="M 545 466 L 552 466" stroke="#b91c1c" stroke-width="1.4" marker-end="url(#arrowred)"/>
+
+  <text x="72" y="532" font-size="10.5" fill="#64748b">The loop bound is this row's context_lens entry, loaded as a scalar, so the trip</text>
+  <text x="72" y="547" font-size="10.5" fill="#64748b">count is dynamic per program. That is the only reason the walk is ragged.</text>
+  <text x="72" y="570" font-size="10.5" fill="#64748b">On a batch whose rows are all one length the saving is 1.00x, and that is the</text>
+  <text x="72" y="585" font-size="10.5" fill="#64748b">honest report: the ragged win is the length spread and nothing else. The memory</text>
+  <text x="72" y="600" font-size="10.5" fill="#64748b">win is there either way, and it is a different number.</text>
+  <text x="72" y="623" font-size="11" font-weight="700" fill="#15803d">The spread a continuous batch always has is the spread this is paid in.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">streambench.py, host only, 32 heads, 128-key tiles</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">Exact arithmetic, not a timing: the two reads differ in what they materialise, and that is a shape.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="470" font-weight="700" fill="#334155">rows</text>
+    <text x="692" y="470" font-weight="700" fill="#334155">width</text>
+    <text x="752" y="470" font-weight="700" fill="#334155">spread</text>
+    <text x="832" y="470" font-weight="700" fill="#334155">rectangle</text>
+    <text x="918" y="470" font-weight="700" fill="#334155">tile</text>
+    <text x="982" y="470" font-weight="700" fill="#334155">holds</text>
+    <text x="1046" y="470" font-weight="700" fill="#334155">walks</text>
+
+    <text x="642" y="490" fill="#475569">8</text><text x="692" y="490" fill="#475569">2048</text>
+    <text x="752" y="490" fill="#475569">uniform</text>
+    <text x="832" y="490" fill="#b91c1c">2.1 MB</text><text x="918" y="490" fill="#15803d">0.13 MB</text>
+    <text x="982" y="490" fill="#15803d">16x</text><text x="1046" y="490" fill="#475569">1.00x</text>
+
+    <text x="642" y="508" fill="#475569">8</text><text x="692" y="508" fill="#475569">2048</text>
+    <text x="752" y="508" fill="#475569">4x</text>
+    <text x="832" y="508" fill="#b91c1c">2.1 MB</text><text x="918" y="508" fill="#15803d">0.13 MB</text>
+    <text x="982" y="508" fill="#15803d">16x</text><text x="1046" y="508" fill="#15803d">2.13x</text>
+
+    <text x="642" y="526" fill="#475569">32</text><text x="692" y="526" fill="#475569">8192</text>
+    <text x="752" y="526" fill="#475569">4x</text>
+    <text x="832" y="526" fill="#b91c1c">33.6 MB</text><text x="918" y="526" fill="#15803d">0.52 MB</text>
+    <text x="982" y="526" fill="#15803d">64x</text><text x="1046" y="526" fill="#15803d">2.13x</text>
+
+    <text x="642" y="544" fill="#475569">256</text><text x="692" y="544" fill="#475569">2048</text>
+    <text x="752" y="544" fill="#475569">long tail</text>
+    <text x="832" y="544" fill="#b91c1c">67.1 MB</text><text x="918" y="544" fill="#15803d">4.19 MB</text>
+    <text x="982" y="544" fill="#15803d">16x</text><text x="1046" y="544" fill="#15803d">4.27x</text>
+
+    <text x="642" y="562" fill="#475569">256</text><text x="692" y="562" fill="#475569">8192</text>
+    <text x="752" y="562" fill="#475569">uniform</text>
+    <text x="832" y="562" fill="#b91c1c">268.4 MB</text><text x="918" y="562" fill="#15803d">4.19 MB</text>
+    <text x="982" y="562" fill="#15803d">64x</text><text x="1046" y="562" fill="#475569">1.00x</text>
+
+    <text x="642" y="580" fill="#475569">256</text><text x="692" y="580" fill="#475569">8192</text>
+    <text x="752" y="580" fill="#475569">long tail</text>
+    <text x="832" y="580" fill="#b91c1c">268.4 MB</text><text x="918" y="580" fill="#15803d">4.19 MB</text>
+    <text x="982" y="580" fill="#15803d">64x</text><text x="1046" y="580" fill="#15803d">4.27x</text>
+  </g>
+  <line x1="642" y1="594" x2="1128" y2="594" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="612" font-size="10.5" fill="#64748b">The memory ratio is context_width / block exactly: rows and heads cancel.</text>
+  <text x="642" y="627" font-size="10.5" font-weight="700" fill="#15803d">Worst |kernel - oracle| over the agreement cases: 2.4e-07.</text>
+</svg>
