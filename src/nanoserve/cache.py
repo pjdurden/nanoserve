@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import torch
 
-from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
 from .plan import DecodePlan
+from .reads import DEFAULT_BLOCK, PagedRead
 from .buckets import DecodeBuckets
 from .inputs import DecodeInputs
 from .slots import SlotTable
@@ -555,10 +555,13 @@ class BatchedPagedKVCache:
     existed to hide pad tokens that were sitting in the K/V, and per-sequence tables
     mean there are none to hide. The mask became `context_lens`.
 
-    The read is `paged_attention_batched_reference` for now, the same way Week 6
-    started from a plain-torch reference before Day 22's tlsim model and Day 23's
-    `triton.jit` kernel. Lowering the batched read is the next step; the reference is
-    the oracle it will be graded against.
+    Since Day 60 the read is a choice this cache holds rather than a function it
+    names. `streamed_read=False` is the Day-28 rectangle, which is still the default
+    and still the oracle; `streamed_read=True` is Day 59's streamed kernel, which
+    gathers nothing and never builds the `[rows, heads, 1, ctx]` score tensor. Same
+    attention to a few ulps, and an order of magnitude slower per call while the loop
+    is tlsim in Python, which is exactly why it is a flag and not a replacement. See
+    `nanoserve.reads`.
     """
 
     def __init__(
@@ -569,6 +572,8 @@ class BatchedPagedKVCache:
         max_model_len: int | None = None,
         bucket_decode: bool = False,
         persist_inputs: bool = False,
+        streamed_read: bool = False,
+        read_block: int = DEFAULT_BLOCK,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -618,6 +623,14 @@ class BatchedPagedKVCache:
         # shape in a bucket set, because a buffer is indexed by batch position and
         # every shape's window is a prefix of it. See `nanoserve.inputs`.
         self.decode_inputs = DecodeInputs(batch_size) if persist_inputs else None
+        # Day 60. Which read a decode step runs, and the tally of what it held. An
+        # object rather than a function because nothing downstream of the read can
+        # tell which one ran: same tokens, same latency shape, same everything a
+        # client sees, so the counters are the wiring's only witness. The default is
+        # the Day-28 rectangle and stays the default until the streamed loop is
+        # Triton. See `nanoserve.reads`.
+        self.read = PagedRead(mode="streamed" if streamed_read else "rectangle",
+                              block=read_block)
 
     @property
     def sink_slot(self) -> int:
@@ -1187,7 +1200,7 @@ class BatchedPagedKVCache:
             # in it. See `nanoserve.warmup`.
             rows = plan.rows if not rows else self._rows(rows)
             self.write(layer, k, v, rows=rows, plan=plan)
-            return paged_attention_batched_reference(
+            return self.read(
                 q,
                 self.k_pool[layer],
                 self.v_pool[layer],
@@ -1200,7 +1213,7 @@ class BatchedPagedKVCache:
         rows = self._rows(rows)
         self.write(layer, k, v, rows=rows)
         slot_mapping, context_lens = self.slot_mapping(q.device, rows=rows)
-        return paged_attention_batched_reference(
+        return self.read(
             q,
             self.k_pool[layer],
             self.v_pool[layer],

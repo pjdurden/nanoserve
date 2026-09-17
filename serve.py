@@ -38,6 +38,16 @@ neighbour. Compaction moves the survivor down into the hole instead of leaving i
 where it was, which costs one row of addressing per completion and nothing of the
 K/V. `--no-persistent-batch` separates the two again, for measuring one without the
 other.
+
+Day 60 adds `--streamed-read`, and it is the first flag here that changes what the
+forward computes. The decode read stops gathering the batch's history and stops
+scoring it into a `[rows, heads, 1, ctx]` rectangle, and walks each row's own context
+a tile of keys at a time instead: same attention to a few ulps, and the widest thing
+alive is a tile rather than a row, which at serving shapes is the difference between
+268 MB and 4 MB of one intermediate. It is off by default and should stay off on this
+build, because the loop is a tlsim model in Python and about an order of magnitude
+slower per call than the torch path it replaces. Nothing bundles it: an operator
+asking for CUDA graphs is not asking to trade wall clock for memory.
 """
 
 import argparse
@@ -103,6 +113,17 @@ def main() -> None:
         help="leave a survivor in whatever row it was in, the Day-57 behaviour",
     )
     p.add_argument(
+        "--streamed-read",
+        action="store_true",
+        help="walk each row's context a tile at a time instead of scoring a rectangle",
+    )
+    p.add_argument(
+        "--read-block",
+        type=int,
+        default=32,
+        help="keys per score tile for --streamed-read (not --block-size)",
+    )
+    p.add_argument(
         "--no-warm",
         action="store_true",
         help="record the graphs lazily, mid-run, instead of at startup",
@@ -150,6 +171,13 @@ def main() -> None:
         # two is how a benchmark attributes a number to one of them.
         compact_rows=args.cuda_graphs if args.persistent_batch is None
         else args.persistent_batch,
+        # Day 60, and bundled by nothing. The other four flags are about how a step
+        # is shaped, scheduled and launched, and switching them on together is what
+        # an operator asking for CUDA graphs means. This one changes the arithmetic
+        # inside the step and is slower here, so inheriting it from another flag
+        # would be trading somebody's latency for memory without saying so.
+        streamed_read=args.streamed_read,
+        read_block=args.read_block,
         warm=not args.no_warm,
         warm_rows=args.warm_rows,
         warm_width=args.warm_width,
@@ -159,6 +187,10 @@ def main() -> None:
     # and with graphs on there are two such divisions made at two different moments.
     for line in boot_lines(app.state.plan, app.state.capture, app.state.warmup):
         print(line, file=sys.stderr, flush=True)
+    # Printed from the cache and not from `args`, because the question a boot line
+    # answers is "what did this process end up on", and a flag that failed to reach
+    # the cache would echo itself back happily.
+    print(app.state.engine.cache.read.render(), file=sys.stderr, flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

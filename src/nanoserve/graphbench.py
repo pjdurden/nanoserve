@@ -65,7 +65,7 @@ nothing in the engine imports it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -78,6 +78,7 @@ from .captured import (
     check_no_scattered_rows,
     check_replays_dominate,
 )
+from .reads import ReadStats, ReadUnwitnessed
 from .servebench import LoadReport, MeasurementUnsound, run_open_loop
 
 #: What a p99 needs before it is a percentile rather than a worst-of. Day 42's note
@@ -118,6 +119,28 @@ def capture_from_health(payload: dict) -> CaptureStats:
             "request, and a server falling through to eager publishes it unchanged"
         )
     return CaptureStats.from_dict(runtime)
+
+
+def read_from_health(payload: dict) -> ReadStats:
+    """Lift the decode read's counters out of a `/health` reading. Day 60.
+
+    Two cases and not three, which is the difference between this and
+    `capture_from_health` above. A capture can legitimately be absent, because a
+    server launched without it publishes no section and that is a configuration. A
+    read cannot: every decode step in every nanoserve process runs one, so a payload
+    with no `paged_read` in it is not a server on the default read, it is a harness
+    pointed at something that is not this engine, or a section that did not survive
+    a merge. Defaulting it to the rectangle would let an arm pass a gate about a read
+    it never observed, which is the one failure a benchmark must not have.
+    """
+    section = payload.get("paged_read")
+    if section is None:
+        raise ReadUnwitnessed(
+            "this payload reports no read at all: every decode step runs one and "
+            "every nanoserve process publishes which, so there is nothing here to "
+            "read as a default"
+        )
+    return ReadStats.from_dict(section)
 
 
 def boot_from_health(payload: dict) -> dict:
@@ -211,6 +234,10 @@ class ArmReport:
              cumulative over the process.
     boot:    what the launcher decided, for the report. Fixed for the life of the
              process, which is exactly why it is kept apart from the counters.
+    read_before/read_after: the same two moments, asked about the decode read. Day
+             60, and kept beside the capture's pair rather than folded into it
+             because they are counters of different things: one says how a step was
+             *launched*, the other what the read inside it held.
     """
 
     name: str
@@ -220,11 +247,18 @@ class ArmReport:
     after: CaptureStats
     boot: dict
     peak_running: int = 0
+    read_before: ReadStats = field(default_factory=ReadStats)
+    read_after: ReadStats = field(default_factory=ReadStats)
 
     @property
     def served(self) -> CaptureStats:
         """What the capture did between the two readings: this arm's window."""
         return self.after.since(self.before)
+
+    @property
+    def read(self) -> ReadStats:
+        """What the decode read did between the two readings: this arm's window."""
+        return self.read_after.since(self.read_before)
 
     @property
     def graphed(self) -> bool:
@@ -292,6 +326,8 @@ async def run_arm(
         after=capture_from_health(after_health),
         boot=boot_from_health(before_health),
         peak_running=crowd.peak_running,
+        read_before=read_from_health(before_health),
+        read_after=read_from_health(after_health),
     )
 
 
@@ -523,6 +559,32 @@ def check_nothing_recorded_while_serving(arm: ArmReport) -> None:
             f"the {arm.name} arm recorded {recorded} graph(s) while it was serving: a "
             "capture taken in front of a client is a stall inside somebody's stream, "
             "and the only place it shows up is the tail of the inter-token latency"
+        )
+
+
+def check_arm_read(arm: ArmReport, mode: str) -> None:
+    """Refuse an arm that did not run the read it was launched with. Day 60.
+
+    The wiring's only witness, and it needs to be a gate rather than an assert for
+    the reason Day 57 gave about the capture: a flag that never reached the cache
+    produces a server that answers correctly, streams correctly, frees its pool
+    correctly and differs from the one under test in nothing a client can see. The
+    two claims here are separate on purpose. A window with no reads in it is an arm
+    that served nothing, which is a broken measurement whatever mode it names; a
+    window with the wrong mode is a flag that did not arrive.
+    """
+    window = arm.read
+    if not window.calls:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm issued no decode reads at all between its two "
+            "readings: every decode step runs one, so this window covers a server "
+            "that generated nothing and can say nothing about which read it uses"
+        )
+    if window.mode != mode:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm ran the {window.mode} read, not the {mode} one: the "
+            f"flag did not reach the cache, and nothing else about this server would "
+            f"have said so ({window.render()})"
         )
 
 

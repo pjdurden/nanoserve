@@ -504,6 +504,15 @@ class AsyncEngine:
         graphs = getattr(self.engine, "decode_graphs", None)
         if graphs is not None and graphs.mode != "off":
             stats["cuda_graphs"] = graphs.as_dict()
+        # Day 60. Which decode read this process is on, and what it has held. Always
+        # present, unlike the section above, and the difference is not tidiness: a
+        # capture is optional, so publishing nothing is how a reader tells "switched
+        # off" from "switched on and broken". A read is not optional. Every decode
+        # step runs one, so a missing section here has no configuration it could
+        # legitimately mean, and a harness is better off refusing than defaulting.
+        read = getattr(getattr(self.engine, "cache", None), "read", None)
+        if read is not None:
+            stats["paged_read"] = read.as_dict()
         return stats
 
     def _new_id(self) -> str:

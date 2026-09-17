@@ -82,6 +82,7 @@ import torch
 
 from .captured import DEFAULT_CAPTURE_LIMIT, shared_pool_bytes
 from .compiled import DecodeShape
+from .reads import DEFAULT_BLOCK
 from .config import ModelConfig
 from .engine import Engine
 from .loader import EMBED, Weights, load_weights
@@ -910,6 +911,8 @@ def build_engine(
     persist_inputs: bool = False,
     capture_decode: bool = False,
     compact_rows: bool = False,
+    streamed_read: bool = False,
+    read_block: int = DEFAULT_BLOCK,
     capture_recorder=None,
     load=load_weights,
     read_config=ModelConfig.from_json,
@@ -1008,6 +1011,14 @@ def build_engine(
         # still a scheduler decision an operator can hold separately: `serve.py` is
         # where `--cuda-graphs` turns it on, one layer up. See `nanoserve.compact`.
         compact_rows=compact_rows,
+        # Day 60. The fifth flag and the first that changes the arithmetic. Passed
+        # through unbundled like the rest, and bundled by nothing at all: no other
+        # flag implies it, because the streamed read is slower on this box and a
+        # launcher that switched it on as a side effect of asking for CUDA graphs
+        # would be trading correctness-preserving memory for wall clock without
+        # saying so. See `nanoserve.reads`.
+        streamed_read=streamed_read,
+        read_block=read_block,
         capture_recorder=capture_recorder,
     )
     return engine, plan

@@ -81,6 +81,7 @@ from .loader import EMBED
 from .output import OutputProcessor, TokenBatch
 from .plan import plan_decode
 from .profiler import NULL_RECORDER
+from .reads import DEFAULT_BLOCK
 from .sampling import BatchedSampler, SamplingParams
 from .scheduler import Request, Scheduler, SchedulerOutput
 from .warmup import warm_decode, warm_shapes
@@ -248,6 +249,8 @@ class Engine:
         capture_decode: bool = False,
         capture_recorder=None,
         compact_rows: bool = False,
+        streamed_read: bool = False,
+        read_block: int = DEFAULT_BLOCK,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
 
@@ -290,6 +293,15 @@ class Engine:
         three rather than required by them: the engine is correct either way, and one
         with the capture off pays a row copy per completion for nothing. See
         `nanoserve.compact`.
+
+        `streamed_read` is Day 60 and it is the only one of the five that changes
+        what the forward computes rather than how it is scheduled or recorded. The
+        decode read stops gathering the batch's history and stops scoring it into a
+        `[rows, heads, 1, ctx]` rectangle, and walks each row's own context a tile at
+        a time instead. Same attention to a few ulps and far less held at once, at
+        the price of a Python loop: off by default and staying off until that loop is
+        Triton, because an engine that is correct and ten times slower is not an
+        option an operator should be able to take by accident. See `nanoserve.reads`.
         """
         if capture_decode:
             missing = [
@@ -323,6 +335,8 @@ class Engine:
                 max_model_len=max_model_len,
                 bucket_decode=bucket_decode,
                 persist_inputs=persist_inputs,
+                streamed_read=streamed_read,
+                read_block=read_block,
             ),
             pad_id=pad_id,
             seed=seed,

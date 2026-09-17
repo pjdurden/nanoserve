@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The read becomes a choice, and a counter is the only thing that can see it</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 59 wrote the streamed kernel and nothing called it. Wiring it in is four lines at two call sites, and then a problem: two</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">servers, one with the flag and one without, return the same tokens with the same latency shape and the same everything else a</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">client can observe. A flag that never reached the cache looks exactly like a flag that did. So the process has to publish which.</text>
+
+  <!-- ===================== LEFT TOP: the seam ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">One seam, both arms of paged_attention through it</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="178" width="200" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="82" y="195" fill="#3730a3">planned step (plan.slot_mapping)</text>
+    <rect x="72" y="212" width="200" height="26" rx="4" fill="#eef2ff" stroke="#a5b4fc" stroke-width="0.8"/>
+    <text x="82" y="229" fill="#3730a3">gathered step (slot_mapping())</text>
+
+    <rect x="330" y="192" width="220" height="34" rx="5" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.2"/>
+    <text x="342" y="207" fill="#5b21b6">self.read(q, k_pool, v_pool, ...)</text>
+    <text x="342" y="220" fill="#7c3aed">PagedRead: one object, one tally</text>
+  </g>
+  <path d="M 276 191 L 324 205" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M 276 225 L 324 213" stroke="#4338ca" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <text x="72" y="262" font-size="10.5" fill="#64748b">The planned arm is the one a served decode step actually takes, so a wiring that</text>
+  <text x="72" y="277" font-size="10.5" fill="#64748b">reached only the gathered arm would pass every unit test and change nothing in a</text>
+  <text x="72" y="292" font-size="10.5" fill="#64748b">server. Both branches keep validated and context_bounds, unchanged: a dispatch</text>
+  <text x="72" y="307" font-size="10.5" fill="#64748b">that softened one guard would make the reads differ in what they accept, not in</text>
+  <text x="72" y="322" font-size="10.5" fill="#64748b">what they hold, and the first symptom is a crash under one flag only.</text>
+
+  <line x1="72" y1="336" x2="558" y2="336" stroke="#e2e8f0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="356" fill="#b91c1c">rectangle</text><text x="160" y="356" fill="#475569">default, and the oracle</text>
+    <text x="330" y="356" fill="#15803d">streamed</text><text x="418" y="356" fill="#475569">--streamed-read</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the witness ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Why a counter and not a test: nothing downstream can tell</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" font-weight="700" fill="#334155">what the two servers look like from outside</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="206" fill="#475569">tokens</text>
+    <rect x="720" y="194" width="180" height="16" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="728" y="206" fill="#b91c1c">identical, byte for byte</text>
+
+    <text x="642" y="228" fill="#475569">finish_reason</text>
+    <rect x="720" y="216" width="180" height="16" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="728" y="228" fill="#b91c1c">identical</text>
+
+    <text x="642" y="250" fill="#475569">pool, slots</text>
+    <rect x="720" y="238" width="180" height="16" rx="3" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="728" y="250" fill="#b91c1c">identical</text>
+
+    <text x="642" y="272" fill="#475569">/health read</text>
+    <rect x="720" y="260" width="180" height="16" rx="3" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="728" y="272" fill="#166534">rectangle vs streamed</text>
+  </g>
+  <path d="M 908 268 L 930 268" stroke="#15803d" stroke-width="1.4" marker-end="url(#arrowgreen)"/>
+  <text x="936" y="272" font-size="10" font-weight="700" fill="#15803d">the only difference</text>
+
+  <text x="642" y="300" font-size="10.5" fill="#64748b">So the read counts: calls, rows, the cells a rectangle would have been charged,</text>
+  <text x="642" y="315" font-size="10.5" fill="#64748b">and the cells it really held. Both from shapes, never from contents. The richer</text>
+  <text x="642" y="330" font-size="10.5" fill="#64748b">counter is tiles walked, which needs int(context_lens) per call: the sync Day 48</text>
+  <text x="642" y="345" font-size="10.5" fill="#64748b">found and the graph break Day 49 removed. A counter that costs a sync moves the</text>
+  <text x="642" y="360" font-size="10.5" font-weight="700" fill="#b91c1c">thing it is measuring, so this one is priced in shapes and nothing else.</text>
+
+  <!-- ===================== LEFT BOTTOM: the acceptance run ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The claim that settles it is downstream of the sampler</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="440" width="215" height="24" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="82" y="456" fill="#166534">uvicorn, --streamed-read</text>
+    <rect x="315" y="440" width="215" height="24" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="325" y="456" fill="#b91c1c">uvicorn, default read</text>
+  </g>
+  <text x="72" y="484" font-size="10.5" fill="#64748b">Same weights, same pool, same scheduler, same six clients over four slots, and one</text>
+  <text x="72" y="499" font-size="10.5" fill="#64748b">flag between them. Every tensor test above compares to 1e-5, and a read that agrees</text>
+  <text x="72" y="514" font-size="10.5" fill="#64748b">to 1e-5 can still put a different token on the wire: the sampler takes an argmax</text>
+  <text x="72" y="529" font-size="10.5" fill="#64748b">over logits that came out of this attention, and two floats a ulp apart on either</text>
+  <text x="72" y="544" font-size="10.5" fill="#64748b">side of a tie choose different words, then different continuations forever.</text>
+
+  <line x1="72" y1="558" x2="558" y2="558" stroke="#bbf7d0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="578" fill="#15803d">check_same_answers(streamed, rectangle)</text>
+    <text x="72" y="596" fill="#15803d">check_arm_read(streamed, STREAMED)</text>
+    <text x="72" y="614" fill="#b91c1c">check_arm_read(rectangle, STREAMED)  refuses</text>
+  </g>
+  <text x="330" y="614" font-size="10" fill="#64748b">the control: a flag, not an engine</text>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">wirebench.py, one tiny engine, both reads, 16-token prompts, 48 steps</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="446" font-size="10" fill="#64748b">Counters an engine incremented, not arithmetic about shapes a bench invented.</text>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="470" font-weight="700" fill="#334155">rows</text>
+    <text x="700" y="470" font-weight="700" fill="#334155">block</text>
+    <text x="762" y="470" font-weight="700" fill="#334155">same</text>
+    <text x="822" y="470" font-weight="700" fill="#334155">charged</text>
+    <text x="906" y="470" font-weight="700" fill="#334155">held</text>
+    <text x="984" y="470" font-weight="700" fill="#334155">holds</text>
+    <text x="1046" y="470" font-weight="700" fill="#334155">ms/read</text>
+
+    <text x="642" y="490" fill="#475569">2</text><text x="700" y="490" fill="#475569">8</text>
+    <text x="762" y="490" fill="#15803d">yes</text>
+    <text x="822" y="490" fill="#b91c1c">48128</text><text x="906" y="490" fill="#15803d">12032</text>
+    <text x="984" y="490" fill="#15803d">4.0x</text><text x="1046" y="490" fill="#b91c1c">13.84</text>
+
+    <text x="642" y="508" fill="#475569">4</text><text x="700" y="508" fill="#475569">8</text>
+    <text x="762" y="508" fill="#15803d">yes</text>
+    <text x="822" y="508" fill="#b91c1c">120320</text><text x="906" y="508" fill="#15803d">24064</text>
+    <text x="984" y="508" fill="#15803d">5.0x</text><text x="1046" y="508" fill="#b91c1c">28.25</text>
+
+    <text x="642" y="526" fill="#475569">4</text><text x="700" y="526" fill="#475569">32</text>
+    <text x="762" y="526" fill="#15803d">yes</text>
+    <text x="822" y="526" fill="#b91c1c">120320</text><text x="906" y="526" fill="#15803d">88576</text>
+    <text x="984" y="526" fill="#15803d">1.4x</text><text x="1046" y="526" fill="#b91c1c">11.67</text>
+
+    <text x="642" y="544" fill="#475569">8</text><text x="700" y="544" fill="#475569">8</text>
+    <text x="762" y="544" fill="#15803d">yes</text>
+    <text x="822" y="544" fill="#b91c1c">240640</text><text x="906" y="544" fill="#15803d">48128</text>
+    <text x="984" y="544" fill="#15803d">5.0x</text><text x="1046" y="544" fill="#b91c1c">55.57</text>
+
+    <text x="642" y="562" fill="#475569">8</text><text x="700" y="562" fill="#475569">-</text>
+    <text x="762" y="562" fill="#475569">-</text>
+    <text x="822" y="562" fill="#475569">240640</text><text x="906" y="562" fill="#475569">240640</text>
+    <text x="984" y="562" fill="#475569">1.0x</text><text x="1046" y="562" fill="#15803d">0.83</text>
+    <text x="1108" y="562" fill="#64748b">rect</text>
+  </g>
+  <line x1="642" y1="576" x2="1128" y2="576" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="594" font-size="10.5" fill="#64748b">1.0x on the default is a measurement of parity, not a missing number. The saving</text>
+  <text x="642" y="609" font-size="10.5" fill="#64748b">here is an average over a run whose width grows every step, so it is below the</text>
+  <text x="642" y="627" font-size="10.5" font-weight="700" fill="#b91c1c">width/block law. 27x to 67x slower per read: this is why it is a flag, off.</text>
+</svg>
