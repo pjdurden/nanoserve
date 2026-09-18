@@ -80,7 +80,7 @@ from pathlib import Path
 
 import torch
 
-from .captured import DEFAULT_CAPTURE_LIMIT, shared_pool_bytes
+from .captured import DEFAULT_CAPTURE_LIMIT, shared_pool_bytes, streamed_workspace_bytes
 from .compiled import DecodeShape
 from .reads import DEFAULT_BLOCK
 from .config import ModelConfig
@@ -523,11 +523,17 @@ class CapturePlan:
                     lower, because no batch wider than a slot count can be presented.
     max_width:      the context ceiling, and the one number the other three
                     constraints all turn into.
-    width_bound_by: which constraint set it. "served", "flag", "budget" or "limit".
+    width_bound_by: which constraint set it. "served", "flag", "budget", "limit",
+                    or, since Day 61, "read": a streamed read has no width in its
+                    workspace, so none of the other four is a statement about one.
     num_heads:      query heads, which is what a score rectangle is counted in.
     full_count:     shapes in the untrimmed bucket set, so the trim is visible.
     budget_bytes:   what the probe said was left, or None when nobody asked.
     limit:          graphs this process will hold at all.
+    block:          the score tile the streamed read folds, and 0 on the rectangle.
+                    The currency the arena is priced in: Day 61, and it is the one
+                    field here that changes what `pool_bytes` means rather than what
+                    it is worth.
     """
 
     shapes: tuple[DecodeShape, ...]
@@ -538,6 +544,7 @@ class CapturePlan:
     full_count: int
     budget_bytes: int | None = None
     limit: int = DEFAULT_CAPTURE_LIMIT
+    block: int = 0
 
     @property
     def count(self) -> int:
@@ -555,8 +562,14 @@ class CapturePlan:
 
     @property
     def pool_bytes(self) -> int:
-        """What the shared capture arena costs: a max over the list, not a sum."""
-        return shared_pool_bytes(self.shapes, self.num_heads)
+        """What the shared capture arena costs: a max over the list, not a sum.
+
+        In the read's currency since Day 61. `block` of 0 is the rectangle and this
+        is the number it always was; a tile width prices the arena as
+        `rows x heads x block`, which is the same max over the same list and has no
+        `max_width` in it at all.
+        """
+        return shared_pool_bytes(self.shapes, self.num_heads, block=self.block or None)
 
     def as_dict(self) -> dict:
         """The shape `/health` reports, under its own key rather than beside the pool."""
@@ -568,6 +581,7 @@ class CapturePlan:
             "width_bound_by": self.width_bound_by,
             "workspace_bytes": self.pool_bytes,
             "capture_limit": self.limit,
+            "read_block": self.block,
         }
 
     def describe(self) -> str:
@@ -577,6 +591,7 @@ class CapturePlan:
             "flag": "the width you asked for",
             "budget": "what the card had left",
             "limit": "the graph limit",
+            "read": "the streamed read, which has no width axis",
         }[self.width_bound_by]
         return (
             f"CUDA graphs: {self.count} of {self.full_count} shapes, rows <= "
@@ -655,6 +670,17 @@ def plan_capture(
     on its first write, so at this moment the driver cannot see it and would report
     it as free. That is what `reserved_bytes` is for, and `plan.pool_bytes` is
     exactly the number it wants.
+
+    **Day 61: three of those four stop being width caps.** All of the above is a
+    consequence of a workspace that is `rows x heads x width`. Under a streamed bucket
+    set it is `rows x heads x block`, and every sentence in this docstring about a
+    ceiling becoming a width is false. So there is one candidate, `read`, and the
+    other three become the two questions they really were. A budget is not a ceiling
+    on the width, it is a yes or no about one tile. A graph limit is not a ceiling on
+    the width either: with a single width the list *is* the row axis, so a limit under
+    the row count has no axis left to trim and has to say so rather than divide by it.
+    A width flag is nothing at all, and is ignored rather than honoured, because
+    honouring it would record a list at a width no step will ever present.
     """
     buckets = getattr(engine.cache, "decode_buckets", None)
     if buckets is None:
@@ -665,6 +691,11 @@ def plan_capture(
         )
     limit = engine.decode_graphs.limit if limit is None else limit
     num_heads = engine.model.config.num_attention_heads
+    # 0 is the rectangle, and the whole of the branch below is downstream of this
+    # one integer. Taken off the bucket set rather than off `engine.cache.read`
+    # because the set is what the list is planned over, and `check_capture_ready`
+    # is what says the two agree.
+    block = buckets.block if buckets.streamed else 0
 
     rows = plan.max_batch_size if max_rows is None else min(max_rows, plan.max_batch_size)
     row_count = sum(1 for r in buckets.rows if r <= rows)
@@ -685,21 +716,47 @@ def plan_capture(
             probe=probe,
         )
 
-    # Four candidates, strictly improving, so a ceiling that ties with the served
-    # context is not reported as the one that bit. A boot line blaming a flag that
-    # changed nothing sends somebody to the wrong knob.
-    candidates = [("served", plan.max_model_len)]
-    if max_width is not None:
-        candidates.append(("flag", int(max_width)))
-    if budget_bytes is not None:
-        candidates.append(
-            ("budget", width_ceiling(rows=rows, num_heads=num_heads, budget_bytes=budget_bytes))
-        )
-    candidates.append(("limit", width_from_limit(buckets, row_count=row_count, limit=limit)))
-    bound_by, width = candidates[0]
-    for name, value in candidates[1:]:
-        if value < width:
-            bound_by, width = name, value
+    if block:
+        # Day 61. One candidate, because the other three were all statements about a
+        # dimension of the score rectangle and this read has no score rectangle.
+        bound_by, width = "read", buckets.widths[0]
+        if budget_bytes is not None:
+            need = streamed_workspace_bytes(
+                DecodeShape(rows=rows, context_width=width), num_heads, block
+            )
+            if need > budget_bytes:
+                raise CaptureTooSmall(
+                    f"a {block}-key score tile over {rows} rows and {num_heads} heads "
+                    f"is {need} bytes and the probe found {budget_bytes}: a streamed "
+                    "read's workspace has no width in it, so there is no narrower "
+                    "shape to fall back to. Lower max_rows, or narrow the tile"
+                )
+        if row_count > limit:
+            raise CaptureTooSmall(
+                f"this set has {row_count} row buckets within max_rows={rows} and this "
+                f"process will hold {limit} graphs: the streamed read's list is the row "
+                "axis and there is no width axis left to trim off it, so the only knob "
+                "is max_rows"
+            )
+    else:
+        # Four candidates, strictly improving, so a ceiling that ties with the served
+        # context is not reported as the one that bit. A boot line blaming a flag that
+        # changed nothing sends somebody to the wrong knob.
+        candidates = [("served", plan.max_model_len)]
+        if max_width is not None:
+            candidates.append(("flag", int(max_width)))
+        if budget_bytes is not None:
+            candidates.append(
+                (
+                    "budget",
+                    width_ceiling(rows=rows, num_heads=num_heads, budget_bytes=budget_bytes),
+                )
+            )
+        candidates.append(("limit", width_from_limit(buckets, row_count=row_count, limit=limit)))
+        bound_by, width = candidates[0]
+        for name, value in candidates[1:]:
+            if value < width:
+                bound_by, width = name, value
 
     # Down to a bucket, because the ceiling is a number and the list is a set. A
     # budget that buys 300 tokens of context buys the 256 bucket, and reporting 300
@@ -724,6 +781,7 @@ def plan_capture(
         full_count=len(buckets.shapes),
         budget_bytes=budget_bytes,
         limit=limit,
+        block=block,
     )
 
 

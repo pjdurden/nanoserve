@@ -84,7 +84,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from .buckets import check_pad_inert, check_shape_in_set
+from .buckets import check_pad_inert, check_read_matches, check_shape_in_set
 from .compact import is_compact
 from .compiled import DecodeShape, check_single_graph, decode_shape
 from .inputs import (
@@ -746,27 +746,68 @@ def workspace_saving(shape: DecodeShape, num_heads: int, block: int) -> float:
     return score_cells(shape, num_heads) / streamed_score_cells(shape, num_heads, block)
 
 
+def read_workspace_bytes(
+    shape: DecodeShape,
+    num_heads: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+    *,
+    block: int | None = None,
+) -> int:
+    """What one captured shape reserves, under whichever read this process runs.
+
+    Day 61, and it is two functions that already existed behind one argument. `block`
+    of `None` is the rectangle and the answer is `workspace_bytes`; a tile width is
+    Day 59's read and the answer is `streamed_workspace_bytes`, which has no
+    `context_width` in it at all. The pool sizers below take the same argument and
+    pass it straight through, so a caller decides the currency once.
+    """
+    if block is None:
+        return workspace_bytes(shape, num_heads, itemsize)
+    return streamed_workspace_bytes(shape, num_heads, block, itemsize)
+
+
 def shared_pool_bytes(
-    shapes: Sequence[DecodeShape], num_heads: int, itemsize: int = ACTIVATION_ITEMSIZE
+    shapes: Sequence[DecodeShape],
+    num_heads: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+    *,
+    block: int | None = None,
 ) -> int:
     """One pool, sized by the largest shape in the list. The `graph_pool_handle` bill.
 
     A max and not a sum, because that is what sharing an arena means: the graphs are
     replayed one at a time, so a workspace big enough for the biggest of them is big
     enough for all of them.
+
+    "Largest" is decided by the read and not by the shape, which is Day 61's point in
+    one line. Under the rectangle the biggest shape is the widest one and the max is
+    over a product of rows and width; under a `block`-key tile the width is not in
+    the expression, so the max is over rows alone and every shape in a streamed
+    bucket set has the same width anyway.
     """
-    return max((workspace_bytes(s, num_heads, itemsize) for s in shapes), default=0)
+    return max(
+        (read_workspace_bytes(s, num_heads, itemsize, block=block) for s in shapes),
+        default=0,
+    )
 
 
 def private_pool_bytes(
-    shapes: Sequence[DecodeShape], num_heads: int, itemsize: int = ACTIVATION_ITEMSIZE
+    shapes: Sequence[DecodeShape],
+    num_heads: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+    *,
+    block: int | None = None,
 ) -> int:
     """A pool per graph. The road not taken, and it is what you get by default."""
-    return sum(workspace_bytes(s, num_heads, itemsize) for s in shapes)
+    return sum(read_workspace_bytes(s, num_heads, itemsize, block=block) for s in shapes)
 
 
 def pool_sharing_ratio(
-    shapes: Sequence[DecodeShape], num_heads: int, itemsize: int = ACTIVATION_ITEMSIZE
+    shapes: Sequence[DecodeShape],
+    num_heads: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+    *,
+    block: int | None = None,
 ) -> float:
     """How many times over private pools would pay for what one shared pool covers.
 
@@ -774,11 +815,16 @@ def pool_sharing_ratio(
     bucket set is geometric on the row axis and arithmetic on the width one, so the
     sum is dominated by its largest term: 36 shapes share a pool for about 5x, not
     36x. Sharing is still right and the reason is not the multiple.
+
+    Day 61 takes the width axis away and the ratio does not move much, which is the
+    same finding from the other side: over a streamed set it is the row buckets'
+    geometric sum divided by the largest of them, so 1, 2, 4, 8 rows share a pool for
+    15/8. Sharing an arena was never worth the length of the list.
     """
-    shared = shared_pool_bytes(shapes, num_heads, itemsize)
+    shared = shared_pool_bytes(shapes, num_heads, itemsize, block=block)
     if not shared:
         return 1.0
-    return private_pool_bytes(shapes, num_heads, itemsize) / shared
+    return private_pool_bytes(shapes, num_heads, itemsize, block=block) / shared
 
 
 def capture_cost_s(count: int, per_capture_s: float) -> float:
@@ -840,6 +886,17 @@ def check_capture_ready(cache) -> None:
             "fresh input tensors rather than writing into buffers a replay can read: "
             "a graph recorded over them would replay against an address nobody writes"
         )
+    # Day 61. The third precondition, and unlike the other two it is not about a
+    # constructor argument being off: it is about two of them disagreeing. A streamed
+    # bucket set under a rectangle read records graphs whose workspace is a full-width
+    # score rectangle on every shape in the list, which is a capture that succeeds and
+    # an arena two orders of magnitude bigger than the one anybody planned. The
+    # `BucketsUnsound` comes out unwrapped, for the reason
+    # `check_capture_preconditions` documents: the module whose promise broke is the
+    # module where the fix is.
+    read = getattr(inner, "read", None)
+    if read is not None:
+        check_read_matches(inner.decode_buckets, read)
 
 
 def check_capture_preconditions(input_ids, plan, cache, *, report=None) -> None:

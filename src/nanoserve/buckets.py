@@ -55,6 +55,25 @@ Day 29's `waste_fraction`, Day 34's `prefill_padding_waste` and Day 50's
 for the corners. The trade is real work per step against a graph that does not have
 to be rebuilt, and it is only worth taking when something downstream can actually
 reuse the graph.
+
+**Day 61: the width axis was a property of the read, and one read does not have
+it.** Everything above is true of the Day-28 rectangle and of nothing else. That read
+gathers a `[rows, width]` mapping and scores it into a `[rows, heads, 1, width]`
+tensor, so the width is a dimension of two real allocations and a wider one costs
+real memory: that is the entire reason it is in the set. Day 59's streamed read walks
+`cdiv(context_lens[row], block)` tiles of its own row and holds one tile, so handing
+it a wider mapping changes nothing it touches and nothing it holds. `streamed=True`
+therefore collapses the width axis to a single bucket, the table's own
+`max_model_len`, and the set stops being a product: 576 shapes at 256 rows and 8192
+tokens become 9, which is exactly vLLM's capture list and for exactly its reason.
+
+Two consequences are worth having in the head before reading the code. The *price*
+has to be restated: `waste` measured against a rectangle nobody builds would report
+99% on a read that touches every cell it is charged, so `cells_for` asks the bucket
+set which read it belongs to and the currency follows. And the two halves have to
+agree, which is what `check_read_matches` is: a streamed set under a rectangle read
+hands the rectangle a full-width mapping from the first token onwards, which is
+correct, silent, and the whole memory bound this module exists to impose, gone.
 """
 
 from __future__ import annotations
@@ -99,7 +118,17 @@ class DecodeBuckets:
                     run to thousands and doubling would pad a 600-token history to
                     1024. A multiple bounds the overshoot by the multiple itself
                     whatever the length, and it is the knob that decides whether
-                    `count` is a capture list or a compile bill.
+                    `count` is a capture list or a compile bill. Ignored entirely
+                    when `streamed`, because then there is no axis to round.
+    streamed:       Day 61. Whether the read this set belongs to is Day 59's, which
+                    holds a tile instead of a rectangle. True collapses the width
+                    axis to `max_model_len` alone and `count` stops being a product.
+                    It is a fact about the *read*, passed in rather than inferred,
+                    and `check_read_matches` is what stops the two from drifting.
+    block:          the score tile that read folds, and the unit the price is stated
+                    in once the width is gone. No default: a set that guessed a tile
+                    would disagree with the read that has one, and the disagreement
+                    would be a number in a table rather than a crash.
     """
 
     def __init__(
@@ -109,6 +138,8 @@ class DecodeBuckets:
         *,
         row_buckets: Sequence[int] = ROW_BUCKETS,
         width_multiple: int = WIDTH_MULTIPLE,
+        streamed: bool = False,
+        block: int = 0,
     ):
         if max_batch_size < 1:
             raise ValueError(f"a batch has at least one row; got {max_batch_size}")
@@ -116,22 +147,38 @@ class DecodeBuckets:
             raise ValueError(f"a row holds at least one token; got {max_model_len}")
         if width_multiple < 1:
             raise ValueError(f"a width multiple is at least one; got {width_multiple}")
+        if block < 0:
+            raise ValueError(f"a tile holds at least one key; got {block}")
+        if streamed and block < 1:
+            raise ValueError(
+                "a streamed bucket set is priced in score tiles and will not guess "
+                f"one; got block={block}. Pass the same tile the read was built with"
+            )
         self.max_batch_size = max_batch_size
         self.max_model_len = max_model_len
         self.width_multiple = width_multiple
+        self.streamed = bool(streamed)
+        self.block = int(block) if streamed else 0
         # The candidates that fit, plus the cache's own row count. The second half
         # matters: `max_batch_size` is often not a power of two (a server picks 6),
         # and without it a full batch would have no bucket at all.
         self.rows = tuple(
             sorted({int(b) for b in row_buckets if 0 < int(b) <= max_batch_size} | {max_batch_size})
         )
-        widths = []
-        width = width_multiple
-        while width < max_model_len:
-            widths.append(width)
-            width += width_multiple
-        widths.append(max_model_len)
-        self.widths = tuple(widths)
+        if self.streamed:
+            # One width, and it is the table's. Not "no width": a mapping is still a
+            # 2-D tensor and a shape still has a second number, so what changes is
+            # that the number is a constant of the cache rather than a function of
+            # how far into the run this step is.
+            self.widths = (max_model_len,)
+        else:
+            widths = []
+            width = width_multiple
+            while width < max_model_len:
+                widths.append(width)
+                width += width_multiple
+            widths.append(max_model_len)
+            self.widths = tuple(widths)
 
     # --- rounding -------------------------------------------------------------
 
@@ -140,7 +187,15 @@ class DecodeBuckets:
         return bucket_for(rows, self.rows)
 
     def width_bucket(self, width: int) -> int:
-        """The rectangle width this context is read at, never past the table."""
+        """The rectangle width this context is read at, never past the table.
+
+        The refusals are kept on both arms and they are not symmetry for its own
+        sake. A context longer than the table is a row the slot table cannot address
+        whichever read is running, and a streamed read that quietly accepted it would
+        walk tiles off the end of a mapping it was handed. What changes under
+        `streamed` is only the answer: every legal context is read at the table's
+        full width, because a wider mapping is free to a reader that never gathers.
+        """
         if width < 1:
             raise ValueError(f"a rectangle is at least one column wide; got {width}")
         if width > self.max_model_len:
@@ -149,6 +204,8 @@ class DecodeBuckets:
                 f"{self.max_model_len}: this is the table's width and not a rounding "
                 "decision"
             )
+        if self.streamed:
+            return self.max_model_len
         return min(round_up(width, self.width_multiple), self.max_model_len)
 
     def shape_for(self, rows: int, width: int, query_len: int = 1) -> DecodeShape:
@@ -170,11 +227,55 @@ class DecodeBuckets:
 
     @property
     def count(self) -> int:
-        """How many graphs the closed set implies. A product, and that is the trap."""
+        """How many graphs the closed set implies. A product, and that is the trap.
+
+        Still written as a product under `streamed`, where the second factor is 1.
+        Special-casing it to `len(self.rows)` would hide the one thing this number is
+        for, which is saying *why* a set is the size it is.
+        """
         return len(self.rows) * len(self.widths)
 
+    def cells_for(self, rows: int, width: int, query_len: int = 1) -> int:
+        """Cells the read really touches for a step over `rows` rows and `width`.
+
+        Day 61, and it exists because the old answer stopped being an answer. A
+        bucketed rectangle touches `row_bucket * width_bucket` cells: every padded row
+        and every padded column is gathered and scored before the mask throws it away,
+        which is what `DecodeShape.cells` says and what `waste` has priced since Day
+        52. A streamed read touches neither kind of padding. A padded row's
+        `context_lens` entry is 0, so its program walks zero tiles; a padded *column*
+        does not exist, because the loop bound is the row's own length and not the
+        mapping's width.
+
+        So the streamed charge is `rows * round_up(width, block)`: the real rows, each
+        walking whole tiles over its own history. `round_up` and not `min` is the
+        difference between work and memory, and both are real: `streamed_score_cells`
+        prices the tile a program *holds*, which is one tile, and this prices every
+        tile it *walks*, which is the last one rounded up. A four-token row under a
+        32-key tile costs one whole tile of scoring, masked.
+
+        The granularity is the shape's, so a ragged batch is charged its longest row
+        on every row. That over-states the streamed read and it is the honest place
+        to leave it: a `DecodeShape` has one width in it, and a per-row charge would
+        need `context_lens` on the host, which is Day 48's synchronisation.
+        """
+        if not self.streamed:
+            return self.shape_for(rows, width, query_len).cells
+        if rows < 1:
+            raise ValueError(f"a decode step has at least one row; got {rows}")
+        # Validated for the same refusals the bucketed arm gets, and thrown away: the
+        # streamed charge is over the real width, not the bucketed one.
+        self.width_bucket(width)
+        return rows * query_len * round_up(width, self.block)
+
     def render(self) -> str:
-        """One line for a log: the two axes and what they multiply out to."""
+        """One line for a log: the axes, and what they multiply out to."""
+        if self.streamed:
+            return (
+                f"{len(self.rows)} row buckets {list(self.rows)} x 1 width of "
+                f"{self.max_model_len} (the streamed read at a {self.block}-key tile "
+                f"has no width axis) = {self.count} shapes"
+            )
         return (
             f"{len(self.rows)} row buckets {list(self.rows)} x {len(self.widths)} "
             f"width buckets of {self.width_multiple} up to {self.max_model_len} = "
@@ -196,8 +297,14 @@ def bucket_run(shapes: Sequence[DecodeShape], buckets: DecodeBuckets) -> tuple[D
 
 
 def padded_cells(shapes: Sequence[DecodeShape], buckets: DecodeBuckets) -> int:
-    """Cells the kernel computes over a run, padding included."""
-    return sum(s.cells for s in bucket_run(shapes, buckets))
+    """Cells the kernel computes over a run, padding included.
+
+    Through `cells_for` since Day 61, so the answer is in the currency of the read
+    this set belongs to. On the default that is exactly what it always was, the
+    bucketed rectangle summed over the run; on a streamed set it is tiles walked,
+    which is the only number that describes a read holding no rectangle at all.
+    """
+    return sum(buckets.cells_for(s.rows, s.context_width, s.query_len) for s in shapes)
 
 
 def waste(shapes: Sequence[DecodeShape], buckets: DecodeBuckets) -> float:
@@ -207,6 +314,12 @@ def waste(shapes: Sequence[DecodeShape], buckets: DecodeBuckets) -> float:
     `prefill_padding_waste`, and it is the price of the closed set stated in the
     only unit that is comparable across days: work the machine did that nobody
     wanted.
+
+    Day 61 is why this reads `padded_cells` rather than inlining the rectangle. A
+    streamed set's width bucket is `max_model_len` on every step, so a waste computed
+    against `DecodeShape.cells` would report 99% for a read that walks the same tiles
+    it would have walked unbucketed. The rounding did not get worse; the rectangle it
+    was being measured against stopped being built.
     """
     padded = padded_cells(shapes, buckets)
     if not padded:
@@ -276,6 +389,59 @@ def check_capture_budget(buckets: DecodeBuckets, *, limit: int = RECOMPILE_LIMIT
             f"against a budget of {limit}: a closed set this large is a compile bill, "
             "not a capture list. The width multiple is the knob, and it is paid for "
             "in padding"
+        )
+
+
+def check_read_matches(buckets: DecodeBuckets, read) -> None:
+    """Refuse a bucket set and a decode read that disagree about the width axis.
+
+    Day 61's correctness gate, and the only one this week that guards against
+    corruption of a *server* rather than of a number. Everything else here is an
+    assertion about shapes; this one is about memory.
+
+    **A streamed set under a rectangle read is the failure that matters.** The set
+    rounds every context to `max_model_len`, so `plan_decode` reads at the table's
+    full width on the very first decode step of every request. The rectangle read
+    then gathers all of it and scores a `[rows, heads, 1, max_model_len]` tensor: at
+    256 rows, 32 heads and 8192 tokens that is the 268 MB Day 54 priced, materialised
+    for a batch whose longest history is nine tokens, and it is materialised on step
+    one rather than at the end of a long run. Nothing raises. The attention is right,
+    the tokens are right, and the process is holding two orders of magnitude more
+    workspace than the bucket set was there to bound.
+
+    **The other direction is only waste, and it is still refused.** A rectangle set
+    under a streamed read gives the streamed read a width axis it has no use for:
+    every width bucket becomes its own graph, so the capture list is a product again
+    and each member records the same tile loop. Harmless per step and a boot that
+    spends 64x the startup seconds it needed to.
+
+    Duck-typed on purpose, the way `check_pad_inert` takes a plan. `nanoserve.reads`
+    imports `nanoserve.captured`, which imports this module, so a real import here
+    would be a cycle; and the only thing this gate needs is two attributes any read
+    that wants to be checkable can carry.
+    """
+    streamed = bool(getattr(read, "streamed", False))
+    block = int(getattr(read, "block", 0))
+    if buckets.streamed and not streamed:
+        raise BucketsUnsound(
+            f"this bucket set dropped its width axis and reads every step at "
+            f"{buckets.max_model_len} tokens, and the read is the rectangle: it would "
+            f"gather and score a full-width rectangle from the first decode step of "
+            "every request, which is correct and unbounded. Build the cache with "
+            "streamed_read on both halves, or bucket the width"
+        )
+    if streamed and not buckets.streamed:
+        raise BucketsUnsound(
+            f"this read is streamed and holds a {block}-key tile, and the bucket set "
+            f"still has {len(buckets.widths)} width buckets in it: the width buys this "
+            f"read nothing, so the set is {buckets.count} graphs where {len(buckets.rows)} "
+            "would do. Build the bucket set with streamed=True"
+        )
+    if streamed and block != buckets.block:
+        raise BucketsUnsound(
+            f"the read folds a {block}-key score tile and this set is priced in "
+            f"{buckets.block}-key tiles: every cell count here would be a quotient of "
+            "one read's numerator and another's denominator"
         )
 
 

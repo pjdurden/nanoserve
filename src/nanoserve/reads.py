@@ -115,7 +115,19 @@ class ReadStats:
     def saving(self) -> float:
         """How many times the rectangle covers what this read held. 1.0x on the
         default, and that is a measurement and not a missing number: a read that
-        materialises the row it scores holds every cell it was charged."""
+        materialises the row it scores holds every cell it was charged.
+
+        **Day 61 makes this a tautology on a streamed server, and the note is the
+        useful part.** A streamed bucket set reads at `max_model_len` on every step,
+        so `score_cells` is charged a constant width and `held_cells` is a constant
+        tile, and the quotient is exactly `max_model_len / block` however long the run
+        was. It is not wrong, it just stopped being a measurement of anything the
+        traffic did: Day 60's table came off a cache that still bucketed the width,
+        where the quotient really was integrated over a growing rectangle. The honest
+        numerator would be the width a rectangle read would have rounded this step to,
+        which is `int(context_lens.max())`, which is Day 48's synchronisation once per
+        call per layer to make a log read better. So the number stays and this
+        paragraph is the price tag on it."""
         if not self.held_cells:
             return 1.0
         return self.score_cells / self.held_cells

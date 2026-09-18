@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The capture list loses its width axis, and the price has to change currency</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The width was in the bucket set for exactly one reason and it is a property of the read, not of the model: the Day-28 rectangle</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">gathers a [rows, width] mapping and scores it, so a wider one costs real memory. A read that walks cdiv(ctx, block) tiles of its</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">own row does not care. Hand it the whole table every step: 576 shapes become 9, which is vLLM's capture list and vLLM's reason.</text>
+
+  <!-- ===================== LEFT TOP: the set ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">One cache, 256 slots x 8192 tokens, two bucket sets</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="178" width="220" height="60" rx="5" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.2"/>
+    <text x="82" y="195" fill="#b91c1c">DecodeBuckets(256, 8192)</text>
+    <text x="82" y="211" fill="#475569">9 rows x 64 widths of 128</text>
+    <text x="82" y="229" font-size="12" font-weight="700" fill="#b91c1c">576 graphs</text>
+
+    <rect x="330" y="178" width="220" height="60" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="340" y="195" fill="#166534">..., streamed=True, block=32</text>
+    <text x="340" y="211" fill="#475569">9 rows x 1 width of 8192</text>
+    <text x="340" y="229" font-size="12" font-weight="700" fill="#15803d">9 graphs</text>
+  </g>
+  <path d="M 298 208 L 324 208" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+
+  <text x="72" y="262" font-size="10.5" fill="#64748b">width_bucket returns max_model_len for every legal context, so the mapping a step</text>
+  <text x="72" y="277" font-size="10.5" fill="#64748b">presents is slots[:rows, :8192] on the first token and on the ten-thousandth. The</text>
+  <text x="72" y="292" font-size="10.5" fill="#64748b">refusals stay on both arms: a context past the table is still a row the slot table</text>
+  <text x="72" y="307" font-size="10.5" fill="#64748b">cannot address, whichever read is running. What changes is only the answer.</text>
+
+  <line x1="72" y1="322" x2="558" y2="322" stroke="#e2e8f0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="342" fill="#475569">count</text>
+    <text x="140" y="342" fill="#334155">len(rows) * len(widths), still written as a product</text>
+    <text x="72" y="360" fill="#475569">because 1 is the answer, not a special case</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the gate ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">The combination that corrupts, and why nothing else catches it</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="642" y="178" width="240" height="24" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="652" y="194" fill="#b91c1c">streamed bucket set + rectangle read</text>
+    <text x="898" y="194" font-size="10" font-weight="700" fill="#b91c1c">refused</text>
+  </g>
+  <text x="642" y="222" font-size="10.5" fill="#64748b">The set rounds every context to 8192, so the rectangle read gathers all of it and</text>
+  <text x="642" y="237" font-size="10.5" fill="#64748b">scores a [256, 32, 1, 8192] tensor for a batch whose longest history is nine</text>
+  <text x="642" y="252" font-size="10.5" fill="#64748b">tokens. 268 MB, on step one, of every request. Nothing raises: the attention is</text>
+  <text x="642" y="267" font-size="10.5" font-weight="700" fill="#b91c1c">right, the tokens are right, and the bound this module exists to impose is gone.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="642" y="282" width="240" height="24" rx="4" fill="#fef9c3" stroke="#fde047" stroke-width="0.8"/>
+    <text x="652" y="298" fill="#a16207">rectangle bucket set + streamed read</text>
+    <text x="898" y="298" font-size="10" font-weight="700" fill="#a16207">refused too</text>
+  </g>
+  <text x="642" y="326" font-size="10.5" fill="#64748b">Only waste: 64 graphs recording the same tile loop, and 64x the startup seconds</text>
+  <text x="642" y="341" font-size="10.5" fill="#64748b">for a width nothing reads. check_read_matches runs inside check_capture_ready, so</text>
+  <text x="642" y="356" font-size="10.5" fill="#64748b">the boot refuses rather than the 3am health check disagreeing with the dashboard.</text>
+
+  <!-- ===================== LEFT BOTTOM: the currency ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The padding is still priced, in the currency of the read that pays it</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10.5" fill="#64748b">Measured against DecodeShape.cells a streamed set wastes 99%, and the number is a</text>
+  <text x="72" y="461" font-size="10.5" fill="#64748b">lie: the rectangle it is compared to is never built. cells_for asks the set which</text>
+  <text x="72" y="476" font-size="10.5" fill="#64748b">read it belongs to, and waste goes through it.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="492" width="215" height="46" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+    <text x="82" y="508" fill="#b91c1c">rectangle</text>
+    <text x="82" y="526" fill="#475569">row_bucket * width_bucket</text>
+
+    <rect x="315" y="492" width="215" height="46" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="0.8"/>
+    <text x="325" y="508" fill="#166534">streamed</text>
+    <text x="325" y="526" fill="#475569">rows * round_up(ctx, block)</text>
+  </g>
+
+  <text x="72" y="560" font-size="10.5" fill="#64748b">A padded row walks zero tiles: its context_lens entry is 0. A padded column does</text>
+  <text x="72" y="575" font-size="10.5" fill="#64748b">not exist: the loop bound is the row's own length. round_up and not min, because</text>
+  <text x="72" y="590" font-size="10.5" fill="#64748b">this prices tiles walked and streamed_score_cells prices the one tile held.</text>
+  <text x="72" y="612" font-size="10.5" fill="#475569">the same 1000-step run, both sets:</text>
+  <g font-size="11" font-family="ui-monospace, monospace" font-weight="700">
+    <text x="330" y="612" fill="#b91c1c">33.0%</text>
+    <text x="400" y="612" fill="#475569">to</text>
+    <text x="440" y="612" fill="#15803d">2.9%</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">widthbench.py, 32 heads, fp32 scores, 32-key tiles</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">slots</text>
+    <text x="700" y="448" font-weight="700" fill="#334155">context</text>
+    <text x="782" y="448" font-weight="700" fill="#334155">shapes</text>
+    <text x="870" y="448" font-weight="700" fill="#334155">startup</text>
+    <text x="960" y="448" font-weight="700" fill="#334155">arena</text>
+    <text x="1064" y="448" font-weight="700" fill="#334155">saved</text>
+
+    <text x="642" y="468" fill="#475569">8</text><text x="700" y="468" fill="#475569">2048</text>
+    <text x="782" y="468" fill="#b91c1c">64</text><text x="820" y="468" fill="#15803d">4</text>
+    <text x="870" y="468" fill="#b91c1c">3.20s</text><text x="925" y="468" fill="#15803d">0.58s</text>
+    <text x="960" y="468" fill="#b91c1c">2.00</text><text x="1010" y="468" fill="#15803d">0.03</text>
+    <text x="1064" y="468" fill="#15803d">67x</text>
+
+    <text x="642" y="488" fill="#475569">16</text><text x="700" y="488" fill="#475569">8192</text>
+    <text x="782" y="488" fill="#b91c1c">320</text><text x="820" y="488" fill="#15803d">5</text>
+    <text x="870" y="488" fill="#b91c1c">16.00s</text><text x="925" y="488" fill="#15803d">0.72s</text>
+    <text x="960" y="488" fill="#b91c1c">16.00</text><text x="1010" y="488" fill="#15803d">0.06</text>
+    <text x="1064" y="488" fill="#15803d">267x</text>
+
+    <text x="642" y="508" fill="#475569">64</text><text x="700" y="508" fill="#475569">8192</text>
+    <text x="782" y="508" fill="#b91c1c">448</text><text x="820" y="508" fill="#15803d">7</text>
+    <text x="870" y="508" fill="#b91c1c">22.40s</text><text x="925" y="508" fill="#15803d">1.01s</text>
+    <text x="960" y="508" fill="#b91c1c">64.00</text><text x="1010" y="508" fill="#15803d">0.25</text>
+    <text x="1064" y="508" fill="#15803d">256x</text>
+
+    <text x="642" y="528" fill="#475569">256</text><text x="700" y="528" fill="#475569">8192</text>
+    <text x="782" y="528" fill="#b91c1c">576</text><text x="820" y="528" fill="#15803d">9</text>
+    <text x="870" y="528" fill="#b91c1c">28.80s</text><text x="925" y="528" fill="#15803d">1.30s</text>
+    <text x="960" y="528" fill="#b91c1c">256.0</text><text x="1010" y="528" fill="#15803d">1.00</text>
+    <text x="1064" y="528" fill="#15803d">256x</text>
+
+    <text x="960" y="548" font-size="9" fill="#64748b">MiB of shared arena</text>
+  </g>
+  <line x1="642" y1="560" x2="1128" y2="560" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="578" font-size="10.5" fill="#64748b">The arena ratio is not the list: it is width/block at the widest shape, and it</text>
+  <text x="642" y="593" font-size="10.5" fill="#64748b">would be that with a one-member list. The startup saving is 22x and not 64x,</text>
+  <text x="642" y="608" font-size="10.5" fill="#64748b">because a streamed capture costs 2.9x a rectangle one to record: the tlsim loop</text>
+  <text x="642" y="627" font-size="10.5" font-weight="700" fill="#b91c1c">runs once per warm-up call. That half goes away when the loop becomes Triton.</text>
+</svg>

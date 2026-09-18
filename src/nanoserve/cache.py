@@ -614,8 +614,20 @@ class BatchedPagedKVCache:
         # from this cache's own two limits because a row bucket it has no row for
         # and a width wider than the slot table are both a crash rather than a
         # rounding decision. See `nanoserve.buckets`.
+        # Day 61. The set knows which read it belongs to, because the width axis is
+        # in it only for a read that gathers: `streamed=True` collapses the widths to
+        # `max_model_len` alone and the capture list becomes the row axis. Both
+        # halves are built from the one flag here so they cannot be wired apart, and
+        # `check_read_matches` is the gate for the caller who assembles them by hand.
         self.decode_buckets = (
-            DecodeBuckets(batch_size, self.max_model_len) if bucket_decode else None
+            DecodeBuckets(
+                batch_size,
+                self.max_model_len,
+                streamed=streamed_read,
+                block=read_block if streamed_read else 0,
+            )
+            if bucket_decode
+            else None
         )
         # Day 53. The four `[batch_size]` int64 vectors a decode step hands the
         # forward, allocated once instead of built every step, or `None` for the
