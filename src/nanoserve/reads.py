@@ -18,6 +18,26 @@ unusable, and it would do it silently, because nothing downstream of the read ca
 tell which one ran. So `streamed_read=False` everywhere until the loop is Triton, and
 the switch is a flag an operator types, not a default anybody inherits.
 
+**Day 62 makes the streamed branch a dispatch, and that changes what the flag means
+without changing the flag.** `STREAMED` now calls `paged_attention_batched`, which
+launches the Triton kernel on a CUDA tensor and falls back to the Day-59 tlsim loop
+everywhere else. The two backends compute the same attention to a few ulps, so the
+choice is a speed decision; but it is the speed decision this whole stretch has been
+waiting on, and the paragraph above is true on exactly one of the two. Day 60
+measured the tlsim loop 8x to 67x slower per call than the torch rectangle it
+replaces, and the kernel is meant to be the other side of that, which no test in this
+repo can say because no box in this repo has a card. The default stays off because
+this box is the one where it is a Python loop, and a default that is right on a card
+and ruinous on a laptop is not a default.
+
+**So the counters grow a third thing to witness.** `mode` says which read the
+operator asked for and `backend` says which one the process could actually run, and
+those are different questions the moment a dispatch exists: a server launched
+`--streamed-read` on a box with no Triton reports `streamed` and means `tlsim`, which
+is correct, slow, and indistinguishable from the fast thing in every other field of
+the payload. An empty `backend` means no read has run yet, which is its own answer
+and not a missing one.
+
 **Which is exactly why the counters are here.** Two servers on the same weights, the
 same pool and the same scheduler, one with the flag and one without, return the same
 tokens with the same latency profile and the same everything else a client can
@@ -45,10 +65,8 @@ import torch
 
 from .captured import score_cells, streamed_score_cells
 from .compiled import DecodeShape
-from .kernels.paged_attention import (
-    paged_attention_batched_kernel,
-    paged_attention_batched_reference,
-)
+from .kernels.paged_attention import paged_attention_batched_reference
+from .kernels.triton_batched_attention import paged_attention_batched, select_backend
 
 #: The Day-28 read: gather the whole `[rows, max_ctx]` mapping, score it into a
 #: rectangle, mask the result. The default, and the oracle the other one is graded
@@ -66,6 +84,11 @@ READS = (RECTANGLE, STREAMED)
 #: value returns the same attention. It is *not* `block_size`, and the two are
 #: unrelated: this is a tile of the score, that is a tile of the pool.
 DEFAULT_BLOCK = 32
+
+#: The backend the rectangle read runs on. It has no tile and no loop, so it has no
+#: choice to make: it is one gather and two matmuls, which is torch either way. The
+#: streamed read's backends are `select_backend`'s, "triton" or "tlsim".
+TORCH = "torch"
 
 
 class ReadUnwitnessed(AssertionError):
@@ -89,6 +112,12 @@ class ReadStats:
                  doing what it was launched to do.
     block:       the score tile the streamed read folds, and 0 on the rectangle,
                  which has no tile because it has no loop.
+    backend:     what the last read actually ran on: "torch" for the rectangle,
+                 "triton" or "tlsim" for the streamed one, and "" when nothing has
+                 run yet. Day 62. `mode` is what the operator asked for and this is
+                 what the box could give them, and a server that asked for the
+                 streamed read on a machine with no Triton differs from one that got
+                 the kernel in no other field of this payload.
     calls:       reads issued. One per layer per decode step, so it is roughly
                  `steps * num_hidden_layers` and not `steps`.
     rows:        sequences summed over those calls, which is the batch size
@@ -106,6 +135,7 @@ class ReadStats:
 
     mode: str = RECTANGLE
     block: int = 0
+    backend: str = ""
     calls: int = 0
     rows: int = 0
     score_cells: int = 0
@@ -146,12 +176,23 @@ class ReadStats:
         when the cache is built and cannot change it, so a mismatch is two processes
         or one payload parsed wrong, and subtracting them would produce a perfectly
         plausible window over nothing.
+
+        Refuses a change of backend on the same grounds, with one allowance: an
+        earlier reading taken before the first read has an empty backend, and that is
+        a reading of a process that had not yet found out, not of a different one. So
+        "" to "triton" is a legal window and "tlsim" to "triton" is not.
         """
         if self.mode != earlier.mode:
             raise ValueError(
                 f"these two readings are not of the same read ({earlier.mode} then "
                 f"{self.mode}): a process picks its read at construction, so a "
                 "window across a change of mode is a window across two processes"
+            )
+        if earlier.backend and self.backend and self.backend != earlier.backend:
+            raise ValueError(
+                f"these two readings are not of the same backend ({earlier.backend} "
+                f"then {self.backend}): a device does not acquire Triton mid-run, so "
+                "this window spans two processes and its per-call costs are a blend"
             )
         deltas = {
             name: getattr(self, name) - getattr(earlier, name)
@@ -177,6 +218,7 @@ class ReadStats:
         return cls(
             mode=payload.get("mode", RECTANGLE),
             block=int(payload.get("block", 0)),
+            backend=payload.get("backend", ""),
             calls=int(payload.get("calls", 0)),
             rows=int(payload.get("rows", 0)),
             score_cells=int(payload.get("score_cells", 0)),
@@ -187,6 +229,7 @@ class ReadStats:
         return {
             "mode": self.mode,
             "block": self.block,
+            "backend": self.backend,
             "calls": self.calls,
             "rows": self.rows,
             "score_cells": self.score_cells,
@@ -195,8 +238,9 @@ class ReadStats:
 
     def render(self) -> str:
         tile = f" block {self.block}" if self.block else ""
+        on = f" on {self.backend}" if self.backend else ""
         return (
-            f"{self.mode}{tile}: {self.calls} reads, {self.rows_per_call:.1f} rows "
+            f"{self.mode}{tile}{on}: {self.calls} reads, {self.rows_per_call:.1f} rows "
             f"each, held {self.held_cells} of {self.score_cells} cells "
             f"({self.saving:.1f}x)"
         )
@@ -229,6 +273,7 @@ class PagedRead:
             raise ValueError(f"a tile holds at least one key; got {block}")
         self.mode = mode
         self.block = block
+        self.backend = ""
         self.calls = 0
         self.rows = 0
         self.score_cells = 0
@@ -251,9 +296,19 @@ class PagedRead:
         context_bounds: tuple[int, int] | None = None,
         validated: bool = False,
     ) -> torch.Tensor:
-        """Run the picked read and charge it for what it held."""
+        """Run the picked read, record what ran it, and charge it for what it held.
+
+        The backend is read off the device rather than stored at construction, and it
+        is recorded *after* the call rather than before. A `PagedRead` is built before
+        anything has been moved anywhere, so the only moment the answer is knowable is
+        the moment a tensor arrives, and a call that was refused ran on nothing.
+        `select_backend` is a string compare on `q.device.type`, so asking every call
+        costs nothing and removes the failure where the cache was built on the host
+        and the engine later moved to a card.
+        """
         if self.streamed:
-            out = paged_attention_batched_kernel(
+            backend = select_backend(q.device)
+            out = paged_attention_batched(
                 q,
                 k_pool,
                 v_pool,
@@ -266,6 +321,7 @@ class PagedRead:
                 validated=validated,
             )
         else:
+            backend = TORCH
             out = paged_attention_batched_reference(
                 q,
                 k_pool,
@@ -277,6 +333,7 @@ class PagedRead:
                 context_bounds=context_bounds,
                 validated=validated,
             )
+        self.backend = backend
         self._charge(q, slot_mapping)
         return out
 
@@ -306,6 +363,7 @@ class PagedRead:
         return ReadStats(
             mode=self.mode,
             block=self.block if self.streamed else 0,
+            backend=self.backend,
             calls=self.calls,
             rows=self.rows,
             score_cells=self.score_cells,

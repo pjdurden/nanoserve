@@ -113,6 +113,61 @@ def test_a_reading_renders_the_mode_the_calls_and_the_saving():
     assert "streamed" in line and "4" in line and "32.0x" in line
 
 
+# --- the backend a reading ran on (Day 62) --------------------------------------------
+
+
+def test_a_reading_that_has_run_nothing_names_no_backend():
+    """"" is its own answer. A read is constructed before any tensor exists, so
+    there is a window in which the process genuinely does not know which backend it
+    will get, and reporting a guess for it would be the one thing this payload is
+    supposed to stop."""
+    assert ReadStats().backend == ""
+    assert "on" not in ReadStats(calls=3).render()
+
+
+def test_a_reading_renders_the_backend_it_ran_on():
+    """Day 62 splits what was asked for from what the box could give. A `streamed`
+    server on a machine with no Triton is `tlsim`, which is correct and three orders
+    of magnitude slower, and it differs from the kernel in no other field here."""
+    line = ReadStats(mode=STREAMED, block=32, backend="tlsim", calls=4, rows=16,
+                     score_cells=8192, held_cells=256).render()
+    assert "streamed" in line and "on tlsim" in line
+
+
+def test_the_backend_survives_the_wire():
+    stats = ReadStats(mode=STREAMED, block=64, backend="triton", calls=7, rows=21,
+                      score_cells=900, held_cells=84)
+    assert ReadStats.from_dict(stats.as_dict()) == stats
+
+
+def test_a_payload_with_no_backend_reads_as_unknown_rather_than_as_the_fallback():
+    """An older process did not publish the field, and "tlsim" would be a claim about
+    it. The empty string is the only honest default: `mode` can be guessed because
+    the rectangle is what a process that never heard of the flag was running, and a
+    backend cannot, because both of them predate the field."""
+    assert ReadStats.from_dict({"calls": 3, "mode": STREAMED}).backend == ""
+
+
+def test_a_window_across_two_backends_is_refused():
+    """A device does not acquire Triton mid-run. Two readings that disagree are two
+    processes, and their per-call costs would average into a number describing
+    neither."""
+    with pytest.raises(ValueError, match="same backend"):
+        ReadStats(mode=STREAMED, backend="triton", calls=5).since(
+            ReadStats(mode=STREAMED, backend="tlsim", calls=1)
+        )
+
+
+def test_a_window_from_before_the_first_read_is_allowed():
+    """The one allowance, and it is the common case: a harness takes its baseline the
+    moment the server is up, which is before any decode step has run, so the earlier
+    reading has no backend to disagree with."""
+    window = ReadStats(mode=STREAMED, backend="tlsim", calls=9).since(
+        ReadStats(mode=STREAMED, calls=0)
+    )
+    assert window.calls == 9 and window.backend == "tlsim"
+
+
 # --- PagedRead: the dispatch ----------------------------------------------------------
 
 
@@ -183,6 +238,41 @@ def test_the_streamed_read_holds_a_tile_and_is_charged_the_row():
     assert stats.score_cells == 4 * 8 * 8
     assert stats.held_cells == 4 * 8 * 2
     assert stats.saving == 4.0
+
+
+def test_a_read_on_host_tensors_reports_the_cpu_model_it_actually_ran():
+    """The dispatch is real: a CPU tensor cannot reach a jitted kernel whatever is
+    installed, so a streamed read on this box is `tlsim` and says so. This is the
+    assertion that separates "the flag reached the cache" from "the kernel ran"."""
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 6, [6, 4, 2])
+    read = PagedRead(mode=STREAMED, block=4)
+    read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().backend == "tlsim"
+
+
+def test_the_rectangle_read_reports_torch_because_it_has_no_choice_to_make():
+    """One gather and two matmuls, which is torch on a card and torch on a laptop.
+    Naming it anyway keeps the field non-empty on the default path, so an empty
+    backend means "nothing has run" and never "this read does not report"."""
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 6, [6, 4, 2])
+    read = PagedRead()
+    read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().backend == "torch"
+
+
+def test_a_read_that_was_refused_names_no_backend():
+    """Recorded after the call, like the counters and for the same reason: a call
+    that raised ran on nothing, and a payload that claims otherwise would make a
+    server that never completed a decode step look like one that did."""
+    k, v = _pool()
+    q, mapping, lens = _batch(2, 4, [4, 9])  # a row claiming more history than it has
+    read = PagedRead(mode=STREAMED, block=2)
+    with pytest.raises(ValueError, match="more history"):
+        read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().backend == ""
+    assert read.stats().calls == 0
 
 
 def test_a_tile_wider_than_the_context_is_charged_the_context():

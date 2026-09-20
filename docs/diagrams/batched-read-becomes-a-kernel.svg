@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The decode read becomes a kernel, and tiles turn out not to be seconds</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 59 wrote the streamed batched read as a grid of tlsim programs and Day 62 makes it a triton.jit kernel: same grid over</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">(row, query head), same online softmax, same tile. One thing is genuinely new on the way down, and it is the loop bound: a</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">row's extent is loaded from device memory, not computed from a program id. That is what makes the walk ragged at all.</text>
+
+  <!-- ===================== LEFT TOP: one program ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">One program, and the three integers it turns into pointers</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="178" width="486" height="88" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="82" y="196" fill="#4338ca">i = tl.program_id(0)</text>
+    <text x="300" y="196" fill="#94a3b8">which row of the batch</text>
+    <text x="82" y="212" fill="#4338ca">h = tl.program_id(1)</text>
+    <text x="300" y="212" fill="#94a3b8">which query head, kv_head = h // N_REP</text>
+    <text x="82" y="230" font-weight="700" fill="#15803d">ctx = tl.load(ctx_ptr + i)</text>
+    <text x="300" y="230" font-size="9" fill="#15803d">the loop bound, read off the device</text>
+    <text x="82" y="248" fill="#475569">for b in range(tl.cdiv(ctx, BLOCK_N)):</text>
+    <text x="330" y="248" fill="#94a3b8">this row's tiles, nobody else's</text>
+  </g>
+
+  <text x="72" y="288" font-size="10.5" fill="#64748b">Day 23's kernel knew its extent before it loaded anything: past + i + 1, and past is a</text>
+  <text x="72" y="303" font-size="10.5" fill="#64748b">host integer baked into the launch. Here the number that changes every step changes</text>
+  <text x="72" y="318" font-size="10.5" fill="#64748b">inside a buffer, which is why row 0 goes round once while row 3 goes round a hundred</text>
+  <text x="72" y="333" font-size="10.5" fill="#64748b">times out of one launch, and why the whole thing survives CUDA-graph capture unchanged.</text>
+
+  <line x1="72" y1="344" x2="558" y2="344" stroke="#e2e8f0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="362" fill="#475569">stride_slot = n_kv*d</text>
+    <text x="226" y="362" fill="#475569">stride_q_row = n_q*d</text>
+    <text x="382" y="362" font-weight="700" fill="#b45309">stride_map = max_ctx</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the dispatch ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">One flag, two backends, and why the payload grew a field</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="642" y="178" width="150" height="26" rx="4" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1"/>
+    <text x="652" y="195" fill="#4338ca">mode = streamed</text>
+
+    <rect x="866" y="168" width="262" height="26" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+    <text x="876" y="185" fill="#166534">backend triton: the jitted kernel</text>
+
+    <rect x="866" y="204" width="262" height="26" rx="4" fill="#fef9c3" stroke="#fde047" stroke-width="1"/>
+    <text x="876" y="221" fill="#a16207">backend tlsim: the Python loop</text>
+  </g>
+  <path d="M 798 188 L 860 181" stroke="#15803d" stroke-width="1.6" marker-end="url(#arrowgreen)"/>
+  <path d="M 798 194 L 860 215" stroke="#a16207" stroke-width="1.6"/>
+  <text x="800" y="248" font-size="9" font-family="ui-monospace, monospace" fill="#94a3b8">cuda tensor + triton installed</text>
+
+  <text x="642" y="276" font-size="10.5" fill="#64748b">The two agree to a few ulps, so the backend is a speed decision and never a numerics</text>
+  <text x="642" y="291" font-size="10.5" fill="#64748b">one. It is also the difference between a Python loop and a card, and mode alone</text>
+  <text x="642" y="306" font-size="10.5" fill="#64748b">cannot tell them apart: a server launched --streamed-read on a box with no Triton</text>
+  <text x="642" y="321" font-size="10.5" font-weight="700" fill="#b45309">reports streamed, means tlsim, and is identical in every other field of /health.</text>
+
+  <line x1="642" y1="334" x2="1128" y2="334" stroke="#e2e8f0" stroke-width="1"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="352" fill="#475569">"mode"</text>
+    <text x="720" y="352" fill="#334155">what the operator asked for</text>
+    <text x="642" y="368" fill="#475569">"backend"</text>
+    <text x="720" y="368" fill="#334155">what the box could give them, "" until a read runs</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: sum against max ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">A saving in tiles is a sum. A launch is billed as a max.</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10.5" fill="#64748b">Four rows, 8 / 8 / 8 / 800 tokens, 8-key tiles. Each bar is one program's walk.</text>
+
+  <g>
+    <rect x="72" y="458" width="8" height="13" rx="2" fill="#15803d"/>
+    <text x="96" y="469" font-size="9.5" font-family="ui-monospace, monospace" fill="#475569">row 0: 1 tile</text>
+    <rect x="72" y="476" width="8" height="13" rx="2" fill="#15803d"/>
+    <text x="96" y="487" font-size="9.5" font-family="ui-monospace, monospace" fill="#475569">row 1: 1 tile</text>
+    <rect x="72" y="494" width="8" height="13" rx="2" fill="#15803d"/>
+    <text x="96" y="505" font-size="9.5" font-family="ui-monospace, monospace" fill="#475569">row 2: 1 tile</text>
+    <rect x="72" y="512" width="400" height="13" rx="2" fill="#b91c1c"/>
+    <text x="482" y="523" font-size="9.5" font-family="ui-monospace, monospace" fill="#b91c1c">100 tiles</text>
+  </g>
+  <line x1="472" y1="452" x2="472" y2="534" stroke="#b91c1c" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="468" y="546" text-anchor="end" font-size="9.5" font-family="ui-monospace, monospace" fill="#94a3b8">the launch ends here</text>
+
+  <text x="72" y="570" font-size="10.5" fill="#64748b">Skipped tiles are skipped waves only when the grid is bigger than the machine. When it</text>
+  <text x="72" y="585" font-size="10.5" fill="#64748b">is resident, the clock is the slowest program and the batch saved 3.88x of nothing.</text>
+
+  <g font-size="12" font-family="ui-monospace, monospace">
+    <text x="72" y="614" font-weight="700" fill="#334155">work = wave x imbalance</text>
+    <text x="300" y="614" font-size="10" fill="#64748b">exactly, on every batch</text>
+    <text x="72" y="630" font-size="10" fill="#64748b">tiles skipped</text>
+    <text x="196" y="630" font-size="10" fill="#15803d">what a resident grid keeps</text>
+    <text x="392" y="630" font-size="10" fill="#b91c1c">what only a queue keeps</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">gridbench.py, 32 heads, 32-key tiles, 8192-wide mapping</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">rows</text>
+    <text x="700" y="448" font-weight="700" fill="#334155">longest</text>
+    <text x="772" y="448" font-weight="700" fill="#334155">spread</text>
+    <text x="862" y="448" font-weight="700" fill="#334155">work</text>
+    <text x="930" y="448" font-weight="700" fill="#334155">wave</text>
+    <text x="1000" y="448" font-weight="700" fill="#334155">tight</text>
+    <text x="1072" y="448" font-weight="700" fill="#334155">imbal</text>
+
+    <text x="642" y="468" fill="#475569">8</text><text x="700" y="468" fill="#475569">512</text>
+    <text x="772" y="468" fill="#475569">uniform</text>
+    <text x="862" y="468" fill="#15803d">16.00x</text><text x="930" y="468" fill="#15803d">16.00x</text>
+    <text x="1000" y="468" fill="#b91c1c">1.00x</text><text x="1072" y="468" fill="#475569">1.00x</text>
+
+    <text x="642" y="488" fill="#475569">8</text><text x="700" y="488" fill="#475569">512</text>
+    <text x="772" y="488" fill="#475569">long tail</text>
+    <text x="862" y="488" fill="#15803d">68.27x</text><text x="930" y="488" fill="#15803d">16.00x</text>
+    <text x="1000" y="488" fill="#b91c1c">1.00x</text><text x="1072" y="488" fill="#475569">4.27x</text>
+
+    <text x="642" y="508" fill="#475569">256</text><text x="700" y="508" fill="#475569">4096</text>
+    <text x="772" y="508" fill="#475569">uniform</text>
+    <text x="862" y="508" fill="#15803d">2.00x</text><text x="930" y="508" fill="#15803d">2.00x</text>
+    <text x="1000" y="508" fill="#b91c1c">1.00x</text><text x="1072" y="508" fill="#475569">1.00x</text>
+
+    <text x="642" y="528" fill="#475569">256</text><text x="700" y="528" fill="#475569">4096</text>
+    <text x="772" y="528" fill="#475569">long tail</text>
+    <text x="862" y="528" fill="#15803d">8.53x</text><text x="930" y="528" fill="#15803d">2.00x</text>
+    <text x="1000" y="528" fill="#b91c1c">1.00x</text><text x="1072" y="528" fill="#475569">4.27x</text>
+  </g>
+
+  <line x1="642" y1="544" x2="1128" y2="544" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="562" font-size="10.5" fill="#64748b">tight is the same batch against a mapping as wide as its own longest row, and it is</text>
+  <text x="642" y="577" font-size="10.5" fill="#64748b">1.00x in every row of the file. All of the wave column is Day 61: the streamed bucket</text>
+  <text x="642" y="592" font-size="10.5" fill="#64748b">set rounds the width to max_model_len, so the rectangle it is compared against is the</text>
+  <text x="642" y="607" font-size="10.5" fill="#64748b">one a rectangle read would really have been handed.</text>
+  <text x="642" y="628" font-size="10.5" font-weight="700" fill="#b91c1c">No column here is a second. The card is still unbooked, and that is the next day.</text>
+</svg>
