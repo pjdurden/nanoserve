@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The tail becomes parallelism, and the wait becomes idle programs</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 62 measured it: one program per (row, head), every program resident, and the launch ends when its slowest one retires.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Flash-decoding is what vLLM and SGLang do about it. Cut a row's history into fixed chunks, give each chunk its own program</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">and its own online softmax, and reduce the partials in a second pass. The tail shrinks by the split count. Nothing is free.</text>
+
+  <!-- ===================== LEFT TOP: the cut ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">One long program becomes four short ones</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="184" font-size="10.5" fill="#64748b">Four rows, 800 / 8 / 8 / 8 tokens, 8-key tiles. Each bar is one program's serial walk.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="204" fill="#94a3b8">splits = 1</text>
+    <rect x="150" y="194" width="320" height="12" rx="2" fill="#b91c1c"/>
+    <text x="478" y="204" fill="#b91c1c">100 tiles</text>
+    <rect x="150" y="211" width="4" height="12" rx="2" fill="#15803d"/>
+    <rect x="150" y="228" width="4" height="12" rx="2" fill="#15803d"/>
+    <rect x="150" y="245" width="4" height="12" rx="2" fill="#15803d"/>
+    <text x="164" y="240" font-size="9" fill="#94a3b8">three rows of 1 tile, finished and waiting</text>
+  </g>
+  <line x1="470" y1="190" x2="470" y2="262" stroke="#b91c1c" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="286" fill="#94a3b8">splits = 4</text>
+    <rect x="150" y="276" width="78" height="12" rx="2" fill="#15803d"/>
+    <rect x="232" y="276" width="78" height="12" rx="2" fill="#15803d"/>
+    <rect x="314" y="276" width="78" height="12" rx="2" fill="#15803d"/>
+    <rect x="396" y="276" width="78" height="12" rx="2" fill="#15803d"/>
+    <text x="150" y="304" font-size="9" fill="#64748b">same row, same tiles, four programs, 25 tiles each</text>
+    <rect x="150" y="312" width="4" height="12" rx="2" fill="#15803d"/>
+    <rect x="232" y="312" width="78" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/>
+    <rect x="314" y="312" width="78" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/>
+    <rect x="396" y="312" width="78" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="150" y="340" font-size="9" fill="#94a3b8">a short row's later chunks: launched, empty, retired</text>
+  </g>
+  <line x1="228" y1="272" x2="228" y2="330" stroke="#15803d" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="222" y="356" text-anchor="end" font-size="9.5" font-family="ui-monospace, monospace" fill="#15803d">the launch ends here now</text>
+
+  <!-- ===================== RIGHT TOP: the two passes ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Two passes, and a workspace between them</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="642" y="176" width="220" height="70" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="652" y="194" font-weight="700" fill="#4338ca">pass 1: (row, head, split)</text>
+    <text x="652" y="210" fill="#475569">lo = s * KEYS_PER_SPLIT</text>
+    <text x="652" y="224" fill="#475569">hi = min(lo + chunk, ctx)</text>
+    <text x="652" y="238" font-weight="700" fill="#15803d">store m, denom, acc</text>
+
+    <rect x="908" y="176" width="220" height="70" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="918" y="194" font-weight="700" fill="#166534">pass 2: (row, head)</text>
+    <text x="918" y="210" fill="#475569">M = max(m_s)</text>
+    <text x="918" y="224" font-weight="700" fill="#166534">alpha = exp(m_s - M)</text>
+    <text x="918" y="238" fill="#475569">out = sum(a*acc)/sum(a*d)</text>
+  </g>
+  <path d="M 866 211 L 902 211" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="884" y="204" text-anchor="middle" font-size="8.5" font-family="ui-monospace, monospace" fill="#94a3b8">fp32</text>
+
+  <text x="642" y="270" font-size="10.5" fill="#64748b">The rescale is the online softmax's own alpha, hoisted one level out: once across</text>
+  <text x="642" y="285" font-size="10.5" fill="#64748b">programs instead of once across tiles. That is why a split is exact and not approximate.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="642" y="296" width="486" height="34" rx="5" fill="#fef9c3" stroke="#fde047" stroke-width="1.2"/>
+    <text x="652" y="316" font-weight="700" fill="#a16207">an empty chunk stores -inf, 0, 0 -- and exp(-inf - M) is exactly 0</text>
+  </g>
+  <text x="642" y="348" font-size="10.5" fill="#64748b">It stores them rather than returning early, because pass 2 reads that slot either way.</text>
+  <text x="642" y="365" font-size="10.5" font-weight="700" fill="#b45309">The workspace is [rows, heads, splits] x (head_dim + 2) fp32, and it is new memory.</text>
+
+  <!-- ===================== LEFT BOTTOM: the identity ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">Day 59's skipped tiles came back as grid area</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10.5" fill="#64748b">Cut the width into one-tile chunks and a row of length L fills exactly cdiv(L, block)</text>
+  <text x="72" y="461" font-size="10.5" fill="#64748b">of its chunks. The empty ones number rectangle_tiles - tiles, to the program.</text>
+
+  <g>
+    <text x="72" y="490" font-size="9.5" font-family="ui-monospace, monospace" fill="#94a3b8">row 0</text>
+    <rect x="122" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="144" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="166" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="188" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="210" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="232" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="254" y="480" width="18" height="12" rx="2" fill="#15803d"/><rect x="276" y="480" width="18" height="12" rx="2" fill="#15803d"/>
+    <text x="72" y="510" font-size="9.5" font-family="ui-monospace, monospace" fill="#94a3b8">row 1</text>
+    <rect x="122" y="500" width="18" height="12" rx="2" fill="#15803d"/><rect x="144" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="166" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="188" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="210" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="232" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="254" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="276" y="500" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="72" y="530" font-size="9.5" font-family="ui-monospace, monospace" fill="#94a3b8">row 2</text>
+    <rect x="122" y="520" width="18" height="12" rx="2" fill="#15803d"/><rect x="144" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="166" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="188" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="210" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="232" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="254" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/><rect x="276" y="520" width="18" height="12" rx="2" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="316" y="500" font-size="9.5" font-family="ui-monospace, monospace" fill="#15803d">walked</text>
+    <text x="316" y="516" font-size="9.5" font-family="ui-monospace, monospace" fill="#94a3b8">launched, empty</text>
+  </g>
+
+  <g font-size="12" font-family="ui-monospace, monospace">
+    <text x="72" y="566" font-weight="700" fill="#334155">idle_programs = rectangle_tiles - tiles</text>
+    <text x="72" y="584" font-size="10" fill="#64748b">exactly, at a one-tile chunk: the same tiles Day 59 counted as skipped</text>
+  </g>
+  <text x="72" y="608" font-size="10.5" fill="#64748b">The streamed read's whole win did not go away. It changed what it is made of, and an</text>
+  <text x="72" y="623" font-size="10.5" fill="#64748b">idle program costs a launch slot rather than a memory read. That is why it is worth it.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">splitbench.py, 8 rows, 32 heads, 32-key tiles, 8192 wide</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">spread</text>
+    <text x="746" y="448" font-weight="700" fill="#334155">splits</text>
+    <text x="820" y="448" font-weight="700" fill="#334155">tail</text>
+    <text x="886" y="448" font-weight="700" fill="#334155">wave</text>
+    <text x="962" y="448" font-weight="700" fill="#334155">idle</text>
+    <text x="1030" y="448" font-weight="700" fill="#334155">imbal</text>
+    <text x="1100" y="448" font-weight="700" fill="#334155">MiB</text>
+
+    <text x="642" y="468" fill="#475569">long tail</text><text x="746" y="468" fill="#475569">1</text>
+    <text x="820" y="468" fill="#b91c1c">256</text><text x="886" y="468" fill="#475569">1.00x</text>
+    <text x="962" y="468" fill="#475569">0%</text><text x="1030" y="468" fill="#b91c1c">4.27x</text><text x="1100" y="468" fill="#475569">0.13</text>
+
+    <text x="642" y="488" fill="#475569">long tail</text><text x="746" y="488" fill="#475569">4</text>
+    <text x="820" y="488" fill="#15803d">64</text><text x="886" y="488" fill="#15803d">4.00x</text>
+    <text x="962" y="488" fill="#a16207">66%</text><text x="1030" y="488" fill="#b91c1c">4.27x</text><text x="1100" y="488" fill="#475569">0.51</text>
+
+    <text x="642" y="508" fill="#475569">long tail</text><text x="746" y="508" fill="#475569">16</text>
+    <text x="820" y="508" fill="#15803d">16</text><text x="886" y="508" fill="#15803d">16.00x</text>
+    <text x="962" y="508" fill="#a16207">77%</text><text x="1030" y="508" fill="#b91c1c">4.27x</text><text x="1100" y="508" fill="#475569">2.03</text>
+
+    <text x="642" y="528" fill="#475569">uniform</text><text x="746" y="528" fill="#475569">16</text>
+    <text x="820" y="528" fill="#15803d">16</text><text x="886" y="528" fill="#15803d">16.00x</text>
+    <text x="962" y="528" fill="#15803d">0%</text><text x="1030" y="528" fill="#475569">1.00x</text><text x="1100" y="528" fill="#475569">2.03</text>
+  </g>
+
+  <line x1="642" y1="544" x2="1128" y2="544" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="562" font-size="10.5" font-weight="700" fill="#b45309">The imbalance column does not move. Not once, on any batch in the file.</text>
+  <text x="642" y="578" font-size="10.5" fill="#64748b">Cutting the width uniformly halves the tail and halves the mean, so the ratio is fixed</text>
+  <text x="642" y="593" font-size="10.5" fill="#64748b">by construction. The split does not remove the imbalance; it moves it out of the wait</text>
+  <text x="642" y="608" font-size="10.5" fill="#64748b">and into the idle count, where a program costs a slot instead of a hundred tiles.</text>
+  <text x="642" y="628" font-size="10.5" font-weight="700" fill="#b91c1c">Still not one measured second. The card is still unbooked.</text>
+</svg>

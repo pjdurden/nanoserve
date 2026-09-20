@@ -632,7 +632,7 @@ def test_triton_batched_kernel_uses_the_gqa_head_mapping_from_the_config():
     """
     cfg = ModelConfig(
         vocab_size=64,
-        hidden_size=192,
+        hidden_size=384,  # 8 heads x 48 channels
         intermediate_size=256,
         num_hidden_layers=2,
         num_attention_heads=8,
