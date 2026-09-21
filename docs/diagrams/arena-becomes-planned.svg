@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The allocation was legal. It was just unpriced.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 63 said a captured region cannot allocate. It can: a torch.empty under capture is served from the graph's pool and its</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">address is baked into the replay. What is wrong with it is quieter. Nothing charged for it, so the plan reported an arena</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">81x under what the process spends, and the allocator was the only thing that knew.</text>
+
+  <!-- ===================== LEFT TOP: who owns the buffer ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">Three buffers, per read, per layer, per step</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="178" width="226" height="98" rx="5" fill="#fef2f2" stroke="#fecaca" stroke-width="1.2"/>
+    <text x="84" y="196" font-weight="700" fill="#b91c1c">the read owns it (Day 63)</text>
+    <text x="84" y="214" fill="#475569">part_m = torch.empty(...)</text>
+    <text x="84" y="228" fill="#475569">part_denom = torch.empty(...)</text>
+    <text x="84" y="242" fill="#475569">part_acc = torch.empty(...)</text>
+    <text x="84" y="264" font-weight="700" fill="#b91c1c">48 allocator calls a step</text>
+
+    <rect x="330" y="178" width="226" height="98" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="342" y="196" font-weight="700" fill="#166534">the plan owns it (Day 64)</text>
+    <text x="342" y="214" fill="#475569">allocate_partials(...)</text>
+    <text x="342" y="228" fill="#475569">ws.rows(rows) -&gt; a window</text>
+    <text x="342" y="242" fill="#475569">paged_attention_split(</text>
+    <text x="342" y="256" fill="#475569">    ..., partials=window)</text>
+    <text x="342" y="272" font-weight="700" fill="#166534">3, once, at boot</text>
+  </g>
+  <path d="M 302 226 L 326 226" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <text x="72" y="300" font-size="10.5" fill="#64748b">The bytes are the same either way. What the plan buys is that they are the same bytes</text>
+  <text x="72" y="315" font-size="10.5" fill="#64748b">at the same address, which is the only form a replay can be bound to.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="72" y="326" width="484" height="34" rx="5" fill="#fef9c3" stroke="#fde047" stroke-width="1.2"/>
+    <text x="84" y="346" font-weight="700" fill="#a16207">nothing is zeroed: every program stores its slot, empty chunks included</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: only the row axis narrows ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">Only the row axis narrows to a window</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="642" y="184" font-size="10.5" fill="#64748b">Both passes address the workspace flat, because that is the form tl.store takes:</text>
+  <text x="642" y="204" font-size="11.5" font-weight="700" font-family="ui-monospace, monospace" fill="#4338ca">slot = (row * n_q + head) * splits + split</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="234" fill="#94a3b8">arena [8, n_q, 16]</text>
+
+    <rect x="642" y="244" width="300" height="14" rx="2" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+    <rect x="642" y="244" width="150" height="14" rx="2" fill="#15803d"/>
+    <text x="956" y="255" font-weight="700" fill="#166534">ws[:4]  contiguous, base address</text>
+
+    <rect x="642" y="278" width="300" height="14" rx="2" fill="#fee2e2" stroke="#fecaca" stroke-width="1"/>
+    <rect x="642" y="278" width="20" height="14" rx="2" fill="#b91c1c"/>
+    <rect x="680" y="278" width="20" height="14" rx="2" fill="#b91c1c"/>
+    <rect x="718" y="278" width="20" height="14" rx="2" fill="#b91c1c"/>
+    <rect x="756" y="278" width="20" height="14" rx="2" fill="#b91c1c"/>
+    <text x="956" y="289" font-weight="700" fill="#b91c1c">ws[:, :, :8]  stride is still 16</text>
+  </g>
+
+  <text x="642" y="318" font-size="10.5" fill="#64748b">The second is a tensor of exactly the right shape whose stride is the allocated split</text>
+  <text x="642" y="333" font-size="10.5" fill="#64748b">count. Every program past the first writes its neighbour's slot, and nothing faults:</text>
+  <text x="642" y="348" font-size="10.5" font-weight="700" fill="#b45309">the reduction folds whatever it finds and returns a finite, plausible, wrong vector.</text>
+  <text x="642" y="366" font-size="10.5" fill="#64748b">check_partials refuses anything non-contiguous. That clause is the day's one gate.</text>
+
+  <!-- ===================== LEFT BOTTOM: the two maxima ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The two maxima sit at opposite ends of the same list</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <text x="72" y="446" font-size="10.5" fill="#64748b">A list is a graph per shape against one arena, so one split count has to cover all of it.</text>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="474" font-weight="700" fill="#334155">rows</text>
+    <text x="150" y="474" font-weight="700" fill="#334155">wants</text>
+    <text x="232" y="474" font-weight="700" fill="#334155">this shape</text>
+    <text x="360" y="474" font-weight="700" fill="#334155">charged</text>
+
+    <text x="72" y="494" fill="#475569">1</text><text x="150" y="494" font-weight="700" fill="#4338ca">16</text>
+    <text x="232" y="494" fill="#475569">0.33 MB</text><text x="360" y="494" fill="#475569">0.33 MB</text>
+
+    <text x="72" y="512" fill="#475569">8</text><text x="150" y="512" fill="#475569">8</text>
+    <text x="232" y="512" fill="#475569">1.33 MB</text><text x="360" y="512" fill="#475569">2.65 MB</text>
+
+    <text x="72" y="530" fill="#475569">32</text><text x="150" y="530" fill="#475569">2</text>
+    <text x="232" y="530" fill="#475569">1.33 MB</text><text x="360" y="530" fill="#a16207">10.62 MB</text>
+
+    <text x="72" y="548" fill="#475569">256</text><text x="150" y="548" fill="#475569">1</text>
+    <text x="232" y="548" font-weight="700" fill="#4338ca">5.31 MB</text><text x="360" y="548" font-weight="700" fill="#b91c1c">84.93 MB</text>
+  </g>
+
+  <line x1="72" y1="562" x2="558" y2="562" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="582" font-size="10.5" font-weight="700" fill="#b91c1c">The split axis peaks at 1 row. The arena peaks at 256. One rectangle is 16x.</text>
+  <text x="72" y="600" font-size="10.5" fill="#64748b">The alternative is a constexpr per row bucket, which is a compiled kernel per bucket,</text>
+  <text x="72" y="615" font-size="10.5" fill="#64748b">which is the specialisation Day 61 spent a day collapsing. The trade is stated, not hidden.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">arenabench.py, 256 rows, 32 heads, 8192 wide, 32-key tiles</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="450" font-weight="700" fill="#334155">read</text>
+    <text x="810" y="450" font-weight="700" fill="#334155">shapes</text>
+    <text x="900" y="450" font-weight="700" fill="#334155">arena</text>
+    <text x="1030" y="450" font-weight="700" fill="#334155">vs rectangle</text>
+
+    <text x="642" y="472" fill="#475569">rectangle (Day 28)</text><text x="810" y="472" fill="#475569">36</text>
+    <text x="900" y="472" fill="#b91c1c">268.44 MB</text><text x="1030" y="472" fill="#475569">1.0x</text>
+
+    <text x="642" y="492" fill="#475569">streamed (Day 59)</text><text x="810" y="492" fill="#475569">9</text>
+    <text x="900" y="492" fill="#15803d">1.05 MB</text><text x="1030" y="492" fill="#15803d">256.0x</text>
+
+    <text x="642" y="512" fill="#475569">split, 16-way (Day 63)</text><text x="810" y="512" fill="#475569">9</text>
+    <text x="900" y="512" fill="#a16207">84.93 MB</text><text x="1030" y="512" fill="#a16207">3.2x</text>
+  </g>
+
+  <line x1="642" y1="528" x2="1128" y2="528" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="548" font-size="10.5" font-weight="700" fill="#b45309">Day 61's plan reported 1.05 MB for a process that spends 84.93 MB.</text>
+  <text x="642" y="566" font-size="10.5" fill="#64748b">The tiles are per program and a split is a program, so they went up 16x too. The</text>
+  <text x="642" y="581" font-size="10.5" fill="#64748b">partials are 68 MB of that: fp32 whatever the pool holds, because a different program</text>
+  <text x="642" y="596" font-size="10.5" fill="#64748b">rescales them by exp(m - M) after they have been through memory.</text>
+  <text x="642" y="620" font-size="10.5" font-weight="700" fill="#b91c1c">Still not one measured second. Day 58 put a card on the list and it is still unbooked.</text>
+</svg>

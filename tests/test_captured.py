@@ -49,6 +49,7 @@ from nanoserve.captured import (
     ACTIVATION_ITEMSIZE,
     DEFAULT_CAPTURE_LIMIT,
     DEFAULT_WARMUP,
+    PARTIAL_ITEMSIZE,
     CaptureUnsound,
     CapturedDecode,
     CapturedGraph,
@@ -64,10 +65,14 @@ from nanoserve.captured import (
     check_replays_dominate,
     eager_recorder,
     launch_saving_s,
+    partial_cells,
     pool_sharing_ratio,
     private_pool_bytes,
+    read_workspace_bytes,
     score_cells,
     shared_pool_bytes,
+    split_score_cells,
+    split_workspace_bytes,
     streamed_score_cells,
     streamed_workspace_bytes,
     workspace_bytes,
@@ -641,6 +646,117 @@ def test_the_widest_capture_is_where_the_saving_lives():
 
     assert workspace_saving(widest, 32, block=128) > 60.0
     assert streamed_workspace_bytes(widest, 32, block=128) < workspace_bytes(widest, 32)
+
+
+def test_partial_cells_is_a_max_a_denominator_and_an_accumulator_per_program():
+    """Day 64. The split read's workspace, which is not a score at all.
+
+    Every other number in this section prices an intermediate of the *softmax*: a
+    rectangle of scores, or one tile of one. This one prices what a program hands to
+    another program, and the `+ 2` is the running max and the denominator riding
+    along with the `head_dim`-wide accumulator they belong to.
+    """
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    assert partial_cells(shape, num_heads=8, splits=16, head_dim=64) == 4 * 8 * 16 * 66
+
+
+def test_a_split_holds_one_score_tile_per_program_and_a_split_is_a_program():
+    """The tile did not shrink; there are more of them, one per chunk per row."""
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    assert split_score_cells(shape, 8, block=128, splits=16) == 16 * streamed_score_cells(
+        shape, 8, block=128
+    )
+
+
+def test_split_workspace_bytes_is_two_currencies_added_up():
+    """And it is the only workspace in this file that is, which is the point.
+
+    A score tile is activations and follows the pool: bf16 on a card. A partial is
+    rescaled by `exp(m - M)` in a different program after a round trip through
+    memory, so it is fp32 whatever the pool holds. Pricing the arena in one itemsize
+    would be wrong in whichever direction the deployment chose.
+    """
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    got = split_workspace_bytes(shape, 8, block=128, splits=16, head_dim=64, itemsize=2)
+    tile = 16 * 4 * 8 * 128 * 2
+    partials = 4 * 8 * 16 * 66 * PARTIAL_ITEMSIZE
+
+    assert got == tile + partials
+
+
+def test_lowering_the_pool_to_bf16_does_not_lower_the_partials():
+    shape = DecodeShape(rows=4, context_width=8192)
+    fp32 = split_workspace_bytes(shape, 8, block=128, splits=16, head_dim=64)
+    bf16 = split_workspace_bytes(shape, 8, block=128, splits=16, head_dim=64, itemsize=2)
+    partials = partial_cells(shape, 8, splits=16, head_dim=64) * PARTIAL_ITEMSIZE
+
+    assert fp32 - bf16 == (fp32 - partials) // 2
+
+
+def test_split_workspace_bytes_refuses_nonsense():
+    shape = DecodeShape(rows=4, context_width=128)
+    with pytest.raises(ValueError, match="at least one split"):
+        split_workspace_bytes(shape, 8, block=32, splits=0, head_dim=64)
+    with pytest.raises(ValueError, match="at least one channel"):
+        split_workspace_bytes(shape, 8, block=32, splits=2, head_dim=0)
+
+
+def test_read_workspace_bytes_prices_whichever_of_the_three_reads_is_running():
+    """One argument list, three answers, because a caller decides the currency once."""
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    assert read_workspace_bytes(shape, 8) == workspace_bytes(shape, 8)
+    assert read_workspace_bytes(shape, 8, block=128) == streamed_workspace_bytes(
+        shape, 8, block=128
+    )
+    assert read_workspace_bytes(
+        shape, 8, block=128, splits=16, head_dim=64
+    ) == split_workspace_bytes(shape, 8, block=128, splits=16, head_dim=64)
+
+
+def test_a_split_is_a_partition_of_the_streamed_read_and_not_of_the_rectangle():
+    """So a split count with no tile is a combination that names no read."""
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    with pytest.raises(ValueError, match="tile"):
+        read_workspace_bytes(shape, 8, splits=16, head_dim=64)
+
+
+def test_pricing_a_split_without_a_head_dim_is_refused_rather_than_guessed():
+    """The one number a score rectangle never had: it sums the channels away."""
+    shape = DecodeShape(rows=4, context_width=8192)
+
+    with pytest.raises(ValueError, match="head_dim"):
+        read_workspace_bytes(shape, 8, block=128, splits=16)
+
+
+def test_the_split_arena_is_still_a_max_over_the_list_and_the_widest_batch_sets_it():
+    """The split axis came off the narrowest bucket; the bill comes off the widest."""
+    shapes = (
+        DecodeShape(rows=1, context_width=8192),
+        DecodeShape(rows=4, context_width=8192),
+        DecodeShape(rows=8, context_width=8192),
+    )
+    kw = dict(block=32, splits=16, head_dim=64)
+
+    assert shared_pool_bytes(shapes, 32, **kw) == split_workspace_bytes(shapes[2], 32, **kw)
+    assert private_pool_bytes(shapes, 32, **kw) == sum(
+        split_workspace_bytes(s, 32, **kw) for s in shapes
+    )
+
+
+def test_the_partials_are_what_the_split_adds_to_a_streamed_arena():
+    """The number Day 61 took to zero on the width axis, coming back with a name."""
+    shapes = (DecodeShape(rows=8, context_width=8192),)
+    streamed = shared_pool_bytes(shapes, 32, block=32)
+    split = shared_pool_bytes(shapes, 32, block=32, splits=16, head_dim=64)
+
+    partials = 8 * 32 * 16 * 66 * PARTIAL_ITEMSIZE
+    assert split > streamed
+    assert split == 16 * streamed + partials
 
 
 def test_a_shared_pool_is_sized_by_the_largest_shape_and_a_private_one_by_all_of_them():

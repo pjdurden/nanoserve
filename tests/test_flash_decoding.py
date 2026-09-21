@@ -46,11 +46,15 @@ from nanoserve.config import ModelConfig
 from nanoserve.kernels.flash_decoding import (
     DEFAULT_PARTITION,
     DEFAULT_TARGET_PROGRAMS,
+    PARTIAL_DTYPE,
     SplitPlan,
+    SplitUnsound,
+    check_partials,
     choose_splits,
     paged_attention_split,
     paged_attention_split_kernel,
     paged_attention_split_triton,
+    plan_splits,
     reduce_partials,
     split_plan,
 )
@@ -852,3 +856,308 @@ def test_triton_split_kernel_reads_genuinely_scattered_blocks():
     )
     oracle = paged_attention_batched_reference(q, k_pool, v_pool, mapping, context_lens, n_rep=2)
     assert torch.allclose(got, oracle, atol=1e-3)
+
+
+# --- Day 64: the split count for a whole list, and a workspace handed in ------------
+
+
+def test_plan_splits_is_the_max_over_a_capture_list_s_row_buckets():
+    """One list, one split count, and it is the largest any member asks for.
+
+    A capture list spans row buckets, and `choose_splits` answers a different number
+    for each of them. The graph for a shape is recorded once at a fixed grid, so the
+    list has to collapse those answers to one, and the only direction that does not
+    throw the split away is up: a bucket handed more splits than it asked for gets
+    chunks it does not fill, and Day 63's empty partial makes those free.
+    """
+    rows = (1, 2, 4, 8)
+    want = max(choose_splits(r, 32, 8192, 32) for r in rows)
+
+    assert plan_splits(rows, 32, 8192, 32) == want
+
+
+def test_the_narrowest_batch_is_the_one_that_asks_for_the_most():
+    """Which is why the max is over the *list* and not read off its widest member."""
+    counts = [choose_splits(r, 32, 8192, 32) for r in (1, 2, 4, 8, 32)]
+
+    assert counts == sorted(counts, reverse=True)
+    assert counts[0] > counts[-1]
+
+
+def test_the_widest_row_bucket_is_still_the_one_that_sets_the_arena():
+    """The two maxima are at opposite ends of the list, and both are needed.
+
+    `rows * splits(rows)` is what the workspace holds, and it does not fall when the
+    split count does: `choose_splits` is a ceiling division of a program target, so
+    the product rises to that target and then flattens. The split *axis* is sized by
+    the narrowest bucket and the *arena* by the widest, so allocating the rectangle
+    of the two maxima buys more than any single shape needs.
+    """
+    rows = (1, 2, 4, 8)
+    per_shape = [r * choose_splits(r, 32, 8192, 32) for r in rows]
+
+    assert per_shape == sorted(per_shape)
+    assert max(rows) * plan_splits(rows, 32, 8192, 32) > max(per_shape)
+
+
+def test_plan_splits_refuses_a_list_with_no_rows_in_it():
+    with pytest.raises(ValueError, match="at least one row bucket"):
+        plan_splits((), 32, 8192, 32)
+
+
+def test_check_partials_accepts_the_buffers_the_launch_will_address():
+    part = (
+        torch.zeros(2, 3, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 3, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 3, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    check_partials(part, rows=2, n_q=3, splits=4, head_dim=8, device=torch.device("cpu"))
+
+
+def test_check_partials_refuses_a_slice_of_the_split_axis():
+    """The gate of the day, and the bug it is aimed at is silent.
+
+    A workspace is allocated at the list's widest split count and a launch may want
+    fewer, so the obvious window is `buffer[:, :, :splits]`. Both kernels address the
+    partials *flat*, `(row * n_q + head) * splits + split`, because that is what
+    `tl.store` takes. A slice of the innermost axis keeps the buffer's stride and the
+    flat arithmetic does not, so every program past the first would read and write
+    somebody else's slot, and the reduction would return a finite, plausible, wrong
+    vector. Only the outermost axis narrows to something the flat form still
+    addresses, which is exactly what makes the row window legal.
+    """
+    base = torch.zeros(2, 3, 8, dtype=PARTIAL_DTYPE)
+    acc = torch.zeros(2, 3, 8, 8, dtype=PARTIAL_DTYPE)
+    part = (base[:, :, :4], base[:, :, :4], acc[:, :, :4])
+
+    with pytest.raises(SplitUnsound, match="contiguous"):
+        check_partials(part, rows=2, n_q=3, splits=4, head_dim=8, device=torch.device("cpu"))
+
+
+def test_a_row_window_is_the_one_slice_that_survives_the_flat_addressing():
+    """The mirror of the test above: `[:rows]` of a contiguous buffer still is one."""
+    base = torch.zeros(8, 3, 4, dtype=PARTIAL_DTYPE)
+    acc = torch.zeros(8, 3, 4, 8, dtype=PARTIAL_DTYPE)
+    part = (base[:2], base[:2], acc[:2])
+
+    check_partials(part, rows=2, n_q=3, splits=4, head_dim=8, device=torch.device("cpu"))
+    assert part[0].data_ptr() == base.data_ptr()
+
+
+def test_check_partials_refuses_a_workspace_the_grid_overruns():
+    part = (
+        torch.zeros(2, 3, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 3, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 3, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    with pytest.raises(SplitUnsound, match="shape"):
+        check_partials(part, rows=2, n_q=3, splits=8, head_dim=8, device=torch.device("cpu"))
+
+
+def test_check_partials_refuses_partials_that_are_not_fp32():
+    """A partial is rescaled by `exp(m - M)` in another program; fp16 is where the
+    accuracy of the whole read would go, so the dtype is a refusal and not a cast."""
+    part = (
+        torch.zeros(2, 3, 4, dtype=torch.float16),
+        torch.zeros(2, 3, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 3, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    with pytest.raises(SplitUnsound, match="float32"):
+        check_partials(part, rows=2, n_q=3, splits=4, head_dim=8, device=torch.device("cpu"))
+
+
+def test_check_partials_refuses_a_count_that_is_not_three():
+    with pytest.raises(SplitUnsound, match="three"):
+        check_partials(
+            (torch.zeros(2, 3, 4), torch.zeros(2, 3, 4)),
+            rows=2,
+            n_q=3,
+            splits=4,
+            head_dim=8,
+            device=torch.device("cpu"),
+        )
+
+
+def _split_case(seed=64, lens=(9, 3, 16), width=16, n_q=2, d=8, n_rep=1):
+    n_kv = n_q // n_rep
+    k_pool, v_pool = _random_pools(64, n_kv=n_kv, d=d, seed=seed)
+    q = torch.randn(len(lens), n_q, 1, d)
+    mapping = _mapping(lens, width=width, num_slots=64, seed=seed)
+    context_lens = torch.tensor(lens)
+    return q, k_pool, v_pool, mapping, context_lens
+
+
+def test_the_kernel_writes_the_workspace_it_was_handed():
+    """And returns the same attention it returns when it allocates its own."""
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    part = (
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    given = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=part
+    )
+    owned = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4
+    )
+
+    assert torch.allclose(given, owned, atol=1e-5)
+    assert not torch.allclose(part[0], torch.zeros_like(part[0]))
+
+
+def test_a_handed_in_workspace_is_written_in_place_and_never_replaced():
+    """The whole point of the day: the addresses the read uses do not move."""
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    part = (
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+    before = [t.data_ptr() for t in part]
+
+    paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=part
+    )
+
+    assert [t.data_ptr() for t in part] == before
+
+
+def test_a_workspace_full_of_garbage_returns_the_same_answer():
+    """Because pass one stores every slot it was given, including the empty ones.
+
+    Day 63's tlsim path filled the partials with `-inf` and zeros before the launch,
+    and that initialisation turns out never to have been load-bearing: a chunk past
+    its row's end still writes, so no slot the reduction reads is ever a slot pass
+    one skipped. Taking the allocation away is what made that testable, and it is
+    the property a reused buffer stands on.
+    """
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    clean = (
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+    dirty = tuple(torch.full_like(t, 1234.5) for t in clean)
+
+    first = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=clean
+    )
+    second = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=dirty
+    )
+
+    assert torch.allclose(first, second, atol=1e-6)
+
+
+def test_the_kernel_still_matches_its_oracle_over_a_handed_in_workspace():
+    q, k_pool, v_pool, mapping, lens = _split_case(seed=65, lens=(12, 1, 7))
+    part = (
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    got = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=part
+    )
+    oracle = paged_attention_batched_reference(q, k_pool, v_pool, mapping, lens, n_rep=1)
+
+    assert torch.allclose(got, oracle, atol=1e-5)
+
+
+def test_the_split_count_comes_from_the_workspace_when_nobody_names_one():
+    """A planned buffer is a launch constant, so it answers the question rather than
+    being checked against an answer from somewhere else."""
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    part = (
+        torch.zeros(3, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 2, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    got = paged_attention_split_kernel(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, partials=part
+    )
+    oracle = paged_attention_batched_reference(q, k_pool, v_pool, mapping, lens, n_rep=1)
+
+    assert torch.allclose(got, oracle, atol=1e-5)
+
+
+def test_the_kernel_refuses_a_workspace_that_disagrees_with_the_split_asked_for():
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    part = (
+        torch.zeros(3, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 2, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    with pytest.raises(SplitUnsound, match="shape"):
+        paged_attention_split_kernel(
+            q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=part
+        )
+
+
+def test_the_dispatcher_passes_a_workspace_through_to_whichever_backend_runs():
+    q, k_pool, v_pool, mapping, lens = _split_case()
+    part = (
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, dtype=PARTIAL_DTYPE),
+        torch.zeros(3, 2, 4, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    got = paged_attention_split(
+        q, k_pool, v_pool, mapping, lens, n_rep=1, block=4, splits=4, partials=part
+    )
+    oracle = paged_attention_batched_reference(q, k_pool, v_pool, mapping, lens, n_rep=1)
+
+    assert torch.allclose(got, oracle, atol=1e-5)
+    assert torch.isfinite(part[1]).all()
+
+
+@requires_triton_gpu
+def test_the_triton_split_kernel_reads_a_handed_in_workspace():
+    lens = [64, 9, 33]
+    k_pool, v_pool = _random_pools(128, n_kv=2, d=8, seed=64, device="cuda")
+    q = torch.randn(3, 4, 1, 8, device="cuda")
+    mapping = _mapping(lens, width=64, num_slots=128, seed=64, device="cuda")
+    context_lens = torch.tensor(lens, device="cuda")
+    part = (
+        torch.full((3, 4, 4), 1234.5, dtype=PARTIAL_DTYPE, device="cuda"),
+        torch.full((3, 4, 4), 1234.5, dtype=PARTIAL_DTYPE, device="cuda"),
+        torch.full((3, 4, 4, 8), 1234.5, dtype=PARTIAL_DTYPE, device="cuda"),
+    )
+    before = [t.data_ptr() for t in part]
+
+    got = paged_attention_split_triton(
+        q, k_pool, v_pool, mapping, context_lens, n_rep=2, block=16, splits=4, partials=part
+    )
+    oracle = paged_attention_batched_reference(
+        q, k_pool, v_pool, mapping, context_lens, n_rep=2
+    )
+
+    assert torch.allclose(got, oracle, atol=1e-3)
+    assert [t.data_ptr() for t in part] == before
+
+
+@requires_triton_gpu
+def test_the_triton_split_kernel_refuses_a_workspace_on_the_wrong_device():
+    lens = [8, 4]
+    k_pool, v_pool = _random_pools(32, n_kv=1, d=8, seed=64, device="cuda")
+    q = torch.randn(2, 2, 1, 8, device="cuda")
+    mapping = _mapping(lens, width=8, num_slots=32, seed=64, device="cuda")
+    context_lens = torch.tensor(lens, device="cuda")
+    part = (
+        torch.zeros(2, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 2, 2, dtype=PARTIAL_DTYPE),
+        torch.zeros(2, 2, 2, 8, dtype=PARTIAL_DTYPE),
+    )
+
+    with pytest.raises(SplitUnsound, match="device"):
+        paged_attention_split_triton(
+            q, k_pool, v_pool, mapping, context_lens, n_rep=2, block=4, splits=2, partials=part
+        )

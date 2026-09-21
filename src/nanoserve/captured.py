@@ -92,6 +92,7 @@ from .inputs import (
     check_snapshots_present,
     check_step_inputs_persistent,
 )
+from .kernels.flash_decoding import PARTIAL_DTYPE
 from .slots import check_mapping_is_window, check_window_intact
 
 #: Calls into the forward before anything is recorded. Not decoration: the first
@@ -109,6 +110,14 @@ DEFAULT_CAPTURE_LIMIT = 64
 #: what this engine runs on CPU; halve it for a bf16 device and the conclusion does
 #: not change, because the conclusion is about a ratio and an order of magnitude.
 ACTIVATION_ITEMSIZE = 4
+
+#: Bytes per entry of a *partial*, and it does not follow the line above. Day 64.
+#: A score tile is an activation and gets the pool's dtype; a partial is a running
+#: max and two sums that a different program rescales by `exp(m - M)` after they
+#: have been through memory, so it is fp32 on a bf16 card too. Read off the dtype
+#: the kernel actually allocates, because two constants that disagree would price
+#: an arena the launch does not make.
+PARTIAL_ITEMSIZE = torch.finfo(PARTIAL_DTYPE).bits // 8
 
 #: The modes `CapturedDecode` accepts. Two, and "off" exists so the engine has one
 #: call site rather than a branch, the same way Day 49's "off" does.
@@ -734,6 +743,68 @@ def streamed_workspace_bytes(
     return streamed_score_cells(shape, num_heads, block) * itemsize
 
 
+def partial_cells(shape: DecodeShape, num_heads: int, splits: int, head_dim: int) -> int:
+    """Numbers a *split* read's workspace holds, which is not a score at all. Day 64.
+
+    Every other count in this section prices an intermediate of the softmax: the
+    whole rectangle, or one tile of one. This prices what one program hands to
+    another. Flash-decoding gives each chunk of each row its own program with its own
+    running max, denominator and `head_dim`-wide weighted-V accumulator, and the
+    second pass reads all three back, so the grid's third axis appears here as a
+    multiplier and the `+ 2` is the max and the denominator riding along with the
+    accumulator they belong to.
+
+    `head_dim` is the axis a score rectangle never had, because scoring sums the
+    channels away. It is here because an accumulator has not been divided yet.
+    """
+    if num_heads < 1:
+        raise ValueError(f"a forward has at least one head; got {num_heads}")
+    if splits < 1:
+        raise ValueError(f"a row is cut into at least one split; got {splits}")
+    if head_dim < 1:
+        raise ValueError(f"a head has at least one channel; got {head_dim}")
+    return shape.rows * num_heads * splits * (head_dim + 2)
+
+
+def split_score_cells(shape: DecodeShape, num_heads: int, block: int, splits: int) -> int:
+    """Score entries a split read holds: Day 59's tile, once per chunk per row.
+
+    The tile did not get bigger. There are more of them live at once, because a split
+    is a grid axis and every program on it holds the tile it is currently scoring.
+    That is the same trade the day makes everywhere: the tail shrinks by the split
+    count and three separate costs grow by it.
+    """
+    if splits < 1:
+        raise ValueError(f"a row is cut into at least one split; got {splits}")
+    return splits * streamed_score_cells(shape, num_heads, block)
+
+
+def split_workspace_bytes(
+    shape: DecodeShape,
+    num_heads: int,
+    block: int,
+    splits: int,
+    head_dim: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+    partial_itemsize: int = PARTIAL_ITEMSIZE,
+) -> int:
+    """What a split read reserves, and it is the only workspace here in two currencies.
+
+    The score tiles follow the pool, because they are activations and a bf16
+    deployment holds them in bf16. The partials do not, because a partial makes a
+    round trip through memory between the program that writes it and the program that
+    rescales it by `exp(m - M)`, and that trip is the one place in this read where the
+    range is load-bearing. Pricing both halves at one itemsize would be wrong in
+    whichever direction the deployment chose, so the sum is taken in two.
+    """
+    if itemsize < 1:
+        raise ValueError(f"an entry is at least one byte; got {itemsize}")
+    if partial_itemsize < 1:
+        raise ValueError(f"a partial is at least one byte; got {partial_itemsize}")
+    tiles = split_score_cells(shape, num_heads, block, splits) * itemsize
+    return tiles + partial_cells(shape, num_heads, splits, head_dim) * partial_itemsize
+
+
 def workspace_saving(shape: DecodeShape, num_heads: int, block: int) -> float:
     """How many times the rectangle covers the tile, which is one ratio and not four.
 
@@ -752,6 +823,8 @@ def read_workspace_bytes(
     itemsize: int = ACTIVATION_ITEMSIZE,
     *,
     block: int | None = None,
+    splits: int | None = None,
+    head_dim: int | None = None,
 ) -> int:
     """What one captured shape reserves, under whichever read this process runs.
 
@@ -760,10 +833,30 @@ def read_workspace_bytes(
     Day 59's read and the answer is `streamed_workspace_bytes`, which has no
     `context_width` in it at all. The pool sizers below take the same argument and
     pass it straight through, so a caller decides the currency once.
+
+    Day 64 adds the third read and one more pair of arguments. A `splits` is a
+    partition of the streamed read's tiles, so it is meaningless without a tile and
+    refused rather than defaulted, and it needs a `head_dim` that neither of the
+    other two reads ever had: a score rectangle sums the channels away before it is
+    a workspace, and a split's accumulator has not been divided yet.
     """
+    if splits is None:
+        if block is None:
+            return workspace_bytes(shape, num_heads, itemsize)
+        return streamed_workspace_bytes(shape, num_heads, block, itemsize)
     if block is None:
-        return workspace_bytes(shape, num_heads, itemsize)
-    return streamed_workspace_bytes(shape, num_heads, block, itemsize)
+        raise ValueError(
+            f"splits={splits} with no score tile names no read: a split is a "
+            "partition of the streamed read's per-program tile, and the rectangle "
+            "read has no tile to partition"
+        )
+    if head_dim is None:
+        raise ValueError(
+            "pricing a split needs a head_dim: the workspace is an accumulator per "
+            "(row, head, split) and the accumulator is a head wide. It is the one "
+            "axis a score rectangle never has, so there is nothing to infer it from"
+        )
+    return split_workspace_bytes(shape, num_heads, block, splits, head_dim, itemsize)
 
 
 def shared_pool_bytes(
@@ -772,6 +865,8 @@ def shared_pool_bytes(
     itemsize: int = ACTIVATION_ITEMSIZE,
     *,
     block: int | None = None,
+    splits: int | None = None,
+    head_dim: int | None = None,
 ) -> int:
     """One pool, sized by the largest shape in the list. The `graph_pool_handle` bill.
 
@@ -786,7 +881,12 @@ def shared_pool_bytes(
     bucket set has the same width anyway.
     """
     return max(
-        (read_workspace_bytes(s, num_heads, itemsize, block=block) for s in shapes),
+        (
+            read_workspace_bytes(
+                s, num_heads, itemsize, block=block, splits=splits, head_dim=head_dim
+            )
+            for s in shapes
+        ),
         default=0,
     )
 
@@ -797,9 +897,16 @@ def private_pool_bytes(
     itemsize: int = ACTIVATION_ITEMSIZE,
     *,
     block: int | None = None,
+    splits: int | None = None,
+    head_dim: int | None = None,
 ) -> int:
     """A pool per graph. The road not taken, and it is what you get by default."""
-    return sum(read_workspace_bytes(s, num_heads, itemsize, block=block) for s in shapes)
+    return sum(
+        read_workspace_bytes(
+            s, num_heads, itemsize, block=block, splits=splits, head_dim=head_dim
+        )
+        for s in shapes
+    )
 
 
 def pool_sharing_ratio(
@@ -808,6 +915,8 @@ def pool_sharing_ratio(
     itemsize: int = ACTIVATION_ITEMSIZE,
     *,
     block: int | None = None,
+    splits: int | None = None,
+    head_dim: int | None = None,
 ) -> float:
     """How many times over private pools would pay for what one shared pool covers.
 
@@ -821,10 +930,11 @@ def pool_sharing_ratio(
     geometric sum divided by the largest of them, so 1, 2, 4, 8 rows share a pool for
     15/8. Sharing an arena was never worth the length of the list.
     """
-    shared = shared_pool_bytes(shapes, num_heads, itemsize, block=block)
+    kw = dict(block=block, splits=splits, head_dim=head_dim)
+    shared = shared_pool_bytes(shapes, num_heads, itemsize, **kw)
     if not shared:
         return 1.0
-    return private_pool_bytes(shapes, num_heads, itemsize, block=block) / shared
+    return private_pool_bytes(shapes, num_heads, itemsize, **kw) / shared
 
 
 def capture_cost_s(count: int, per_capture_s: float) -> float:

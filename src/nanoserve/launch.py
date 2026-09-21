@@ -80,11 +80,17 @@ from pathlib import Path
 
 import torch
 
-from .captured import DEFAULT_CAPTURE_LIMIT, shared_pool_bytes, streamed_workspace_bytes
+from .captured import (
+    DEFAULT_CAPTURE_LIMIT,
+    shared_pool_bytes,
+    split_workspace_bytes,
+    streamed_workspace_bytes,
+)
 from .compiled import DecodeShape
 from .reads import DEFAULT_BLOCK
 from .config import ModelConfig
 from .engine import Engine
+from .kernels.flash_decoding import plan_splits
 from .loader import EMBED, Weights, load_weights
 from .model import LlamaModel
 from .server import create_app
@@ -534,6 +540,15 @@ class CapturePlan:
                     The currency the arena is priced in: Day 61, and it is the one
                     field here that changes what `pool_bytes` means rather than what
                     it is worth.
+    splits:         chunks per row under Day 63's split read, and 0 under the other
+                    two. Day 64. One number for the whole list, because a list is a
+                    graph per shape replaying against one arena, and `plan_splits`
+                    is the max over the row buckets rather than the widest one's
+                    answer: the batch that asks for the most splits is the smallest.
+    head_dim:       channels in one head, and 0 unless there is a split. The axis
+                    neither of the other two reads ever needed, because a score
+                    rectangle sums the channels away before it is a workspace and a
+                    partial accumulator has not been divided yet.
     """
 
     shapes: tuple[DecodeShape, ...]
@@ -545,6 +560,8 @@ class CapturePlan:
     budget_bytes: int | None = None
     limit: int = DEFAULT_CAPTURE_LIMIT
     block: int = 0
+    splits: int = 0
+    head_dim: int = 0
 
     @property
     def count(self) -> int:
@@ -568,8 +585,20 @@ class CapturePlan:
         is the number it always was; a tile width prices the arena as
         `rows x heads x block`, which is the same max over the same list and has no
         `max_width` in it at all.
+
+        Day 64 adds the term the split read was spending and nobody was charging
+        for. Its partials are a real allocation per launch, and under capture they
+        are served from the shared pool like any other intermediate, so a plan that
+        priced the tiles alone under-reported the arena by the whole workspace and
+        the process found out from the allocator.
         """
-        return shared_pool_bytes(self.shapes, self.num_heads, block=self.block or None)
+        return shared_pool_bytes(
+            self.shapes,
+            self.num_heads,
+            block=self.block or None,
+            splits=self.splits or None,
+            head_dim=self.head_dim or None,
+        )
 
     def as_dict(self) -> dict:
         """The shape `/health` reports, under its own key rather than beside the pool."""
@@ -582,6 +611,7 @@ class CapturePlan:
             "workspace_bytes": self.pool_bytes,
             "capture_limit": self.limit,
             "read_block": self.block,
+            "read_splits": self.splits,
         }
 
     def describe(self) -> str:
@@ -593,9 +623,10 @@ class CapturePlan:
             "limit": "the graph limit",
             "read": "the streamed read, which has no width axis",
         }[self.width_bound_by]
+        split = f", {self.splits}-way split" if self.splits else ""
         return (
             f"CUDA graphs: {self.count} of {self.full_count} shapes, rows <= "
-            f"{self.max_rows}, context <= {self.max_width} (capped by {why}), "
+            f"{self.max_rows}, context <= {self.max_width} (capped by {why}){split}, "
             f"{self.pool_bytes / 1024**2:.1f} MiB of workspace"
         )
 
@@ -648,6 +679,7 @@ def plan_capture(
     probe=None,
     device=None,
     limit: int | None = None,
+    split_read: bool = False,
 ) -> CapturePlan:
     """Decide which shapes this process records, from four numbers and three sources.
 
@@ -681,6 +713,15 @@ def plan_capture(
     the row count has no axis left to trim and has to say so rather than divide by it.
     A width flag is nothing at all, and is ignored rather than honoured, because
     honouring it would record a list at a width no step will ever present.
+
+    **Day 64: `split_read` adds one number and it is decided here.** Flash-decoding
+    cuts each row's history into chunks and gives each chunk its own program, and
+    how many chunks is `choose_splits` of the grid and the width. Both of those are
+    known at plan time and neither is known per step without reading a tensor, which
+    is why the call is here and happens once. It is `plan_splits` and not
+    `choose_splits`, because the answer differs per row bucket and the list shares
+    one arena, so the per-bucket answers collapse to their max: a bucket handed more
+    chunks than it asked for gets empty ones, and an empty chunk is free.
     """
     buckets = getattr(engine.cache, "decode_buckets", None)
     if buckets is None:
@@ -697,6 +738,7 @@ def plan_capture(
     # is what says the two agree.
     block = buckets.block if buckets.streamed else 0
 
+    splits = head_dim = 0
     rows = plan.max_batch_size if max_rows is None else min(max_rows, plan.max_batch_size)
     row_count = sum(1 for r in buckets.rows if r <= rows)
     if row_count < 1:
@@ -716,21 +758,49 @@ def plan_capture(
             probe=probe,
         )
 
+    if split_read and not block:
+        raise ValueError(
+            "split_read needs a streamed bucket set: a split is a partition of the "
+            "streamed read's per-program tile, and the rectangle read has no tile to "
+            "partition. Build the engine with streamed_read=True"
+        )
+
     if block:
         # Day 61. One candidate, because the other three were all statements about a
         # dimension of the score rectangle and this read has no score rectangle.
         bound_by, width = "read", buckets.widths[0]
-        if budget_bytes is not None:
-            need = streamed_workspace_bytes(
-                DecodeShape(rows=rows, context_width=width), num_heads, block
+        # Day 64, and the placement is the point: once, off two Python ints the
+        # caller already has, over the row buckets this list covers. The alternative
+        # is `context_lens.max()` on some later step, which is a host sync, a graph
+        # break, and a grid that changes shape from one step to the next.
+        if split_read:
+            splits = plan_splits(
+                [r for r in buckets.rows if r <= rows], num_heads, width, block
             )
-            if need > budget_bytes:
-                raise CaptureTooSmall(
-                    f"a {block}-key score tile over {rows} rows and {num_heads} heads "
-                    f"is {need} bytes and the probe found {budget_bytes}: a streamed "
-                    "read's workspace has no width in it, so there is no narrower "
-                    "shape to fall back to. Lower max_rows, or narrow the tile"
-                )
+            head_dim = engine.model.config.head_dim
+        if budget_bytes is not None:
+            widest = DecodeShape(rows=rows, context_width=width)
+            if split_read:
+                need = split_workspace_bytes(widest, num_heads, block, splits, head_dim)
+                if need > budget_bytes:
+                    raise CaptureTooSmall(
+                        f"a {splits}-way split over {rows} rows and {num_heads} heads "
+                        f"is {need} bytes of tiles and partials and the probe found "
+                        f"{budget_bytes}. The partial workspace is "
+                        f"{need - streamed_workspace_bytes(widest, num_heads, block)} "
+                        "of that and it is linear in the split count, so lower "
+                        "max_rows or read without the split"
+                    )
+            else:
+                need = streamed_workspace_bytes(widest, num_heads, block)
+                if need > budget_bytes:
+                    raise CaptureTooSmall(
+                        f"a {block}-key score tile over {rows} rows and {num_heads} "
+                        f"heads is {need} bytes and the probe found {budget_bytes}: a "
+                        "streamed read's workspace has no width in it, so there is no "
+                        "narrower shape to fall back to. Lower max_rows, or narrow "
+                        "the tile"
+                    )
         if row_count > limit:
             raise CaptureTooSmall(
                 f"this set has {row_count} row buckets within max_rows={rows} and this "
@@ -782,6 +852,8 @@ def plan_capture(
         budget_bytes=budget_bytes,
         limit=limit,
         block=block,
+        splits=splits,
+        head_dim=head_dim,
     )
 
 

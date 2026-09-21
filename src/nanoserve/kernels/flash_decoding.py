@@ -93,14 +93,31 @@ __all__ = [
     "DEFAULT_TARGET_PROGRAMS",
     "PARTIAL_DTYPE",
     "SplitPlan",
+    "SplitUnsound",
+    "check_partials",
     "choose_splits",
+    "partial_splits",
     "paged_attention_split",
     "paged_attention_split_kernel",
     "paged_attention_split_triton",
     "partition_width",
+    "plan_splits",
     "reduce_partials",
     "split_plan",
 ]
+
+
+class SplitUnsound(AssertionError):
+    """A split launch was handed a workspace it cannot address.
+
+    An assertion and not a `ValueError`, for the reason `CaptureUnsound` is one:
+    every failure here is a thing the caller believed about a buffer that is not
+    true of the buffer, and none of them raises anything on its own. Both kernels
+    address the partials flat, so a workspace with the wrong stride, the wrong
+    dtype or too few slots does not fault. It reads and writes somebody else's
+    slot, the reduction folds it, and the read returns a finite, plausible vector
+    that is not the attention over this row.
+    """
 
 
 def partition_width(
@@ -211,6 +228,154 @@ def choose_splits(
     by_length = max(1, context_width // partition)
     by_grid = cdiv(target_programs, rows * n_q)
     return max(1, min(by_length, by_grid))
+
+
+def plan_splits(
+    row_buckets,
+    n_q: int,
+    context_width: int,
+    block: int = DEFAULT_BLOCK,
+    target_programs: int = DEFAULT_TARGET_PROGRAMS,
+    partition: int = DEFAULT_PARTITION,
+) -> int:
+    """One split count for a whole capture list. Day 64.
+
+    row_buckets: the row axis of the bucket set this list is planned over, which is
+                 every batch size a decode step can round to.
+    n_q, context_width, block, target_programs, partition: `choose_splits`', because
+                 this is that function asked once per bucket.
+
+    `choose_splits` answers per launch, and a capture list is not one launch: it is a
+    graph per shape, all of them replaying against *one* workspace, and a workspace is
+    allocated once at a size. So the list has to collapse the per-bucket answers to a
+    single number, and the max is the only direction that keeps the split.
+
+    Rounding a bucket's count *up* costs it chunks it does not fill, and Day 63 made
+    that free: a chunk past a row's end walks nothing, stores `-inf, 0, 0`, and drops
+    out of the reduction with no branch. Rounding *down* is the expensive direction,
+    because the bucket that wanted the most splits is the one-row batch, which is the
+    only batch a split was ever for.
+
+    The two maxima are at opposite ends of the list and that is the day's arithmetic
+    surprise. The split *axis* is sized by the narrowest bucket, because a small grid
+    is what needs filling. The *arena* is `rows * n_q * splits * (head_dim + 2)` and
+    is sized by the widest, because `choose_splits` is a ceiling division of a program
+    target, so `rows * splits(rows)` rises to that target and flattens rather than
+    falling. Allocating the rectangle of both maxima therefore buys strictly more than
+    any single shape in the list needs, and the surplus is the price of one arena.
+    """
+    rows = tuple(int(r) for r in row_buckets)
+    if not rows:
+        raise ValueError(
+            "a capture list has at least one row bucket; got none. A split count for "
+            "an empty list is a workspace for a launch that cannot happen"
+        )
+    return max(
+        choose_splits(r, n_q, context_width, block, target_programs, partition) for r in rows
+    )
+
+
+def partial_splits(partials) -> int:
+    """The split axis of a handed-in workspace, which is what the launch must use.
+
+    A planned buffer is a launch constant, so it *answers* the split question rather
+    than being graded against an answer from somewhere else: a kernel handed a
+    workspace and no `splits` takes the count the plan allocated. Naming both is
+    still allowed and still checked, because a caller who says 8 and hands a
+    four-wide arena has one of the two numbers wrong and should be told which.
+    """
+    tensors = tuple(partials)
+    if len(tensors) != 3:
+        raise SplitUnsound(
+            f"a split workspace is three buffers, a max, a denominator and an "
+            f"accumulator; got {len(tensors)}"
+        )
+    if tensors[0].ndim != 3:
+        raise SplitUnsound(
+            f"part_max has shape {tuple(tensors[0].shape)} and a workspace's max is "
+            "[rows, heads, splits]: there is no split axis to read a count off"
+        )
+    return int(tensors[0].shape[2])
+
+
+def check_partials(
+    partials,
+    *,
+    rows: int,
+    n_q: int,
+    splits: int,
+    head_dim: int,
+    device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Refuse a handed-in workspace the launch about to happen cannot address. Day 64.
+
+    partials: `(part_max, part_denom, part_acc)`, already narrowed to this launch's
+              rows. `[rows, n_q, splits]` twice and `[rows, n_q, splits, head_dim]`.
+    rows, n_q, splits, head_dim, device: the launch, exactly.
+
+    Returns the three tensors, so a caller can use the checked thing rather than the
+    thing it passed in.
+
+    **Contiguity is the load-bearing clause and the reason this is a gate.** Both
+    passes address the workspace flat, `(row * n_q + head) * splits + split`, because
+    that is the only form `tl.store` takes. A buffer allocated at the list's widest
+    split count and narrowed to a smaller one with `buffer[:, :, :splits]` is a
+    perfectly good tensor of exactly the right shape whose stride is the *allocated*
+    split count, and the flat arithmetic does not know that. Every program past the
+    first would then read and write a slot belonging to some other `(row, head)`, and
+    nothing would fault: the reduction folds whatever it finds and returns a finite
+    vector. A window on the outermost axis, `buffer[:rows]`, is the one narrowing the
+    flat form still addresses, which is why the row axis is the only one a launch is
+    allowed to take less than all of.
+
+    The dtype clause is the other half of Day 63's fp32 decision, moved to where a
+    caller can trip over it. A partial is rescaled by `exp(m - M)` in a *different*
+    program, so it makes a round trip through memory between the two, and a buffer
+    someone allocated in the pool's dtype to save bytes would lose the range that trip
+    needs.
+    """
+    tensors = tuple(partials)
+    if len(tensors) != 3:
+        raise SplitUnsound(
+            f"a split workspace is three buffers, a max, a denominator and an "
+            f"accumulator; got {len(tensors)}"
+        )
+    part_max, part_denom, part_acc = tensors
+    want = {
+        "part_max": (part_max, (rows, n_q, splits)),
+        "part_denom": (part_denom, (rows, n_q, splits)),
+        "part_acc": (part_acc, (rows, n_q, splits, head_dim)),
+    }
+    device = torch.device(device)
+    for name, (tensor, shape) in want.items():
+        if tuple(tensor.shape) != shape:
+            raise SplitUnsound(
+                f"{name} has shape {tuple(tensor.shape)} and this launch addresses "
+                f"{shape}: the grid is (rows, heads, splits) and every program stores "
+                "one slot of it, so a workspace that is not exactly that shape is "
+                "either overrun or read past"
+            )
+        if not tensor.is_contiguous():
+            raise SplitUnsound(
+                f"{name} is not contiguous, so its stride is not the one both passes "
+                "address it with: the partials are indexed flat as "
+                "`(row * n_q + head) * splits + split`, and a narrowing of any axis "
+                "but the rows keeps the buffer's stride and silently moves every "
+                "program onto another program's slot"
+            )
+        if tensor.dtype != PARTIAL_DTYPE:
+            raise SplitUnsound(
+                f"{name} is {tensor.dtype} and a partial is {PARTIAL_DTYPE}: pass two "
+                "rescales this value by `exp(m - M)` after it has been through memory, "
+                "and that round trip is the one place in the read that needs the range"
+            )
+        if tensor.device != device:
+            raise SplitUnsound(
+                f"{name} is on {tensor.device} and this launch runs on {device}: a "
+                "kernel takes a pointer, and a pointer into host memory is not a "
+                "slower read, it is a fault or a wrong answer"
+            )
+    return part_max, part_denom, part_acc
 
 
 @dataclass(frozen=True)
@@ -499,6 +664,7 @@ def paged_attention_split_kernel(
     splits: int | None = None,
     context_bounds: tuple[int, int] | None = None,
     validated: bool = False,
+    partials=None,
 ) -> torch.Tensor:
     """The split decode read as two grids of tlsim programs. The model, Day 63.
 
@@ -509,9 +675,13 @@ def paged_attention_split_kernel(
     validated: exactly as in the unsplit read, including the refusals, because a read
     that accepts inputs its oracle rejects cannot be compared to it.
     block:  keys folded per program step.
-    splits: chunks per row. `None` means `choose_splits` on the mapping's *width* and
+    splits: chunks per row. `None` means the handed-in workspace's split axis if
+            there is one, and otherwise `choose_splits` on the mapping's *width* and
             the grid, which is the capture-safe default: no argument may be a reason
             to read the lengths tensor.
+    partials: Day 64. `(part_max, part_denom, part_acc)` owned by somebody else,
+            already narrowed to this launch's rows, written in place. `None` keeps
+            the old behaviour and allocates three tensors per call.
 
     Returns [batch, n_q, 1, d].
 
@@ -536,6 +706,8 @@ def paged_attention_split_kernel(
     )
     if block < 1:
         raise ValueError(f"a tile holds at least one key; got {block}")
+    if splits is None and partials is not None:
+        splits = partial_splits(partials)
     if splits is None:
         splits = choose_splits(geom.batch, geom.n_q, geom.max_ctx, block)
     count, chunk = partition_width(geom.max_ctx, block, splits=splits)
@@ -553,11 +725,22 @@ def paged_attention_split_kernel(
     head_kv = arange(0, n_q) // n_rep  # query head -> its KV head (GQA)
     chan = arange(0, d)  # the channel ramp inside one head of one token
 
-    # The workspace, flat, exactly as the jitted version allocates it: one max, one
-    # denominator and one `d`-wide accumulator per (row, head, split).
-    part_m = torch.full((batch * n_q * count,), float("-inf"), dtype=PARTIAL_DTYPE)
-    part_denom = torch.zeros(batch * n_q * count, dtype=PARTIAL_DTYPE)
-    part_acc = torch.zeros(batch * n_q * count * d, dtype=PARTIAL_DTYPE)
+    # The workspace, flat, exactly as the jitted version addresses it: one max, one
+    # denominator and one `d`-wide accumulator per (row, head, split). A handed-in
+    # one is checked and then flattened, which is free and stays a view because the
+    # gate has already refused anything that is not contiguous. Day 63 filled the
+    # owned buffers with `-inf` and zeros; that was never load-bearing, because every
+    # program stores its slot whether or not it walked a tile, and taking the fill
+    # away is what makes a buffer reusable across steps.
+    if partials is None:
+        part_m = torch.empty(batch * n_q * count, dtype=PARTIAL_DTYPE)
+        part_denom = torch.empty(batch * n_q * count, dtype=PARTIAL_DTYPE)
+        part_acc = torch.empty(batch * n_q * count * d, dtype=PARTIAL_DTYPE)
+    else:
+        held = check_partials(
+            partials, rows=batch, n_q=n_q, splits=count, head_dim=d, device=q.device
+        )
+        part_m, part_denom, part_acc = (t.reshape(-1) for t in held)
 
     def split_kernel(prog, s_buf, len_buf, k_buf, v_buf, m_buf, denom_buf, acc_buf) -> None:
         # This program owns one chunk of one row's one query head.
@@ -774,6 +957,7 @@ def paged_attention_split_triton(
     splits: int | None = None,
     context_bounds: tuple[int, int] | None = None,
     validated: bool = False,
+    partials=None,
 ) -> torch.Tensor:
     """Launch the two split passes. Same contract as the oracle, every tensor on CUDA.
 
@@ -783,12 +967,17 @@ def paged_attention_split_triton(
     trade every flash-decoding kernel makes, with the partials in fp32 whatever the
     pool holds.
 
-    **The workspace is allocated here, and that is the honest caveat of the day.**
-    `torch.empty` inside the call is a fresh allocation on every step, which is what
-    Day 54's capture plan exists to stop: a captured region replays the addresses it
-    was captured with, so the partials have to become a planned buffer owned by the
-    plan before this kernel can go inside a graph. The size is `SplitPlan.partial_bytes`
-    and it is priced there for exactly that reason.
+    **`partials` is Day 64, and it is the caveat Day 63 wrote, corrected.** That day
+    said a captured region cannot allocate. It can: a `torch.empty` under capture is
+    served from the graph's pool and its address is baked into the replay like every
+    other intermediate, and the launch is perfectly legal. What is wrong with it is
+    quieter. That allocation is charged to the shared arena, once per graph, at the
+    largest shape in the list, and *nothing prices it*: `CapturePlan.pool_bytes` was
+    the score term alone, so a process running this read reserved an arena it had
+    under-reported by the partials and found out from the allocator. Handing the
+    buffers in moves the number into `split_workspace_bytes`, where a plan can be
+    wrong about it out loud. Outside a graph it is the plainer thing it looks like:
+    three allocations per read per layer per step.
 
     Raises `ValueError` on host tensors and `RuntimeError` when Triton is missing,
     rather than letting a launch crash somewhere unreadable.
@@ -812,6 +1001,8 @@ def paged_attention_split_triton(
     if context_lens.device != q.device:
         raise ValueError("context_lens must live on the same device as q: the kernel loads it")
 
+    if splits is None and partials is not None:
+        splits = partial_splits(partials)
     if splits is None:
         splits = choose_splits(geom.batch, geom.n_q, geom.max_ctx, block)
     count, chunk = partition_width(geom.max_ctx, block, splits=splits)
@@ -825,9 +1016,19 @@ def paged_attention_split_triton(
     lens = context_lens.to(torch.int32).contiguous()
 
     shape = (geom.batch, geom.n_q, count)
-    part_m = torch.empty(shape, dtype=PARTIAL_DTYPE, device=q.device)
-    part_denom = torch.empty(shape, dtype=PARTIAL_DTYPE, device=q.device)
-    part_acc = torch.empty((*shape, geom.head_dim), dtype=PARTIAL_DTYPE, device=q.device)
+    if partials is None:
+        part_m = torch.empty(shape, dtype=PARTIAL_DTYPE, device=q.device)
+        part_denom = torch.empty(shape, dtype=PARTIAL_DTYPE, device=q.device)
+        part_acc = torch.empty((*shape, geom.head_dim), dtype=PARTIAL_DTYPE, device=q.device)
+    else:
+        part_m, part_denom, part_acc = check_partials(
+            partials,
+            rows=geom.batch,
+            n_q=geom.n_q,
+            splits=count,
+            head_dim=geom.head_dim,
+            device=q.device,
+        )
     out = torch.empty_like(q_rows)
 
     _paged_attention_split_fwd[(geom.batch, geom.n_q, count)](
@@ -878,6 +1079,7 @@ def paged_attention_split(
     splits: int | None = None,
     context_bounds: tuple[int, int] | None = None,
     validated: bool = False,
+    partials=None,
 ) -> torch.Tensor:
     """The split decode read, on whichever backend this device can actually run.
 
@@ -885,6 +1087,11 @@ def paged_attention_split(
     gets the two jitted passes, anything else gets the two tlsim passes. Both compute
     the same attention to a few ulps, so the backend is a speed decision and never a
     numerics one, which is the only claim that makes a fallback honest.
+
+    `partials` goes to whichever backend runs, because the workspace is a property
+    of the plan and not of the box: a `SplitWorkspace` allocated on CPU feeds the
+    tlsim passes and one allocated on a card feeds the jitted ones, and the gate that
+    refuses a mismatch is the same gate.
 
     Not yet wired to `PagedRead`. The split is a third read alongside the rectangle
     and the stream, and it earns its place on a number this box cannot produce: the
@@ -904,6 +1111,7 @@ def paged_attention_split(
             splits=splits,
             context_bounds=context_bounds,
             validated=validated,
+            partials=partials,
         )
     return paged_attention_split_kernel(
         q,
@@ -917,4 +1125,5 @@ def paged_attention_split(
         splits=splits,
         context_bounds=context_bounds,
         validated=validated,
+        partials=partials,
     )

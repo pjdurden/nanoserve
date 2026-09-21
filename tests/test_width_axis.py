@@ -65,9 +65,11 @@ from nanoserve.captured import (
 from nanoserve.compiled import DecodeShape
 from nanoserve.config import ModelConfig
 from nanoserve.engine import Engine
+from nanoserve.kernels.flash_decoding import plan_splits
 from nanoserve.launch import CaptureTooSmall, KVPoolPlan, plan_capture
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes
 from nanoserve.model import LlamaModel
+from nanoserve.partials import allocate_for
 from nanoserve.plan import plan_decode
 from nanoserve.reads import RECTANGLE, STREAMED, PagedRead
 from nanoserve.scheduler import Request
@@ -658,3 +660,135 @@ def test_warm_shapes_over_a_streamed_set_is_the_row_axis():
     assert len(shapes) == len(buckets.rows)
     assert shapes[0].rows == 8
     assert {s.context_width for s in shapes} == {512}
+
+
+# --- Day 64: the split's arena, planned here because the list is ---------------------
+#
+# The split read is a partition of the streamed read's tiles, so everything above
+# holds and one number is added to it. `plan_capture(split_read=True)` calls
+# `plan_splits` once, here, over the row buckets this list covers and the width the
+# set already fixed, and the plan carries the count so the arena can be allocated
+# from it instead of from a tensor on some later step.
+
+
+def _split_engine(**kw):
+    """A deployment wide enough to be worth splitting: `DEFAULT_PARTITION` is 512
+    keys, so a 512-token context is one chunk however small the batch is."""
+    model, _ = _model()
+    return Engine.build(
+        model,
+        num_blocks=1024,
+        block_size=4,
+        max_batch_size=4,
+        max_model_len=2048,
+        bucket_decode=True,
+        persist_inputs=True,
+        capture_decode=True,
+        streamed_read=True,
+        read_block=8,
+        **kw,
+    )
+
+
+def _split_pool_plan() -> KVPoolPlan:
+    return KVPoolPlan(
+        num_blocks=1024,
+        block_size=4,
+        max_batch_size=4,
+        max_model_len=2048,
+        bytes_per_block=1024,
+        budget_bytes=1 << 24,
+        dtype=torch.float32,
+    )
+
+
+def test_a_split_plan_decides_its_count_once_over_the_whole_list():
+    engine = _split_engine()
+    capture = plan_capture(engine, _split_pool_plan(), split_read=True)
+    buckets = engine.cache.decode_buckets
+
+    assert capture.splits == plan_splits(buckets.rows, capture.num_heads, 2048, 8)
+    assert capture.splits > 1
+
+
+def test_a_context_under_the_partition_floor_is_not_split_at_all():
+    """`choose_splits` refuses to cut a row into chunks shorter than a partition, so
+    a small deployment gets `splits=1`: one chunk, one program per (row, head), and
+    a second pass over a single partial. The plan says 1 rather than 0, because 0
+    means some other read and 1 means this read declining to cut."""
+    engine = _capture_engine(streamed_read=True, read_block=8)
+    capture = plan_capture(engine, _pool_plan(engine), split_read=True)
+
+    assert capture.max_width == 512
+    assert capture.splits == 1
+
+
+def test_a_split_plan_carries_the_head_dim_the_other_two_reads_never_needed():
+    engine = _split_engine()
+    capture = plan_capture(engine, _split_pool_plan(), split_read=True)
+
+    assert capture.head_dim == engine.model.config.head_dim
+
+
+def test_the_arena_of_a_split_plan_is_the_tiles_plus_the_partials():
+    """The number Day 63 priced and nothing charged for, now in `pool_bytes`."""
+    engine = _split_engine()
+    capture = plan_capture(engine, _split_pool_plan(), split_read=True)
+
+    assert capture.pool_bytes == shared_pool_bytes(
+        capture.shapes,
+        capture.num_heads,
+        block=8,
+        splits=capture.splits,
+        head_dim=capture.head_dim,
+    )
+
+
+def test_a_split_arena_is_strictly_bigger_than_the_streamed_one_it_partitions():
+    engine = _split_engine()
+    streamed = plan_capture(engine, _split_pool_plan())
+    split = plan_capture(engine, _split_pool_plan(), split_read=True)
+
+    assert split.pool_bytes > streamed.pool_bytes
+    assert streamed.splits == 0
+
+
+def test_a_split_plan_says_so_in_the_payload_and_in_the_line():
+    engine = _split_engine()
+    capture = plan_capture(engine, _split_pool_plan(), split_read=True)
+
+    assert capture.as_dict()["read_splits"] == capture.splits
+    assert f"{capture.splits}-way split" in capture.describe()
+
+
+def test_a_split_over_the_rectangle_read_is_refused():
+    """There is no tile to partition, and a split of a materialised score rectangle
+    is a second pass over an intermediate that was already the whole answer."""
+    engine = _capture_engine()
+
+    with pytest.raises(ValueError, match="streamed"):
+        plan_capture(engine, _pool_plan(engine), split_read=True)
+
+
+def test_a_budget_that_holds_the_tiles_but_not_the_partials_is_refused():
+    """The failure Day 63 could not have: the arena is now priced, so a budget that
+    would have passed on the tile alone is told which term overran it."""
+    engine = _split_engine()
+    streamed = plan_capture(engine, _split_pool_plan())
+    tight = streamed.pool_bytes * 2
+
+    plan_capture(engine, _split_pool_plan(), budget_bytes=tight)
+    with pytest.raises(CaptureTooSmall, match="partials"):
+        plan_capture(engine, _split_pool_plan(), budget_bytes=tight, split_read=True)
+
+
+def test_a_planned_arena_is_allocated_from_the_plan_and_from_nothing_else():
+    engine = _split_engine()
+    capture = plan_capture(engine, _split_pool_plan(), split_read=True)
+
+    workspace = allocate_for(capture, head_dim=capture.head_dim)
+
+    assert workspace.max_rows == capture.max_rows
+    assert workspace.splits == capture.splits
+    assert workspace.context_width == capture.max_width
+    assert workspace.block == capture.block
