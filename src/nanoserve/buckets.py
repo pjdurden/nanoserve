@@ -89,6 +89,26 @@ from .compiled import RECOMPILE_LIMIT, ROW_BUCKETS, WIDTH_MULTIPLE, DecodeShape,
 DEFAULT_WASTE_LIMIT = 0.9
 
 
+def row_axis(max_batch_size: int, row_buckets: Sequence[int] = ROW_BUCKETS) -> tuple[int, ...]:
+    """The row buckets a cache of this size really has. Day 65, lifted out of the set.
+
+    `DecodeBuckets` has computed this inline since Day 52. It comes out here because
+    the split count is planned *over* the row axis and has to be known *before* the
+    set is built, `plan_splits` being a max over `choose_splits` of every bucket in
+    the list. Building a throwaway set to read its rows off would work and would also
+    be a second construction whose arguments could drift from the real one's.
+
+    The candidates that fit, plus the cache's own row count. The second half matters:
+    `max_batch_size` is often not a power of two (a server picks 6), and without it a
+    full batch would have no bucket at all.
+    """
+    if max_batch_size < 1:
+        raise ValueError(f"a batch has at least one row; got {max_batch_size}")
+    return tuple(
+        sorted({int(b) for b in row_buckets if 0 < int(b) <= max_batch_size} | {max_batch_size})
+    )
+
+
 class BucketsUnsound(AssertionError):
     """A bucketed step is not the closed, inert thing bucketing promises.
 
@@ -129,6 +149,17 @@ class DecodeBuckets:
                     in once the width is gone. No default: a set that guessed a tile
                     would disagree with the read that has one, and the disagreement
                     would be a number in a table rather than a crash.
+    splits:         Day 65. Chunks per row, when the read this set belongs to is the
+                    split one, and 0 when it is not. It sits here for `block`'s
+                    reason and one more. `block` is here because the price of a
+                    streamed set is stated in tiles; `splits` is here because the
+                    price of a split set is stated in tiles *and* in an arena, and
+                    the arena is `rows * heads * splits * (head_dim + 2)` reserved
+                    once at boot. It is a fact about the read, passed in rather than
+                    inferred, and it requires `streamed` for the reason
+                    `read_workspace_bytes` requires a tile: a split is a partition of
+                    the streamed read's tiles, and a set that still buckets the width
+                    has no such thing to partition.
     """
 
     def __init__(
@@ -140,6 +171,7 @@ class DecodeBuckets:
         width_multiple: int = WIDTH_MULTIPLE,
         streamed: bool = False,
         block: int = 0,
+        splits: int = 0,
     ):
         if max_batch_size < 1:
             raise ValueError(f"a batch has at least one row; got {max_batch_size}")
@@ -154,17 +186,22 @@ class DecodeBuckets:
                 "a streamed bucket set is priced in score tiles and will not guess "
                 f"one; got block={block}. Pass the same tile the read was built with"
             )
+        if splits < 0:
+            raise ValueError(f"a row is cut into at least one chunk; got {splits}")
+        if splits and not streamed:
+            raise ValueError(
+                f"this set is priced for a split read of {splits} chunks and still "
+                "buckets the width: a split is a partition of the streamed read's "
+                "per-program tile, and a set that gathers a rectangle has no tile to "
+                "partition. Pass streamed=True with it, or drop the chunks"
+            )
         self.max_batch_size = max_batch_size
         self.max_model_len = max_model_len
         self.width_multiple = width_multiple
         self.streamed = bool(streamed)
         self.block = int(block) if streamed else 0
-        # The candidates that fit, plus the cache's own row count. The second half
-        # matters: `max_batch_size` is often not a power of two (a server picks 6),
-        # and without it a full batch would have no bucket at all.
-        self.rows = tuple(
-            sorted({int(b) for b in row_buckets if 0 < int(b) <= max_batch_size} | {max_batch_size})
-        )
+        self.splits = int(splits)
+        self.rows = row_axis(max_batch_size, row_buckets)
         if self.streamed:
             # One width, and it is the table's. Not "no width": a mapping is still a
             # 2-D tensor and a shape still has a second number, so what changes is
@@ -271,10 +308,12 @@ class DecodeBuckets:
     def render(self) -> str:
         """One line for a log: the axes, and what they multiply out to."""
         if self.streamed:
+            cut = f" x {self.splits} splits" if self.splits else ""
+            read = "split" if self.splits else "streamed"
             return (
                 f"{len(self.rows)} row buckets {list(self.rows)} x 1 width of "
-                f"{self.max_model_len} (the streamed read at a {self.block}-key tile "
-                f"has no width axis) = {self.count} shapes"
+                f"{self.max_model_len}{cut} (the {read} read at a {self.block}-key "
+                f"tile has no width axis) = {self.count} shapes"
             )
         return (
             f"{len(self.rows)} row buckets {list(self.rows)} x {len(self.widths)} "
@@ -415,14 +454,27 @@ def check_read_matches(buckets: DecodeBuckets, read) -> None:
     and each member records the same tile loop. Harmless per step and a boot that
     spends 64x the startup seconds it needed to.
 
+    **Day 65 adds the split read and the question changes shape twice.** First, the
+    width clause stops keying on `streamed` and keys on `tiled`: a split read gathers
+    no more than a streamed one, so a width bucket buys it nothing either, and a gate
+    that asked the narrower question would refuse every legitimate split server. And
+    second, the split adds an axis a bucket set is the only place to state. The arena
+    is `rows * heads * splits * (head_dim + 2)`, reserved once at boot; a set priced
+    for sixteen chunks under a read that runs one has bought fifteen sixteenths of a
+    workspace nobody addresses, and a split read under a set priced in whole tiles is
+    a launch nobody sized. Neither raises on its own. Both are a memory number that is
+    wrong in a direction the process cannot see.
+
     Duck-typed on purpose, the way `check_pad_inert` takes a plan. `nanoserve.reads`
     imports `nanoserve.captured`, which imports this module, so a real import here
-    would be a cycle; and the only thing this gate needs is two attributes any read
+    would be a cycle; and the only thing this gate needs is four attributes any read
     that wants to be checkable can carry.
     """
-    streamed = bool(getattr(read, "streamed", False))
+    tiled = bool(getattr(read, "tiled", getattr(read, "streamed", False)))
+    split = bool(getattr(read, "split", False))
+    splits = int(getattr(read, "splits", 0))
     block = int(getattr(read, "block", 0))
-    if buckets.streamed and not streamed:
+    if buckets.streamed and not tiled:
         raise BucketsUnsound(
             f"this bucket set dropped its width axis and reads every step at "
             f"{buckets.max_model_len} tokens, and the read is the rectangle: it would "
@@ -430,18 +482,48 @@ def check_read_matches(buckets: DecodeBuckets, read) -> None:
             "every request, which is correct and unbounded. Build the cache with "
             "streamed_read on both halves, or bucket the width"
         )
-    if streamed and not buckets.streamed:
+    if tiled and not buckets.streamed:
         raise BucketsUnsound(
-            f"this read is streamed and holds a {block}-key tile, and the bucket set "
+            f"this read is {getattr(read, 'mode', 'tiled')} and holds a {block}-key "
+            f"tile, and the bucket set "
             f"still has {len(buckets.widths)} width buckets in it: the width buys this "
             f"read nothing, so the set is {buckets.count} graphs where {len(buckets.rows)} "
             "would do. Build the bucket set with streamed=True"
         )
-    if streamed and block != buckets.block:
+    if tiled and block != buckets.block:
         raise BucketsUnsound(
             f"the read folds a {block}-key score tile and this set is priced in "
             f"{buckets.block}-key tiles: every cell count here would be a quotient of "
             "one read's numerator and another's denominator"
+        )
+    if buckets.splits and not split:
+        raise BucketsUnsound(
+            f"this set is priced for a split read of {buckets.splits} chunks and the "
+            f"read is the {getattr(read, 'mode', 'unsplit')} one: the plan reserved "
+            "an accumulator per (row, head, chunk) for the life of the process and "
+            "nobody addresses it, so the arena is device memory this server will "
+            "never read and the boot line that priced it is the only witness"
+        )
+    if split and not buckets.splits:
+        raise BucketsUnsound(
+            "this read is a split and the set is priced in whole tiles: the arena is "
+            "the largest thing a split server reserves and the set is where its size "
+            "is decided, so this is a launch nobody sized. Build the bucket set with "
+            "the same splits the workspace was allocated for"
+        )
+    if split and splits < 1:
+        raise BucketsUnsound(
+            f"this read is a split against a set of {buckets.splits} chunks and holds "
+            "no workspace: the arena is allocated once and handed over before the "
+            "first decode step, so this is a boot path that stopped one call short "
+            "rather than a plan that disagrees with itself"
+        )
+    if split and splits != buckets.splits:
+        raise BucketsUnsound(
+            f"the read was handed an arena of {splits} chunks and this set is priced "
+            f"for {buckets.splits}: the chunk count is a launch constant baked into "
+            "the compiled kernel, so one of these two numbers sized a workspace the "
+            "grid will not match"
         )
 
 

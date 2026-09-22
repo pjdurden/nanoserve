@@ -69,9 +69,9 @@ from nanoserve.kernels.flash_decoding import plan_splits
 from nanoserve.launch import CaptureTooSmall, KVPoolPlan, plan_capture
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes
 from nanoserve.model import LlamaModel
-from nanoserve.partials import allocate_for
+from nanoserve.partials import allocate_for, allocate_partials
 from nanoserve.plan import plan_decode
-from nanoserve.reads import RECTANGLE, STREAMED, PagedRead
+from nanoserve.reads import RECTANGLE, SPLIT, STREAMED, PagedRead
 from nanoserve.scheduler import Request
 from nanoserve.warmup import warm_shapes
 
@@ -792,3 +792,96 @@ def test_a_planned_arena_is_allocated_from_the_plan_and_from_nothing_else():
     assert workspace.splits == capture.splits
     assert workspace.context_width == capture.max_width
     assert workspace.block == capture.block
+
+
+# --- the third read's half of the same agreement ------------------------------------
+#
+# Day 65. `check_read_matches` has asked one question since Day 61: does this set
+# still have a width axis, and does the read still want one. A split read makes that
+# question insufficient rather than wrong. It wants exactly what the streamed read
+# wants of the width, and it wants one more thing the set is the only place to state:
+# the chunk count. The arena is `rows * heads * splits * (head_dim + 2)` and it is
+# reserved once at boot, so a set priced for sixteen chunks under a read that runs
+# one has bought fifteen sixteenths of a workspace nobody addresses, and the reverse
+# is a launch nobody sized.
+
+
+def _split_set(rows=4, width=512, block=32, splits=None):
+    if splits is None:
+        splits = plan_splits(DecodeBuckets(rows, width).rows, 8, width, block)
+    return DecodeBuckets(rows, width, streamed=True, block=block, splits=splits)
+
+
+def _split_read(block=32, splits=4, n_q=8, head_dim=8, rows=4, width=512):
+    read = PagedRead(SPLIT, block=block)
+    read.attach(
+        allocate_partials(
+            max_rows=rows, n_q=n_q, head_dim=head_dim, context_width=width,
+            block=block, splits=splits,
+        )
+    )
+    return read
+
+
+def test_a_split_set_needs_the_width_axis_gone_first():
+    """A split partitions the streamed read's tiles, so a set that still buckets the
+    width and also names a chunk count is describing two reads at once."""
+    with pytest.raises(ValueError, match="partition"):
+        DecodeBuckets(4, 512, splits=4)
+
+
+def test_a_split_set_and_a_split_read_that_agree_pass():
+    check_read_matches(_split_set(splits=4), _split_read(splits=4))
+
+
+def test_a_split_set_under_a_plain_streamed_read_is_refused():
+    with pytest.raises(BucketsUnsound, match="nobody addresses"):
+        check_read_matches(_split_set(splits=4), PagedRead(STREAMED, block=32))
+
+
+def test_a_split_read_under_a_plain_streamed_set_is_refused():
+    buckets = DecodeBuckets(4, 512, streamed=True, block=32)
+
+    with pytest.raises(BucketsUnsound, match="nobody sized"):
+        check_read_matches(buckets, _split_read(splits=4))
+
+
+def test_a_split_read_that_never_got_its_arena_fails_the_set_it_was_planned_for():
+    """Distinct from a count mismatch, and the message has to be, because the fix is
+    different: one is a plan that disagrees with itself and the other is a boot path
+    that stopped one call short."""
+    with pytest.raises(BucketsUnsound, match="no workspace"):
+        check_read_matches(_split_set(splits=4), PagedRead(SPLIT, block=32))
+
+
+def test_two_chunk_counts_that_disagree_are_refused():
+    with pytest.raises(BucketsUnsound, match="chunks"):
+        check_read_matches(_split_set(splits=4), _split_read(splits=2))
+
+
+def test_a_split_set_says_what_it_is_priced_in():
+    line = _split_set(splits=4).render()
+
+    assert "4 splits" in line
+
+
+def test_a_split_cache_builds_both_halves_from_one_flag():
+    cfg, cache = _prefilled(
+        [[1, 2, 3, 4]], bucket_decode=True, split_read=True, read_block=8,
+        max_model_len=64,
+    )
+
+    assert cache.decode_buckets.streamed is True
+    assert cache.decode_buckets.splits == cache.read_splits > 0
+    cache.allocate_split_workspace()
+    check_read_matches(cache.decode_buckets, cache.read)
+
+
+def test_check_capture_ready_runs_the_split_gate_too():
+    cfg, cache = _prefilled(
+        [[1, 2, 3, 4]], bucket_decode=True, persist_inputs=True, split_read=True,
+        read_block=8, max_model_len=64,
+    )
+
+    with pytest.raises(BucketsUnsound, match="no workspace"):
+        check_capture_ready(cache)

@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The third read arrives before its memory does.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A PagedRead is built when the cache is, which is before anything has been moved to a device. The rectangle and the stream</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">do not care. The split holds an arena it did not allocate, so between construction and attach there is a window where the</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">mode is set and the workspace is not, and a read that quietly allocated its own there would undo all of Day 64.</text>
+
+  <!-- ===================== LEFT TOP: the two-step arrival ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">Mode at construction, arena at boot, and the gap between them</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="178" width="150" height="86" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="82" y="196" font-weight="700" fill="#4338ca">1. the flag</text>
+    <text x="82" y="214" fill="#475569">split_read=True</text>
+    <text x="82" y="230" fill="#475569">read.mode = SPLIT</text>
+    <text x="82" y="248" fill="#94a3b8">no device yet</text>
+
+    <rect x="240" y="178" width="150" height="86" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="252" y="196" font-weight="700" fill="#4338ca">2. the arena</text>
+    <text x="252" y="214" fill="#475569">allocate_split_</text>
+    <text x="252" y="228" fill="#475569">workspace(device)</text>
+    <text x="252" y="248" fill="#94a3b8">read.attach(ws)</text>
+
+    <rect x="410" y="178" width="150" height="86" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="422" y="196" font-weight="700" fill="#166534">3. the step</text>
+    <text x="422" y="214" fill="#475569">ws.rows(rows)</text>
+    <text x="422" y="230" fill="#475569">-&gt; a window</text>
+    <text x="422" y="248" font-weight="700" fill="#166534">splits = 16</text>
+  </g>
+  <path d="M 224 220 L 236 220" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 394 220 L 406 220" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="278" width="490" height="52" rx="5" fill="#fef2f2" stroke="#fecaca" stroke-width="1.2"/>
+    <text x="82" y="298" font-weight="700" fill="#b91c1c">a call landing between 1 and 2 is refused, not served</text>
+    <text x="82" y="318" fill="#475569">SplitUnsound: this read is a split and holds no workspace</text>
+  </g>
+
+  <text x="70" y="350" font-size="10.5" fill="#64748b">The only two other options are to allocate one, which is the unpriced torch.empty</text>
+  <text x="70" y="365" font-size="10.5" fill="#64748b">Day 64 removed, or to serve a different read, which is a flag silently meaning something else.</text>
+
+  <!-- ===================== RIGHT TOP: what each read needs ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">streamed stopped being the question the width axis turns on</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="186" font-weight="700" fill="#334155">read</text>
+    <text x="800" y="186" font-weight="700" fill="#334155">holds</text>
+    <text x="960" y="186" font-weight="700" fill="#334155">tiled</text>
+    <text x="1040" y="186" font-weight="700" fill="#334155">needs an arena</text>
+
+    <text x="642" y="210" fill="#475569">rectangle (Day 28)</text>
+    <text x="800" y="210" fill="#b91c1c">the whole row</text>
+    <text x="960" y="210" fill="#b91c1c">no</text>
+    <text x="1040" y="210" fill="#94a3b8">no</text>
+
+    <text x="642" y="232" fill="#475569">streamed (Day 59)</text>
+    <text x="800" y="232" fill="#15803d">one tile</text>
+    <text x="960" y="232" fill="#15803d">yes</text>
+    <text x="1040" y="232" fill="#94a3b8">no</text>
+
+    <text x="642" y="254" fill="#475569">split (Day 63)</text>
+    <text x="800" y="254" fill="#a16207">one tile x splits</text>
+    <text x="960" y="254" fill="#15803d">yes</text>
+    <text x="1040" y="254" font-weight="700" fill="#b91c1c">yes</text>
+  </g>
+
+  <line x1="642" y1="270" x2="1128" y2="270" stroke="#e2e8f0" stroke-width="1"/>
+
+  <text x="642" y="292" font-size="10.5" fill="#64748b">Day 61 collapsed the bucket set for a read that holds a tile instead of a rectangle, and</text>
+  <text x="642" y="307" font-size="10.5" fill="#64748b">asked that as streamed, when there were two reads and the answers coincided. A split</text>
+  <text x="642" y="322" font-size="10.5" fill="#64748b">gathers no more than a stream does, so a width bucket buys it nothing either.</text>
+  <text x="642" y="342" font-size="11" font-weight="700" font-family="ui-monospace, monospace" fill="#4338ca">tiled    = mode in (STREAMED, SPLIT)</text>
+  <text x="642" y="358" font-size="11" font-weight="700" font-family="ui-monospace, monospace" fill="#4338ca">streamed = mode == STREAMED</text>
+  <text x="642" y="368" font-size="10.5" fill="#64748b"> </text>
+
+  <!-- ===================== LEFT BOTTOM: the gate matrix ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">check_read_matches: one question became three</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <text x="240" y="448" font-weight="700" fill="#334155">bucketed</text>
+    <text x="340" y="448" font-weight="700" fill="#334155">one width</text>
+    <text x="450" y="448" font-weight="700" fill="#334155">one width,</text>
+    <text x="240" y="460" font-weight="700" fill="#334155">widths</text>
+    <text x="450" y="460" font-weight="700" fill="#334155">16 chunks</text>
+
+    <text x="72" y="486" fill="#475569">rectangle</text>
+    <text x="252" y="486" font-weight="700" fill="#15803d">ok</text>
+    <text x="352" y="486" fill="#b91c1c">no width</text>
+    <text x="462" y="486" fill="#b91c1c">no width</text>
+
+    <text x="72" y="512" fill="#475569">streamed</text>
+    <text x="252" y="512" fill="#b91c1c">width buckets</text>
+    <text x="352" y="512" font-weight="700" fill="#15803d">ok</text>
+    <text x="462" y="512" fill="#b91c1c">nobody addresses</text>
+
+    <text x="72" y="538" fill="#475569">split, no arena</text>
+    <text x="252" y="538" fill="#b91c1c">width buckets</text>
+    <text x="352" y="538" fill="#b91c1c">nobody sized</text>
+    <text x="462" y="538" fill="#b91c1c">no workspace</text>
+
+    <text x="72" y="564" fill="#475569">split, 16 chunks</text>
+    <text x="252" y="564" fill="#b91c1c">width buckets</text>
+    <text x="352" y="564" fill="#b91c1c">nobody sized</text>
+    <text x="462" y="564" font-weight="700" fill="#15803d">ok</text>
+
+    <text x="72" y="590" fill="#475569">split, 2 chunks</text>
+    <text x="252" y="590" fill="#b91c1c">width buckets</text>
+    <text x="352" y="590" fill="#b91c1c">nobody sized</text>
+    <text x="462" y="590" fill="#b91c1c">2 against 16</text>
+  </g>
+
+  <line x1="72" y1="602" x2="558" y2="602" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="622" font-size="10.5" fill="#64748b">Three pass and twelve do not. None of the twelve raises in a running server: each one</text>
+  <text x="72" y="637" font-size="10.5" font-weight="700" fill="#b45309">answers correctly against a memory number nobody in the process can see is wrong.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the numbers ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">modebench.py, 256 rows, 32 heads, 8192 wide, 32-key tiles</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="450" font-weight="700" fill="#334155">read</text>
+    <text x="800" y="450" font-weight="700" fill="#334155">score cells held</text>
+    <text x="950" y="450" font-weight="700" fill="#334155">published</text>
+    <text x="1055" y="450" font-weight="700" fill="#334155">partials</text>
+
+    <text x="642" y="472" fill="#475569">rectangle</text>
+    <text x="800" y="472" fill="#b91c1c">67,108,864</text>
+    <text x="950" y="472" fill="#475569">1.0x</text>
+    <text x="1055" y="472" fill="#94a3b8">none</text>
+
+    <text x="642" y="492" fill="#475569">streamed</text>
+    <text x="800" y="492" fill="#15803d">262,144</text>
+    <text x="950" y="492" fill="#15803d">256.0x</text>
+    <text x="1055" y="492" fill="#94a3b8">none</text>
+
+    <text x="642" y="512" fill="#475569">split, 16-way</text>
+    <text x="800" y="512" fill="#a16207">4,194,304</text>
+    <text x="950" y="512" fill="#a16207">16.0x</text>
+    <text x="1055" y="512" font-weight="700" fill="#b91c1c">76.55 MB</text>
+  </g>
+
+  <line x1="642" y1="528" x2="1128" y2="528" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="548" font-size="10.5" font-weight="700" fill="#b45309">A split server reporting 16x beside a streamed one reporting 256x is not broken.</text>
+  <text x="642" y="566" font-size="10.5" fill="#64748b">The tile did not grow. There are more of them alive at once, one per chunk, because the</text>
+  <text x="642" y="581" font-size="10.5" fill="#64748b">split count is a grid axis. And the published saving is a quotient of score cells, so the</text>
+  <text x="642" y="596" font-size="10.5" fill="#64748b">76.55 MB of partials is not in it at all: that is priced at boot and reported as splits.</text>
+  <text x="642" y="620" font-size="10.5" font-weight="700" fill="#b91c1c">Still not one measured second. The card has been on the list since Day 58.</text>
+</svg>

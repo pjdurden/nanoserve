@@ -36,12 +36,15 @@ from nanoserve.graphbench import (
     read_from_health,
     run_arm,
 )
+from nanoserve.kernels.flash_decoding import SplitUnsound
 from nanoserve.kernels.paged_attention import paged_attention_batched_reference
 from nanoserve.launch import build_app, build_engine, kv_bytes_per_block
 from nanoserve.loader import EMBED, LM_HEAD, Weights, expected_shapes
 from nanoserve.model import LlamaModel
+from nanoserve.partials import allocate_partials
 from nanoserve.reads import (
     RECTANGLE,
+    SPLIT,
     STREAMED,
     PagedRead,
     ReadStats,
@@ -610,3 +613,321 @@ def test_a_server_on_the_default_read_fails_the_streamed_gate():
     with pytest.raises(Exception, match="streamed"):
         check_arm_read(arm, STREAMED)
     assert arm.read.calls > 0
+
+
+# --- the split read: a third mode, and an arena it does not own -----------------------
+#
+# Day 65. Day 63 wrote flash-decoding and Day 64 gave it a planned workspace, and
+# after both of those nothing in the engine called either. This section is the
+# wiring, and it has one shape the other two reads did not: a split read is the first
+# read in this repo that cannot run on its own. The rectangle needs a pool and a
+# mapping; the streamed read needs those and a tile width it carries itself; the
+# split needs an arena somebody else allocated, at a width somebody else fixed. So
+# "which read is this" stops being one string and becomes a string plus a buffer, and
+# the tests below are mostly about the ways those two can disagree.
+
+
+def _arena(rows=4, n_q=8, head_dim=8, width=8, block=2, splits=2):
+    """An arena sized for `_batch`'s shapes, allocated the way a plan would."""
+    return allocate_partials(
+        max_rows=rows,
+        n_q=n_q,
+        head_dim=head_dim,
+        context_width=width,
+        block=block,
+        splits=splits,
+    )
+
+
+def test_a_fresh_split_reading_has_no_chunks_because_nothing_has_been_allocated():
+    assert ReadStats(mode=SPLIT, block=32).splits == 0
+
+
+def test_a_split_reading_carries_its_chunk_count_over_the_wire():
+    stats = ReadStats(mode=SPLIT, block=32, splits=16, backend="triton", calls=3)
+    assert ReadStats.from_dict(stats.as_dict()) == stats
+
+
+def test_an_older_payload_with_no_chunk_count_reads_as_none():
+    """The same forgiveness every other counter gets, and it lands in the same place:
+    a process from before this day publishes no `splits`, and 0 is what a read with
+    no arena reports anyway."""
+    assert ReadStats.from_dict({"mode": STREAMED, "block": 32}).splits == 0
+
+
+def test_a_window_across_a_change_of_chunk_count_is_refused():
+    """`since` already refuses a change of mode and of backend, and the split count
+    belongs with them rather than with the counters: an arena is allocated once, at a
+    size, before the first decode step, so two readings that disagree about it are
+    two processes and their quotient describes neither."""
+    with pytest.raises(ValueError, match="chunks"):
+        ReadStats(mode=SPLIT, block=32, splits=8, calls=9).since(
+            ReadStats(mode=SPLIT, block=32, splits=16, calls=1)
+        )
+
+
+def test_a_split_reading_renders_its_chunks_next_to_its_backend():
+    line = ReadStats(
+        mode=SPLIT, block=32, splits=16, backend="tlsim", calls=2, rows=4,
+        score_cells=8192, held_cells=1024,
+    ).render()
+    assert "16 splits" in line and "tlsim" in line
+
+
+def test_the_split_read_is_a_mode_by_name():
+    assert PagedRead(mode=SPLIT, block=4).mode == SPLIT
+
+
+def test_the_two_tiled_reads_say_so_and_the_rectangle_does_not():
+    """`tiled` is what the width axis actually keys on, and it is not `streamed`. Day
+    61 collapsed the bucket set for a read that holds a tile instead of a rectangle,
+    and a split read holds tiles too: more of them, at once, one per chunk. Keeping
+    `streamed` as "is exactly Day 59's read" and adding a second question is what
+    stops `check_read_matches` from either refusing the split or waving it through."""
+    assert PagedRead(mode=STREAMED, block=4).tiled
+    assert PagedRead(mode=SPLIT, block=4).tiled
+    assert not PagedRead().tiled
+    assert not PagedRead(mode=SPLIT, block=4).streamed
+
+
+def test_a_split_read_with_no_arena_refuses_to_launch():
+    """The refusal the other two reads have no version of. A `PagedRead` is built
+    when the cache is, which is before anything has been moved to a device, so the
+    arena cannot be a constructor argument on the boot path. That leaves a window
+    where the mode is set and the workspace is not, and a read that quietly allocated
+    its own there would undo the whole of Day 64 on exactly the path that matters."""
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 8, [8, 4, 2])
+    read = PagedRead(mode=SPLIT, block=2)
+    with pytest.raises(SplitUnsound, match="no workspace"):
+        read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().calls == 0
+
+
+def test_a_split_read_reports_no_chunks_until_it_is_armed():
+    read = PagedRead(mode=SPLIT, block=2)
+    assert read.splits == 0
+    read.attach(_arena(splits=2))
+    assert read.splits == 2
+
+
+def test_attaching_an_arena_to_a_read_that_will_never_address_it_is_refused():
+    for mode in (RECTANGLE, STREAMED):
+        with pytest.raises(SplitUnsound, match="does not address"):
+            PagedRead(mode=mode, block=2).attach(_arena())
+
+
+def test_an_arena_that_folds_a_different_tile_is_refused():
+    """The same disagreement `check_read_matches` refuses between a set and a read,
+    one level down. The chunk bounds are `split * keys_per_split` and the chunk is a
+    whole number of *this* arena's tiles, so a read folding a different one walks a
+    partition it was not cut for."""
+    read = PagedRead(mode=SPLIT, block=4)
+    with pytest.raises(SplitUnsound, match="tile"):
+        read.attach(_arena(block=2))
+
+
+def test_a_second_arena_is_refused_once_one_is_attached():
+    """Because a captured graph is bound to the addresses it recorded. Swapping the
+    workspace under a read that has already been captured leaves the replay writing
+    into storage nothing reads and reading storage nothing writes, and the answer is
+    finite, plausible and stale."""
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena())
+    with pytest.raises(SplitUnsound, match="already"):
+        read.attach(_arena())
+
+
+def test_attaching_the_same_arena_twice_is_not_a_second_arena():
+    read = PagedRead(mode=SPLIT, block=2)
+    arena = _arena()
+    read.attach(arena)
+    read.attach(arena)
+    assert read.splits == 2
+
+
+@pytest.mark.parametrize("splits", [1, 2, 4])
+def test_the_split_read_agrees_with_the_rectangle_one(splits):
+    k, v = _pool()
+    q, mapping, lens = _batch(4, 8, [8, 5, 1, 3])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=4, width=8, block=2, splits=splits))
+    got = read(q, k, v, mapping, lens, n_rep=4)
+    want = PagedRead()(q, k, v, mapping, lens, n_rep=4)
+    assert torch.allclose(got, want, atol=1e-5)
+
+
+def test_the_split_read_holds_one_tile_per_chunk_and_says_so():
+    """The counter that makes the trade legible. A split does not make the tile
+    smaller, it makes more of them live at once: one per program, and the split count
+    is a grid axis. So the saving against the rectangle is the streamed read's
+    divided by the chunks, and a server that reports 16x where its neighbour reports
+    256x is not broken, it is split."""
+    k, v = _pool()
+    q, mapping, lens = _batch(4, 8, [8, 8, 8, 8])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=4, width=8, block=2, splits=2))
+    read(q, k, v, mapping, lens, n_rep=4)
+    stats = read.stats()
+    assert stats.score_cells == 4 * 8 * 8
+    assert stats.held_cells == 2 * (4 * 8 * 2)
+    assert stats.saving == 2.0
+    assert stats.splits == 2
+
+
+def test_the_split_read_names_the_backend_it_ran_on():
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 8, [8, 4, 2])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=3, width=8, block=2))
+    read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().backend == "tlsim"
+
+
+def test_a_split_read_charged_nothing_for_a_call_the_arena_refused():
+    """The arena's own gate runs before the launch, so a step the workspace does not
+    cover raises without a read happening, and a counter that had already ticked
+    would report a decode step the process never completed."""
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 8, [8, 4, 2])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=3, width=16, block=2))  # planned for a wider mapping
+    with pytest.raises(SplitUnsound, match="partition"):
+        read(q, k, v, mapping, lens, n_rep=4)
+    assert read.stats().calls == 0 and read.stats().backend == ""
+
+
+def test_the_split_read_pads_a_row_exactly_the_way_the_streamed_one_does():
+    """A bucketed decode step pads rows to a bucket and gives the padding
+    `context_lens == 0`, which is `check_pad_inert`'s contract and not an accident.
+    Day 63's `reduce_partials` refuses that row on the host, because every row of a
+    *real* batch has a key; the two kernels do not, and they must not, because the
+    streamed read has returned NaN there since Day 59 and a third read that raised
+    where the second one shrugged would make the flag change what a server accepts."""
+    k, v = _pool()
+    q, mapping, lens = _batch(2, 8, [8, 0])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=2, width=8, block=2))
+    got = read(q, k, v, mapping, lens, n_rep=4, validated=True)
+    want = PagedRead(mode=STREAMED, block=2)(
+        q, k, v, mapping, lens, n_rep=4, validated=True
+    )
+    assert torch.equal(torch.isnan(got), torch.isnan(want))
+    assert torch.allclose(got[0], want[0], atol=1e-5)
+
+
+def test_the_arena_addresses_do_not_move_across_reads():
+    """The whole point of the day before this one, asserted through the wiring rather
+    than through `allocate_partials`: a read that reallocated per call would pass
+    every agreement test above and be uncapturable."""
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 8, [8, 4, 2])
+    arena = _arena(rows=3, width=8, block=2)
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(arena)
+    before = arena.addresses
+    for _ in range(4):
+        read(q, k, v, mapping, lens, n_rep=4)
+    assert arena.addresses == before
+
+
+def test_the_split_read_refuses_the_inputs_the_oracle_refuses():
+    k, v = _pool()
+    q, mapping, lens = _batch(3, 8, [8, 4, 2])
+    read = PagedRead(mode=SPLIT, block=2)
+    read.attach(_arena(rows=3, width=8, block=2))
+    with pytest.raises(ValueError):
+        read(q.expand(3, 8, 2, 8), k, v, mapping, lens, n_rep=4)
+
+
+# --- the cache hands the read its arena ----------------------------------------------
+
+
+def test_a_cache_asked_for_the_split_read_gets_it():
+    cache = _cache(split_read=True, bucket_decode=True, read_block=4)
+    assert cache.read.mode == SPLIT
+    assert cache.read.block == 4
+    assert cache.read_splits > 0
+
+
+def test_a_cache_cannot_run_two_reads_at_once():
+    with pytest.raises(ValueError, match="one read"):
+        _cache(split_read=True, streamed_read=True, bucket_decode=True)
+
+
+def test_a_split_cache_without_a_bucket_set_is_refused():
+    """The constraint that separates this read from the other two, and it is worth a
+    constructor refusal rather than a crash at the first step. An arena is sized from
+    one mapping width for the life of the process; an unbucketed cache presents
+    whatever width its longest row happens to have this step. The streamed read
+    survives that because its loop bound is the row's own length, so a width it never
+    reads costs it nothing; a split *partitions* the width, so a different one is a
+    different partition."""
+    with pytest.raises(ValueError, match="bucket"):
+        _cache(split_read=True)
+
+
+def test_the_cache_allocates_the_arena_from_its_own_two_limits():
+    cache = _cache(split_read=True, bucket_decode=True, read_block=4)
+    arena = cache.allocate_split_workspace()
+    assert arena.max_rows == cache.batch_size
+    assert arena.context_width == cache.max_model_len
+    assert arena.n_q == cache.config.num_attention_heads
+    assert arena.head_dim == cache.config.head_dim
+    assert cache.read.splits == arena.splits == cache.read_splits
+
+
+def test_a_split_cache_whose_arena_was_never_allocated_refuses_the_step():
+    cache = _cache(split_read=True, bucket_decode=True, read_block=4)
+    _prefill(cache, [6, 3, 1])
+    cfg = _tiny_config()
+    torch.manual_seed(3)
+    k = torch.randn(3, cfg.num_key_value_heads, 1, cfg.head_dim)
+    v = torch.randn(3, cfg.num_key_value_heads, 1, cfg.head_dim)
+    q = torch.randn(3, cfg.num_attention_heads, 1, cfg.head_dim)
+    with pytest.raises(SplitUnsound, match="no workspace"):
+        cache.paged_attention(0, k, v, q, n_rep=4, plan=cache.plan_decode(rows=(0, 1, 2)))
+
+
+def _planned_decode(cache):
+    cfg = _tiny_config()
+    _prefill(cache, [6, 3, 1])
+    torch.manual_seed(3)
+    k = torch.randn(3, cfg.num_key_value_heads, 1, cfg.head_dim)
+    v = torch.randn(3, cfg.num_key_value_heads, 1, cfg.head_dim)
+    q = torch.randn(3, cfg.num_attention_heads, 1, cfg.head_dim)
+    plan = cache.plan_decode(rows=(0, 1, 2))
+    return cache.paged_attention(0, k, v, q, n_rep=4, plan=plan)
+
+
+def test_a_split_decode_step_reads_the_same_attention_as_the_rectangle():
+    """Through `write`, through the plan's own mapping, through `validated=True` and
+    through the arena's window, which is the combination none of the kernel tests
+    have."""
+    split = _cache(split_read=True, bucket_decode=True, read_block=4)
+    split.allocate_split_workspace()
+    assert torch.allclose(
+        _planned_decode(split), _planned_decode(_cache(bucket_decode=True)), atol=1e-5
+    )
+
+
+def test_a_split_decode_step_counts_its_chunks_on_the_cache_s_read():
+    cache = _cache(split_read=True, bucket_decode=True, read_block=4)
+    cache.allocate_split_workspace()
+    _planned_decode(cache)
+    stats = cache.read.stats()
+    assert stats.mode == SPLIT and stats.calls == 1 and stats.rows == 3
+    assert stats.splits == cache.read_splits
+    assert stats.held_cells == stats.splits * 3 * 8 * 4
+
+
+def test_a_split_cache_publishes_its_chunk_count_next_to_its_backend():
+    """Day 62 put the backend in the payload because `mode` is what the operator
+    asked for and the backend is what the box could give them. The split count is the
+    third question in that family and it is the one a memory budget turns on: two
+    servers both reporting `split` on `triton` can be holding arenas a factor of
+    sixteen apart, and nothing else in this payload would say so."""
+    cache = _cache(split_read=True, bucket_decode=True, read_block=4)
+    cache.allocate_split_workspace()
+    _planned_decode(cache)
+    assert cache.read.as_dict()["splits"] == cache.read_splits

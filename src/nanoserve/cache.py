@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import torch
 
+from .kernels.flash_decoding import plan_splits
 from .kernels.triton_paged_attention import paged_attention as paged_attention_dispatch
+from .partials import SplitWorkspace, allocate_partials
 from .plan import DecodePlan
-from .reads import DEFAULT_BLOCK, PagedRead
-from .buckets import DecodeBuckets
+from .reads import RECTANGLE, SPLIT, STREAMED, DEFAULT_BLOCK, PagedRead
+from .buckets import DecodeBuckets, row_axis
 from .inputs import DecodeInputs
 from .slots import SlotTable
 
@@ -562,6 +564,15 @@ class BatchedPagedKVCache:
     attention to a few ulps, and an order of magnitude slower per call while the loop
     is tlsim in Python, which is exactly why it is a flag and not a replacement. See
     `nanoserve.reads`.
+
+    Day 65 adds the third. `split_read=True` is Day 63's flash-decoding over Day 64's
+    planned arena, and it is the one read this cache has to do more than name: the
+    workspace is device memory and nothing has been moved to a device when a cache is
+    constructed, so the flag decides the mode here and
+    `allocate_split_workspace` hands the arena over later. It is also the one read
+    that requires `bucket_decode`, and that refusal is in the constructor rather than
+    at the first step, because the reason is a property of the configuration and not
+    of any particular batch. See `allocate_split_workspace`.
     """
 
     def __init__(
@@ -573,10 +584,27 @@ class BatchedPagedKVCache:
         bucket_decode: bool = False,
         persist_inputs: bool = False,
         streamed_read: bool = False,
+        split_read: bool = False,
         read_block: int = DEFAULT_BLOCK,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
+        if streamed_read and split_read:
+            raise ValueError(
+                "a cache runs one read, and these are two: the split is Day 59's loop "
+                "cut into chunks, so `split_read` already implies everything "
+                "`streamed_read` asks for and the pair names no configuration"
+            )
+        if split_read and not bucket_decode:
+            raise ValueError(
+                "the split read needs bucket_decode: its arena is partitioned once "
+                "from one mapping width and reserved for the life of the process, and "
+                "an unbucketed cache presents whatever width its longest row happens "
+                "to have this step. The streamed read survives that because its loop "
+                "bound is each row's own length, so a width it never reads costs it "
+                "nothing; a split *partitions* the width, so a different one is a "
+                "different partition of the same history"
+            )
         self.config = config
         self.allocator = allocator
         self.block_size = allocator.block_size
@@ -619,12 +647,31 @@ class BatchedPagedKVCache:
         # `max_model_len` alone and the capture list becomes the row axis. Both
         # halves are built from the one flag here so they cannot be wired apart, and
         # `check_read_matches` is the gate for the caller who assembles them by hand.
+        # Day 65. The third read wants the same collapsed width axis the second one
+        # does, and one number more: the chunk count. It is planned here, from this
+        # cache's own two limits and its own row axis, because `plan_splits` is a max
+        # over `choose_splits` of every bucket in the list and the list is this set.
+        # `row_axis` rather than `self.decode_buckets.rows` because the set is built
+        # *from* this number, and a throwaway set to read the rows off would be a
+        # second construction whose arguments could drift from the real one's.
+        tiled = streamed_read or split_read
+        self.read_splits = (
+            plan_splits(
+                row_axis(batch_size),
+                config.num_attention_heads,
+                self.max_model_len,
+                read_block,
+            )
+            if split_read
+            else 0
+        )
         self.decode_buckets = (
             DecodeBuckets(
                 batch_size,
                 self.max_model_len,
-                streamed=streamed_read,
-                block=read_block if streamed_read else 0,
+                streamed=tiled,
+                block=read_block if tiled else 0,
+                splits=self.read_splits,
             )
             if bucket_decode
             else None
@@ -641,8 +688,54 @@ class BatchedPagedKVCache:
         # client sees, so the counters are the wiring's only witness. The default is
         # the Day-28 rectangle and stays the default until the streamed loop is
         # Triton. See `nanoserve.reads`.
-        self.read = PagedRead(mode="streamed" if streamed_read else "rectangle",
-                              block=read_block)
+        # Day 65. The mode is decided here and the arena is not: a workspace is device
+        # memory and nothing has been moved to a device yet, so `allocate_split_workspace`
+        # is the second half and `PagedRead` refuses a launch in between.
+        self.read = PagedRead(
+            mode=SPLIT if split_read else (STREAMED if streamed_read else RECTANGLE),
+            block=read_block,
+        )
+
+    def allocate_split_workspace(self, device=None, **kwargs) -> SplitWorkspace:
+        """Reserve the split read's arena from this cache's own numbers, and hand it over.
+
+        Day 65, and the argument list is the point: every number an arena needs is
+        already a property of this cache or of its model, and `device` is the only one
+        that is not knowable when the cache is built. `max_rows` is the row count,
+        `context_width` is the slot table's width (which under a streamed bucket set
+        is what every decode step reads at), `n_q` and `head_dim` are the model's, the
+        tile is the read's, and the chunk count was planned at construction over this
+        cache's own row axis.
+
+        So a caller cannot get the arena wrong here without getting the cache wrong
+        first, which is the same move `DecodeBuckets` got on Day 52: the set is built
+        from the cache's two limits because a bucket it has no row for is a crash
+        rather than a rounding decision.
+
+        `PagedRead.attach` is what refuses a second one, and it refuses on identity
+        rather than on shape: a replay is bound to the addresses it recorded, so a
+        workspace swapped under a captured read returns the step before it, plausibly.
+        Calling this twice therefore raises rather than quietly re-reserving, which is
+        the behaviour a boot path that runs warm-up twice should have.
+        """
+        if not self.read.split:
+            raise ValueError(
+                f"this cache runs the {self.read.mode} read and an arena for it would "
+                "be device memory nothing addresses: the partials are an accumulator "
+                "per (row, head, chunk) and neither of the other two reads has chunks"
+            )
+        workspace = allocate_partials(
+            max_rows=self.batch_size,
+            n_q=self.config.num_attention_heads,
+            head_dim=self.config.head_dim,
+            context_width=self.max_model_len,
+            block=self.read.block,
+            splits=self.read_splits,
+            device=device,
+            **kwargs,
+        )
+        self.read.attach(workspace)
+        return workspace
 
     @property
     def sink_slot(self) -> int:

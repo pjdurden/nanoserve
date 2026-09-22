@@ -1,0 +1,4 @@
+read,rows,heads,head_dim,context_width,block,splits,score_cells,held_cells,arena_bytes
+rectangle,256,32,128,8192,32,0,67108864,67108864,0
+streamed,256,32,128,8192,32,0,67108864,262144,0
+split,256,32,128,8192,32,16,67108864,4194304,76546048

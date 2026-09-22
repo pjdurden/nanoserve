@@ -48,6 +48,35 @@ the last two is the saving a live server got, which is a different claim from
 `streambench.py`'s, and a weaker and more useful one: that table is arithmetic about
 shapes the bench invented, and this one is a quotient of two things that happened.
 
+**Day 65 adds the third read, and it is the first one that cannot run on its own.**
+The rectangle needs a pool and a mapping. The streamed read needs those and a tile
+width, which it carries itself because a tile is an integer. The split needs an arena
+somebody else allocated, at a width somebody else fixed, and Day 64 is why: three
+`torch.empty` calls inside the read are legal under capture and unpriced by the plan,
+so the workspace became a `SplitWorkspace` the plan owns. A `PagedRead` is built when
+the cache is, which is before anything has been moved to a device, so the arena
+cannot be a constructor argument on the boot path. `attach` is that gap written down:
+between construction and the first decode step there is a window where the mode is
+set and the workspace is not, and a split read that quietly allocated its own there
+would undo the whole of the previous day on exactly the path that matters.
+
+**So `streamed` stops being the question the width axis turns on.** Day 61 collapsed
+the bucket set for a read that holds a tile instead of a rectangle, and the split
+holds tiles too: more of them, at once, one per chunk per row per head. `tiled` is
+that question and `streamed` goes back to meaning "is exactly Day 59's read", because
+a single flag doing both jobs would either refuse the split read or wave it through
+the gate, and both of those are wrong in the same file.
+
+**And the saving means a third thing.** A split does not make the tile smaller, it
+makes more of them live: the split count is a grid axis, so `held_cells` is the
+streamed read's multiplied by the chunks and the quotient is divided by them. A
+server reporting 16x next to one reporting 256x is not broken, it is split. What this
+counter does *not* hold is the arena, and that is deliberate rather than an omission:
+the partials are not scores, they are constant for the life of the process, and they
+are priced once at boot by `split_workspace_bytes`. A per-call counter that added
+them would restate a boot number once per layer per step and make the quotient
+untraceable to either.
+
 Both cell counts are free. `q.shape` and `slot_mapping.shape` are static, so the
 accounting is host arithmetic over numbers the caller already has, and nothing here
 reads a tensor's *contents*. That matters more than it looks: the obvious richer
@@ -63,10 +92,12 @@ from dataclasses import dataclass, replace
 
 import torch
 
-from .captured import score_cells, streamed_score_cells
+from .captured import score_cells, split_score_cells, streamed_score_cells
 from .compiled import DecodeShape
+from .kernels.flash_decoding import SplitUnsound
 from .kernels.paged_attention import paged_attention_batched_reference
 from .kernels.triton_batched_attention import paged_attention_batched, select_backend
+from .partials import SplitWorkspace
 
 #: The Day-28 read: gather the whole `[rows, max_ctx]` mapping, score it into a
 #: rectangle, mask the result. The default, and the oracle the other one is graded
@@ -78,7 +109,18 @@ RECTANGLE = "rectangle"
 #: and no rectangle, at the price of a Python loop until it is Triton.
 STREAMED = "streamed"
 
-READS = (RECTANGLE, STREAMED)
+#: Day 63's read, wired on Day 65: Day 59's loop cut into `splits` chunks per row,
+#: each chunk its own program with its own partial softmax, folded by a second pass.
+#: The only read that needs a workspace it does not own, because the chunks hand
+#: numbers to each other through memory. See `nanoserve.partials`.
+SPLIT = "split"
+
+READS = (RECTANGLE, STREAMED, SPLIT)
+
+#: The reads that hold a tile rather than a rectangle, which is what the width axis
+#: turns on. Day 61 asked this question as `streamed`, when there were two reads and
+#: the answer happened to coincide. See `check_read_matches`.
+TILED = (STREAMED, SPLIT)
 
 #: Keys per score tile, when nobody says otherwise. A pure performance knob: every
 #: value returns the same attention. It is *not* `block_size`, and the two are
@@ -106,12 +148,20 @@ class ReadUnwitnessed(AssertionError):
 class ReadStats:
     """One reading of what the decode read has done, without the read. Day 60.
 
-    mode:        `RECTANGLE` or `STREAMED`. In the payload for the reason
+    mode:        `RECTANGLE`, `STREAMED` or `SPLIT`. In the payload for the reason
                  `CaptureStats.mode` is: a saving of 1.0x means two different
                  things, and only the mode next to it says whether this server is
                  doing what it was launched to do.
-    block:       the score tile the streamed read folds, and 0 on the rectangle,
-                 which has no tile because it has no loop.
+    block:       the score tile a tiled read folds, and 0 on the rectangle, which
+                 has no tile because it has no loop.
+    splits:      chunks per row, on a split read that has been handed its arena.
+                 0 everywhere else, and *also* 0 on a split read that has not, which
+                 is the one ambiguity in this payload and the cheapest place to leave
+                 it: a process in that state has completed no decode step, so
+                 `calls` is 0 next to it and the pair says which. Day 65. It is here
+                 because it is the field a memory budget turns on: two servers both
+                 reporting `split` on `triton` can hold arenas a factor of sixteen
+                 apart, and `rows * heads * splits * (head_dim + 2)` is why.
     backend:     what the last read actually ran on: "torch" for the rectangle,
                  "triton" or "tlsim" for the streamed one, and "" when nothing has
                  run yet. Day 62. `mode` is what the operator asked for and this is
@@ -135,6 +185,7 @@ class ReadStats:
 
     mode: str = RECTANGLE
     block: int = 0
+    splits: int = 0
     backend: str = ""
     calls: int = 0
     rows: int = 0
@@ -157,7 +208,16 @@ class ReadStats:
         numerator would be the width a rectangle read would have rounded this step to,
         which is `int(context_lens.max())`, which is Day 48's synchronisation once per
         call per layer to make a log read better. So the number stays and this
-        paragraph is the price tag on it."""
+        paragraph is the price tag on it.
+
+        **Day 65 gives it a third reading, and this one is not a tautology.** A split
+        read holds the streamed read's tile once per chunk, because the split count is
+        a grid axis and every program on it is scoring, so the quotient is the
+        streamed one divided by `splits`. That is the trade stated in the only
+        currency a live server publishes: the split shortens the tail by spreading one
+        row over more programs and pays for it in score cells held at once and in an
+        arena this number does not contain. A server reporting 16x beside one
+        reporting 256x is not a broken streamed server."""
         if not self.held_cells:
             return 1.0
         return self.score_cells / self.held_cells
@@ -181,12 +241,25 @@ class ReadStats:
         earlier reading taken before the first read has an empty backend, and that is
         a reading of a process that had not yet found out, not of a different one. So
         "" to "triton" is a legal window and "tlsim" to "triton" is not.
+
+        Refuses a change of split count for the mode's reason rather than the
+        backend's, so it gets no allowance. An arena is allocated once, at a size,
+        before the first decode step: a process cannot acquire chunks the way it can
+        discover a backend, so 0 to 16 is two processes and not a process finding out.
+        Day 65.
         """
         if self.mode != earlier.mode:
             raise ValueError(
                 f"these two readings are not of the same read ({earlier.mode} then "
                 f"{self.mode}): a process picks its read at construction, so a "
                 "window across a change of mode is a window across two processes"
+            )
+        if self.splits != earlier.splits:
+            raise ValueError(
+                f"these two readings are not of the same arena ({earlier.splits} then "
+                f"{self.splits} chunks): a split read is handed its workspace before "
+                "its first step and holds it for the life of the process, so a window "
+                "across a change of chunks is a window across two processes"
             )
         if earlier.backend and self.backend and self.backend != earlier.backend:
             raise ValueError(
@@ -218,6 +291,7 @@ class ReadStats:
         return cls(
             mode=payload.get("mode", RECTANGLE),
             block=int(payload.get("block", 0)),
+            splits=int(payload.get("splits", 0)),
             backend=payload.get("backend", ""),
             calls=int(payload.get("calls", 0)),
             rows=int(payload.get("rows", 0)),
@@ -229,6 +303,7 @@ class ReadStats:
         return {
             "mode": self.mode,
             "block": self.block,
+            "splits": self.splits,
             "backend": self.backend,
             "calls": self.calls,
             "rows": self.rows,
@@ -238,23 +313,31 @@ class ReadStats:
 
     def render(self) -> str:
         tile = f" block {self.block}" if self.block else ""
+        cut = f" x {self.splits} splits" if self.splits else ""
         on = f" on {self.backend}" if self.backend else ""
         return (
-            f"{self.mode}{tile}{on}: {self.calls} reads, {self.rows_per_call:.1f} rows "
-            f"each, held {self.held_cells} of {self.score_cells} cells "
-            f"({self.saving:.1f}x)"
+            f"{self.mode}{tile}{cut}{on}: {self.calls} reads, "
+            f"{self.rows_per_call:.1f} rows each, held {self.held_cells} of "
+            f"{self.score_cells} cells ({self.saving:.1f}x)"
         )
 
 
 class PagedRead:
     """The decode read a cache runs, and the tally of what it has held. Day 60.
 
-    Two branches and one contract. Both take exactly the arguments
-    `paged_attention_batched_reference` takes, both refuse exactly what it refuses,
-    and both return `[batch, n_q, 1, d]`. The refusals matter as much as the output:
-    a dispatch that softened one branch's guard would make the two reads differ in
-    what they *accept* rather than in what they hold, and the first symptom of that
-    is a crash that only happens under one flag.
+    Three branches and one contract. All of them take exactly the arguments
+    `paged_attention_batched_reference` takes, all of them refuse exactly what it
+    refuses, and all of them return `[batch, n_q, 1, d]`. The refusals matter as much
+    as the output: a dispatch that softened one branch's guard would make the reads
+    differ in what they *accept* rather than in what they hold, and the first symptom
+    of that is a crash that only happens under one flag.
+
+    The third branch has one precondition the other two do not, and it is the shape
+    of Day 65: a split read holds a `SplitWorkspace` it did not allocate. Between
+    construction and `attach` it knows its mode and has no arena, and a call in that
+    window is refused rather than served, because the only other options are to
+    allocate one (Day 64's whole argument, undone) or to serve the wrong read (a flag
+    that silently means something else).
 
     `validated` and `context_bounds` are passed straight through for the same
     reason. The plan path hands `validated=True` because Day 50 checked the lengths
@@ -266,22 +349,89 @@ class PagedRead:
     a closure over a mutable box would be the same object with the tally hidden.
     """
 
-    def __init__(self, mode: str = RECTANGLE, block: int = DEFAULT_BLOCK):
+    def __init__(
+        self,
+        mode: str = RECTANGLE,
+        block: int = DEFAULT_BLOCK,
+        workspace: SplitWorkspace | None = None,
+    ):
         if mode not in READS:
             raise ValueError(f"unknown decode read {mode!r}; expected one of {READS}")
         if block < 1:
             raise ValueError(f"a tile holds at least one key; got {block}")
         self.mode = mode
         self.block = block
+        self.workspace: SplitWorkspace | None = None
         self.backend = ""
         self.calls = 0
         self.rows = 0
         self.score_cells = 0
         self.held_cells = 0
+        if workspace is not None:
+            self.attach(workspace)
 
     @property
     def streamed(self) -> bool:
+        """Exactly Day 59's read, and not "does not build a rectangle"."""
         return self.mode == STREAMED
+
+    @property
+    def split(self) -> bool:
+        return self.mode == SPLIT
+
+    @property
+    def tiled(self) -> bool:
+        """Whether this read holds a tile instead of the row it is scoring.
+
+        The question the width axis actually turns on, which `check_read_matches` asked
+        as `streamed` while there were only two reads. A split read gathers no more
+        than a streamed one does, so a width bucket buys it nothing either.
+        """
+        return self.mode in TILED
+
+    @property
+    def splits(self) -> int:
+        """Chunks per row, or 0 for a read with no arena. See `ReadStats.splits`."""
+        return 0 if self.workspace is None else self.workspace.splits
+
+    def attach(self, workspace: SplitWorkspace) -> None:
+        """Take the arena the plan allocated. Day 65.
+
+        A method rather than a constructor argument because of when each is knowable.
+        The mode is a flag an operator typed and the cache is built from it; the arena
+        is device memory, and on the boot path nothing has been moved to a device yet
+        when the cache is constructed. So the two arrive at different times and the
+        window between them is real, which is what the refusal in `__call__` is for.
+
+        Idempotent on the *same* workspace and refused on a different one, and that
+        asymmetry is the capture argument rather than tidiness. A recorded graph is
+        bound to the addresses it was recorded with, so a workspace swapped under a
+        read that has already been captured leaves the replay writing into storage
+        nothing reads and reading storage nothing writes. The answer that comes out is
+        finite, plausible and one step stale, which is the failure this repo has spent
+        three weeks learning to refuse instead of debug.
+        """
+        if not self.split:
+            raise SplitUnsound(
+                f"a {self.mode} read does not address a split workspace: the arena is "
+                "an accumulator per (row, head, chunk) and this read has no chunks, so "
+                "attaching one reserves device memory nothing in the process reads"
+            )
+        if workspace.block != self.block:
+            raise SplitUnsound(
+                f"this read folds a {self.block}-key score tile and the arena was "
+                f"partitioned in {workspace.block}-key tiles: the chunk bounds are "
+                "`split * keys_per_split` and the chunk is a whole number of the "
+                "arena's tiles, so the read would walk a partition it was not cut for"
+            )
+        if self.workspace is not None and self.workspace is not workspace:
+            raise SplitUnsound(
+                "this read already holds an arena and a second one would move the "
+                "addresses out from under anything that captured the first: a replay "
+                "is bound to the pointers it recorded, so the read would keep "
+                "returning the step before it, plausibly"
+            )
+        self.workspace = workspace
 
     def __call__(
         self,
@@ -306,7 +456,27 @@ class PagedRead:
         costs nothing and removes the failure where the cache was built on the host
         and the engine later moved to a card.
         """
-        if self.streamed:
+        if self.split:
+            if self.workspace is None:
+                raise SplitUnsound(
+                    "this read is a split and holds no workspace: the arena is "
+                    "allocated once by the plan and handed over before the first "
+                    "decode step, so a launch here would have to allocate its own, "
+                    "which is the unpriced `torch.empty` the previous day removed"
+                )
+            backend = select_backend(q.device)
+            out = self.workspace.read(
+                q,
+                k_pool,
+                v_pool,
+                slot_mapping,
+                context_lens,
+                n_rep,
+                scale,
+                context_bounds=context_bounds,
+                validated=validated,
+            )
+        elif self.streamed:
             backend = select_backend(q.device)
             out = paged_attention_batched(
                 q,
@@ -343,26 +513,33 @@ class PagedRead:
         Charged after the read rather than before it, so a call that was refused is
         not counted: a reading is what this read *did*, and a rejected call did
         nothing. `DecodeShape` is reused rather than open-coded because
-        `score_cells` and `streamed_score_cells` are Day 54's and Day 59's
-        definitions of the same two quantities, and a second copy of the
-        multiplication here is a second copy that can drift from the one the capture
-        list sizes its pool with.
+        `score_cells`, `streamed_score_cells` and `split_score_cells` are Day 54's,
+        Day 59's and Day 64's definitions of the same quantities, and a second copy of
+        the multiplication here is a second copy that can drift from the one the
+        capture list sizes its pool with. The split arm charges the split count it
+        reads off the *arena* rather than one it was told, because the arena is what
+        the launch will actually be shaped by.
         """
         rows, heads = q.shape[0], q.shape[1]
         shape = DecodeShape(rows=rows, context_width=slot_mapping.shape[1])
         charged = score_cells(shape, heads)
+        if self.split:
+            held = split_score_cells(shape, heads, self.block, self.splits)
+        elif self.streamed:
+            held = streamed_score_cells(shape, heads, self.block)
+        else:
+            held = charged
         self.calls += 1
         self.rows += rows
         self.score_cells += charged
-        self.held_cells += (
-            streamed_score_cells(shape, heads, self.block) if self.streamed else charged
-        )
+        self.held_cells += held
 
     def stats(self) -> ReadStats:
         """A frozen reading of the tally so far. See `ReadStats`."""
         return ReadStats(
             mode=self.mode,
-            block=self.block if self.streamed else 0,
+            block=self.block if self.tiled else 0,
+            splits=self.splits,
             backend=self.backend,
             calls=self.calls,
             rows=self.rows,
