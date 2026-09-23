@@ -1,0 +1,8 @@
+table,arm,verdict,arena_bytes,splits
+order,never,"CaptureUnsound: this cache runs the split read and holds no arena yet, so th",,
+order,after warm,"CaptureUnsound: this cache runs the split read and holds no arena yet, so th",,
+order,twice,BootUnsound: this read already holds an arena,,
+order,after plan,boots,,
+servers,rectangle,3 lines,0,0
+servers,streamed,3 lines,0,0
+servers,split,4 lines,1536,2

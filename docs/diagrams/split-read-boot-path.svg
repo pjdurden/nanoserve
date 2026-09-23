@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="26" font-weight="700" fill="#1e1b4b">The arena gets a caller, and the caller has exactly one place to stand.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 65 stopped at the cache. Today --split-read reaches serve.py, Engine.build, build_engine and build_app, and the one</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">call that turns a planned split into memory lands between the capture plan and the warm-up. Wiring it found a gate that</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">refused every split server with CUDA graphs at construction, before the one call that could have armed it.</text>
+
+  <!-- ===================== LEFT TOP: the boot path ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">build_app, five calls, and the position of one of them</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="66" y="180" width="92" height="70" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="74" y="198" font-weight="700" fill="#4338ca">build_</text>
+    <text x="74" y="212" font-weight="700" fill="#4338ca">engine</text>
+    <text x="74" y="232" fill="#94a3b8">mode = SPLIT</text>
+
+    <rect x="168" y="180" width="92" height="70" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="176" y="198" font-weight="700" fill="#4338ca">plan_</text>
+    <text x="176" y="212" font-weight="700" fill="#4338ca">capture</text>
+    <text x="176" y="232" fill="#94a3b8">probe, price</text>
+
+    <rect x="270" y="180" width="100" height="70" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="278" y="198" font-weight="700" fill="#166534">arm_split_</text>
+    <text x="278" y="212" font-weight="700" fill="#166534">read</text>
+    <text x="278" y="232" fill="#166534">arena, attach</text>
+
+    <rect x="380" y="180" width="92" height="70" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="388" y="198" font-weight="700" fill="#4338ca">warm_</text>
+    <text x="388" y="212" font-weight="700" fill="#4338ca">engine</text>
+    <text x="388" y="232" fill="#94a3b8">a decode step</text>
+
+    <rect x="482" y="180" width="84" height="70" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="490" y="198" font-weight="700" fill="#4338ca">Async</text>
+    <text x="490" y="212" font-weight="700" fill="#4338ca">Engine</text>
+    <text x="490" y="232" fill="#94a3b8">door opens</text>
+  </g>
+  <path d="M 159 215 L 166 215" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 261 215 L 268 215" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 371 215 L 378 215" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 473 215 L 480 215" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <text x="70" y="276" font-size="10.5" fill="#64748b">After the plan, because its probe is where the split's bytes met the card: an arena</text>
+  <text x="70" y="291" font-size="10.5" fill="#64748b">reserved first is counted twice, once by the driver as used and once by the plan as needed.</text>
+  <text x="70" y="311" font-size="10.5" fill="#64748b">Before the warm-up, because a warm batch is a decode step and an unarmed split refuses one.</text>
+  <text x="70" y="331" font-size="10.5" fill="#64748b">Outside the capture branch, because the arena belongs to the read: a split server with</text>
+  <text x="70" y="346" font-size="10.5" fill="#64748b">the graphs off runs a split on every decode step all the same.</text>
+
+  <!-- ===================== RIGHT TOP: the gate that was early ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">check_capture_ready ran before the arena could exist</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="186" font-weight="700" fill="#334155">called from</text>
+    <text x="830" y="186" font-weight="700" fill="#334155">armed</text>
+    <text x="900" y="186" font-weight="700" fill="#334155">asks</text>
+
+    <text x="642" y="210" fill="#475569">Engine.__init__</text>
+    <text x="830" y="210" font-weight="700" fill="#a16207">False</text>
+    <text x="900" y="210" fill="#475569">configuration only</text>
+
+    <text x="642" y="232" fill="#475569">warm_decode</text>
+    <text x="830" y="232" font-weight="700" fill="#15803d">True</text>
+    <text x="900" y="232" fill="#475569">configuration and arena</text>
+
+    <text x="642" y="254" fill="#475569">capture preconditions</text>
+    <text x="830" y="254" font-weight="700" fill="#15803d">True</text>
+    <text x="900" y="254" fill="#475569">configuration and arena</text>
+  </g>
+
+  <line x1="642" y1="270" x2="1128" y2="270" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="292" font-size="10.5" fill="#64748b">Day 65's gate asked "does the split read hold an arena" from the constructor, and on</text>
+  <text x="642" y="307" font-size="10.5" fill="#64748b">the boot path the constructor runs before any device exists. Six clauses are wrong at</text>
+  <text x="642" y="322" font-size="10.5" fill="#64748b">any time. One is wrong only too late, and that is the one armed=False excuses.</text>
+  <text x="642" y="346" font-size="10.5" font-weight="700" fill="#b91c1c">CaptureUnsound: ... reserve it with cache.allocate_split_workspace(device)</text>
+  <text x="642" y="362" font-size="10.5" fill="#64748b">Named for the call that fixes it, because it is not two plans disagreeing.</text>
+
+  <!-- ===================== LEFT BOTTOM: the order ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">bootbench_split.py: where the arm sits, and what refuses</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="72" y="450" font-weight="700" fill="#334155">arm</text>
+    <text x="190" y="450" font-weight="700" fill="#334155">verdict</text>
+
+    <text x="72" y="476" fill="#475569">never</text>
+    <text x="190" y="476" fill="#b91c1c">CaptureUnsound at the warm-up: no arena yet</text>
+
+    <text x="72" y="500" fill="#475569">after warm</text>
+    <text x="190" y="500" fill="#b91c1c">CaptureUnsound at the warm-up: no arena yet</text>
+
+    <text x="72" y="524" fill="#475569">twice</text>
+    <text x="190" y="524" fill="#b91c1c">BootUnsound: this read already holds an arena</text>
+
+    <text x="72" y="548" font-weight="700" fill="#166534">after plan</text>
+    <text x="190" y="548" font-weight="700" fill="#15803d">boots: 3 of 3 shapes warm, 0 cold</text>
+  </g>
+
+  <line x1="72" y1="566" x2="558" y2="566" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="586" font-size="10.5" fill="#64748b">Every refusal is before the door opens. Without them the first two boot a server that</text>
+  <text x="72" y="601" font-size="10.5" fill="#64748b">refuses its first decode, and the third swaps pointers under a graph that recorded them.</text>
+  <text x="72" y="622" font-size="10.5" font-weight="700" fill="#b45309">One position works, and it is a line in build_app rather than a comment about one.</text>
+
+  <!-- ===================== RIGHT BOTTOM: what it prints ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">The two numbers a split server reserves, printed together</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="8.8" font-family="ui-monospace, monospace">
+    <text x="636" y="448" fill="#94a3b8">KV pool: 256 blocks x 4 tokens = 1024 tokens, 4 slots</text>
+    <text x="636" y="468" fill="#4338ca">CUDA graphs: 3 of 3 shapes, rows &lt;= 4, context &lt;= 1024, 2-way split</text>
+    <text x="636" y="488" font-weight="700" fill="#166534">split workspace: 4 rows x 8 heads x 2 splits of 512 keys,</text>
+    <text x="636" y="502" font-weight="700" fill="#166534">  over a 1024-wide mapping, allocated once</text>
+    <text x="636" y="522" fill="#94a3b8">3 of 3 shapes recorded, 3 graphs held, 0 cold</text>
+  </g>
+
+  <line x1="642" y1="536" x2="1128" y2="536" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="556" font-size="10.5" fill="#64748b">check_arena_matches_capture holds the two records to each other: chunks, tile and width</text>
+  <text x="642" y="571" font-size="10.5" fill="#64748b">must be equal, rows only bounded, because --warm-rows trims what is recorded and not what</text>
+  <text x="642" y="586" font-size="10.5" fill="#64748b">is served. /health carries split_workspace, and check_boot_info refuses a plan without one.</text>
+  <text x="642" y="610" font-size="10.5" font-weight="700" fill="#b91c1c">Same greedy tokens as the rectangle. Still no second measured.</text>
+</svg>

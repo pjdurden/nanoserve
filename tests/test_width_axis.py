@@ -878,10 +878,16 @@ def test_a_split_cache_builds_both_halves_from_one_flag():
 
 
 def test_check_capture_ready_runs_the_split_gate_too():
+    """Day 66 moved this refusal from `BucketsUnsound` to `CaptureUnsound`, and on
+    purpose: an unarmed split read is not a set and a read that disagree, it is a
+    boot path one call short, so the message names the call. The bucket gate's
+    clause is still there for a caller who assembles the pair by hand."""
     cfg, cache = _prefilled(
         [[1, 2, 3, 4]], bucket_decode=True, persist_inputs=True, split_read=True,
         read_block=8, max_model_len=64,
     )
 
-    with pytest.raises(BucketsUnsound, match="no workspace"):
+    with pytest.raises(CaptureUnsound, match="allocate_split_workspace"):
         check_capture_ready(cache)
+    with pytest.raises(BucketsUnsound, match="no workspace"):
+        check_read_matches(cache.decode_buckets, cache.read)

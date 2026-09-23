@@ -112,16 +112,26 @@ def main() -> None:
         action="store_false",
         help="leave a survivor in whatever row it was in, the Day-57 behaviour",
     )
-    p.add_argument(
+    # Day 66. Exclusive, because the cache runs one read and refuses two; asked here
+    # the refusal is argparse's usage line instead of a traceback after the weights
+    # have loaded.
+    reads = p.add_mutually_exclusive_group()
+    reads.add_argument(
         "--streamed-read",
         action="store_true",
         help="walk each row's context a tile at a time instead of scoring a rectangle",
+    )
+    reads.add_argument(
+        "--split-read",
+        action="store_true",
+        help="flash-decoding: cut each row's context into chunks, one program each "
+        "(implies bucketed decode shapes; reserves a partials arena at boot)",
     )
     p.add_argument(
         "--read-block",
         type=int,
         default=32,
-        help="keys per score tile for --streamed-read (not --block-size)",
+        help="keys per score tile for --streamed-read and --split-read (not --block-size)",
     )
     p.add_argument(
         "--no-warm",
@@ -160,7 +170,11 @@ def main() -> None:
         # over an open shape set or an input allocated per step is not a slower
         # engine, it is a wrong one. An operator asking for CUDA graphs means all
         # three, and should not have to know that.
-        bucket_decode=args.cuda_graphs,
+        # Day 66: the split read needs the bucket set too, and it is the one
+        # implication here that runs from a read rather than from the capture. It
+        # is a requirement and not a preference: the arena is partitioned once, from
+        # one mapping width, and only a bucketed cache presents one width.
+        bucket_decode=args.cuda_graphs or args.split_read,
         persist_inputs=args.cuda_graphs,
         capture_decode=args.cuda_graphs,
         # Day 58, and the tri-state is the honest shape of the question. Unset, the
@@ -177,6 +191,9 @@ def main() -> None:
         # inside the step and is slower here, so inheriting it from another flag
         # would be trading somebody's latency for memory without saying so.
         streamed_read=args.streamed_read,
+        # Day 66. Bundled by nothing, for Day 60's reason and one more: it is the
+        # only flag that reserves memory the pool planner never saw.
+        split_read=args.split_read,
         read_block=args.read_block,
         warm=not args.no_warm,
         warm_rows=args.warm_rows,
@@ -185,7 +202,9 @@ def main() -> None:
     # The lines that say what the launcher decided on your behalf. Every number in
     # them was either a flag you passed or a division against what the card had left,
     # and with graphs on there are two such divisions made at two different moments.
-    for line in boot_lines(app.state.plan, app.state.capture, app.state.warmup):
+    for line in boot_lines(
+        app.state.plan, app.state.capture, app.state.warmup, app.state.workspace
+    ):
         print(line, file=sys.stderr, flush=True)
     # Printed from the cache and not from `args`, because the question a boot line
     # answers is "what did this process end up on", and a flag that failed to reach

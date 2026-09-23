@@ -196,7 +196,10 @@ class Engine:
         # counts the steps that did not need one. Always an object, "off" or not,
         # for the same reason `decode_forward` always is.
         if capture_decode:
-            check_capture_ready(cache)
+            # Day 66: `armed=False`, because a split read's arena arrives after the
+            # engine does. Configuration is checked here; the arena is checked by
+            # the warm-up and the recording, which are the first things to read it.
+            check_capture_ready(cache, armed=False)
         self.decode_graphs = CapturedDecode(
             self.decode_forward,
             mode="capture" if capture_decode else "off",
@@ -250,6 +253,7 @@ class Engine:
         capture_recorder=None,
         compact_rows: bool = False,
         streamed_read: bool = False,
+        split_read: bool = False,
         read_block: int = DEFAULT_BLOCK,
     ) -> Engine:
         """Wire a scheduler and a matching cache over one fresh pool.
@@ -302,6 +306,15 @@ class Engine:
         the price of a Python loop: off by default and staying off until that loop is
         Triton, because an engine that is correct and ten times slower is not an
         option an operator should be able to take by accident. See `nanoserve.reads`.
+
+        `split_read` is Day 66 and it is the first of the six that this method cannot
+        finish. The cache decides the mode and plans the chunk count, and the arena
+        the read runs over is device memory reserved later, by `arm_split_read` on
+        the boot path or `cache.allocate_split_workspace` by hand. An engine built
+        with it and never armed refuses its first decode step rather than
+        allocating, which is the whole of Day 64's argument. It needs
+        `bucket_decode` and is exclusive with `streamed_read`, and both refusals come
+        from the cache unsoftened.
         """
         if capture_decode:
             missing = [
@@ -336,6 +349,7 @@ class Engine:
                 bucket_decode=bucket_decode,
                 persist_inputs=persist_inputs,
                 streamed_read=streamed_read,
+                split_read=split_read,
                 read_block=read_block,
             ),
             pad_id=pad_id,

@@ -976,7 +976,7 @@ def capture_breakeven_steps(capture_s: float, saving_per_step_s: float) -> float
 # --- gates ------------------------------------------------------------------------------
 
 
-def check_capture_ready(cache) -> None:
+def check_capture_ready(cache, *, armed: bool = True) -> None:
     """Refuse a cache that has not had the last two days switched on.
 
     The first precondition and the cheapest, and it names the constructor argument
@@ -1005,8 +1005,23 @@ def check_capture_ready(cache) -> None:
     # `check_capture_preconditions` documents: the module whose promise broke is the
     # module where the fix is.
     read = getattr(inner, "read", None)
+    # Day 66. The fourth, and the only one of the four that is about *when* rather
+    # than *what*. A split read holds an arena it did not allocate, and on the boot
+    # path the engine is built (and this gate runs, from `Engine.__init__`) before
+    # anything has been moved to a device. So the construction-time call passes
+    # `armed=False` and asks about configuration only, and every later call, the
+    # warm-up and the recording, asks the whole question. The refusal names the call
+    # that fixes it, because this is not two plans disagreeing: it is a boot path
+    # that stopped one call short.
+    if armed and getattr(read, "split", False) and getattr(read, "workspace", 1) is None:
+        raise CaptureUnsound(
+            "this cache runs the split read and holds no arena yet, so the first "
+            "decode step would be refused inside the read: reserve it with "
+            "`cache.allocate_split_workspace(device)` (the boot path does this in "
+            "`arm_split_read`, between the capture plan and the warm-up)"
+        )
     if read is not None:
-        check_read_matches(inner.decode_buckets, read)
+        check_read_matches(inner.decode_buckets, read, armed=armed)
 
 
 def check_capture_preconditions(input_ids, plan, cache, *, report=None) -> None:

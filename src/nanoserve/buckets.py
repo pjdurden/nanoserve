@@ -431,7 +431,7 @@ def check_capture_budget(buckets: DecodeBuckets, *, limit: int = RECOMPILE_LIMIT
         )
 
 
-def check_read_matches(buckets: DecodeBuckets, read) -> None:
+def check_read_matches(buckets: DecodeBuckets, read, *, armed: bool = True) -> None:
     """Refuse a bucket set and a decode read that disagree about the width axis.
 
     Day 61's correctness gate, and the only one this week that guards against
@@ -511,14 +511,18 @@ def check_read_matches(buckets: DecodeBuckets, read) -> None:
             "is decided, so this is a launch nobody sized. Build the bucket set with "
             "the same splits the workspace was allocated for"
         )
-    if split and splits < 1:
+    # Day 66. The one clause that is about *time* rather than configuration, so the
+    # one a caller may excuse: an engine is built before its arena exists, and
+    # `armed=False` is how its construction-time gate says "not yet" without
+    # waiving the six clauses that are wrong at any time.
+    if split and splits < 1 and armed:
         raise BucketsUnsound(
             f"this read is a split against a set of {buckets.splits} chunks and holds "
             "no workspace: the arena is allocated once and handed over before the "
             "first decode step, so this is a boot path that stopped one call short "
             "rather than a plan that disagrees with itself"
         )
-    if split and splits != buckets.splits:
+    if split and splits and splits != buckets.splits:
         raise BucketsUnsound(
             f"the read was handed an arena of {splits} chunks and this set is priced "
             f"for {buckets.splits}: the chunk count is a launch constant baked into "

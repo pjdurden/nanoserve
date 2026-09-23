@@ -93,6 +93,7 @@ from .engine import Engine
 from .kernels.flash_decoding import plan_splits
 from .loader import EMBED, Weights, load_weights
 from .model import LlamaModel
+from .partials import SplitWorkspace
 from .server import create_app
 from .serving import AsyncEngine
 from .warmup import WarmupReport, warm_budget_bytes, warm_shapes, width_ceiling
@@ -877,11 +878,54 @@ def warm_engine(
     return engine.warm_decode(capture.shapes, device=device)
 
 
+def arm_split_read(
+    engine: Engine, capture: CapturePlan | None = None, *, device=None
+) -> SplitWorkspace | None:
+    """Reserve the split read's arena and hand it to the read. Day 66.
+
+    The one call on the boot path that turns a planned split into memory, and its
+    position is the content. After `plan_capture`, because the capture's budget probe
+    is where the split's bytes were checked against what the card had left, and an
+    arena reserved before the probe would be counted twice: once by the driver as
+    used, once by the plan as needed. Before `warm_engine`, because a warm-up is a
+    decode step and a split read with no arena refuses one.
+
+    Allocated through the cache and not through `allocate_for(capture)`, and that is
+    a decision rather than an oversight. The capture plan describes what is
+    *recorded*, and `--warm-rows` can trim it below the slot count; the arena has to
+    cover what is *served*, and a shape the list skipped still runs, eagerly, against
+    the same buffers. So the cache sizes it from its own limits, and the plan is
+    checked against the result instead of being its source. See
+    `check_arena_matches_capture`.
+
+    Returns `None` for either other read, so the caller can call it unconditionally
+    and the "is this a split server" question is asked in one place.
+    """
+    read = engine.cache.read
+    if not read.split:
+        return None
+    if read.workspace is not None:
+        raise BootUnsound(
+            "this read already holds an arena: a boot path that arms twice would "
+            "either re-reserve (two arenas, one addressed) or swap the pointers "
+            "under a capture that recorded the first, and both are worse than this"
+        )
+    if device is None:
+        device = engine.model.weights[EMBED].device
+    workspace = engine.cache.allocate_split_workspace(device=device)
+    if capture is not None:
+        check_arena_matches_capture(capture, workspace)
+    return workspace
+
+
 # --- what the process says about itself -------------------------------------------
 
 
 def boot_info(
-    plan: KVPoolPlan, capture: CapturePlan | None = None, report: WarmupReport | None = None
+    plan: KVPoolPlan,
+    capture: CapturePlan | None = None,
+    report: WarmupReport | None = None,
+    workspace: SplitWorkspace | None = None,
 ) -> dict:
     """The `/health` payload: every decision this launch made on somebody's behalf.
 
@@ -907,16 +951,31 @@ def boot_info(
                 ms_per_graph=round(report.per_capture_s * 1e3, 1),
             )
         info["cuda_graphs"] = graphs
+    # Day 66. Top level and not under `cuda_graphs`, because the arena belongs to the
+    # read and a split server with the graphs off holds it all the same.
+    if workspace is not None:
+        info["split_workspace"] = workspace.as_dict()
     return info
 
 
 def boot_lines(
-    plan: KVPoolPlan, capture: CapturePlan | None = None, report: WarmupReport | None = None
+    plan: KVPoolPlan,
+    capture: CapturePlan | None = None,
+    report: WarmupReport | None = None,
+    workspace: SplitWorkspace | None = None,
 ) -> tuple[str, ...]:
-    """What `serve.py` prints, built here so the CLI stays flags and `uvicorn.run`."""
+    """What `serve.py` prints, built here so the CLI stays flags and `uvicorn.run`.
+
+    Day 66 puts the split arena directly under the capture line, because those are
+    the two things a split server reserves for the life of the process beyond the
+    pool, priced at two different moments, and a reader adding up what the card
+    holds should not have to find the second one.
+    """
     lines = [plan.describe()]
     if capture is not None:
         lines.append(capture.describe())
+    if workspace is not None:
+        lines.append(workspace.render())
     if report is not None:
         lines.append(report.render())
     return tuple(lines)
@@ -990,6 +1049,55 @@ def check_capture_limit(capture: CapturePlan, captured) -> None:
         )
 
 
+def check_arena_matches_capture(capture: CapturePlan, workspace: SplitWorkspace) -> None:
+    """Refuse an arena that is not the one the capture plan priced. Day 66.
+
+    Two records of one decision, made at two moments by two callers: `plan_capture`
+    priced the split against the probe and the cache allocated it from its own
+    limits. Each is right about its own inputs. If they disagree the boot line
+    prints the plan's number, the process holds the cache's, and the recorded graphs
+    bake in whichever chunk count the kernel was launched with. So every clause here
+    names a number both sides hold and refuses before the warm-up records anything.
+
+    Rows are the one inequality. `--warm-rows` trims the list, not the batch, and an
+    unrecorded shape runs eagerly against the same arena, so a plan narrower than the
+    arena is the normal case and a plan wider than it is a list recording rows the
+    arena cannot hold.
+    """
+    if not capture.splits:
+        raise BootUnsound(
+            "this capture plan priced no split and the cache armed a "
+            f"{workspace.splits}-chunk arena: the plan was made without "
+            "split_read=True, so the workspace line on the boot log is missing "
+            f"{workspace.bytes} bytes the process is holding"
+        )
+    if capture.splits != workspace.splits:
+        raise BootUnsound(
+            f"the capture plan priced {capture.splits} chunks and the arena holds "
+            f"{workspace.splits}: the chunk count is a grid axis baked into every "
+            "recorded launch, so the graphs and the buffers would disagree about "
+            "where a row's partials live"
+        )
+    if capture.block != workspace.block:
+        raise BootUnsound(
+            f"the capture plan priced a {capture.block}-key tile and the arena was "
+            f"partitioned in {workspace.block}-key tiles: a chunk is a whole number "
+            "of tiles, so the two describe different partitions of the same row"
+        )
+    if capture.max_width != workspace.context_width:
+        raise BootUnsound(
+            f"the capture plan reads {capture.max_width} keys wide and the arena was "
+            f"partitioned over {workspace.context_width}: a split cuts the width, so "
+            "a different width is a different partition of the same history"
+        )
+    if capture.max_rows > workspace.max_rows:
+        raise BootUnsound(
+            f"the capture plan records up to {capture.max_rows} rows and the arena "
+            f"holds {workspace.max_rows}: the widest shape in the list would write "
+            "partials past the end of the buffer it was recorded against"
+        )
+
+
 def check_boot_info(info: dict) -> None:
     """Refuse a health payload that does not say what this process decided.
 
@@ -1013,6 +1121,22 @@ def check_boot_info(info: dict) -> None:
         raise BootUnsound(
             "this payload reports a capture with no shapes in it: an engine built "
             "with capture_decode and an empty list records a graph per step"
+        )
+    # Day 66. A plan that priced a split and a payload that names no arena is a boot
+    # path that ran `plan_capture` and not the call that spends it: the server is up
+    # and would refuse its first decode step.
+    planned = graphs.get("read_splits", 0)
+    arena = info.get("split_workspace")
+    if planned and arena is None:
+        raise BootUnsound(
+            f"this payload's capture priced a {planned}-way split and names no arena: "
+            "the plan ran and the allocation did not, so the first decode step is a "
+            "refusal inside the read"
+        )
+    if planned and arena["splits"] != planned:
+        raise BootUnsound(
+            f"this payload's capture priced {planned} chunks and its arena holds "
+            f"{arena['splits']}: two records of one decision that disagree"
         )
     if "graphs_held" in graphs and graphs.get("cold"):
         raise BootUnsound(
@@ -1042,6 +1166,7 @@ def build_engine(
     capture_decode: bool = False,
     compact_rows: bool = False,
     streamed_read: bool = False,
+    split_read: bool = False,
     read_block: int = DEFAULT_BLOCK,
     capture_recorder=None,
     load=load_weights,
@@ -1148,6 +1273,10 @@ def build_engine(
         # would be trading correctness-preserving memory for wall clock without
         # saying so. See `nanoserve.reads`.
         streamed_read=streamed_read,
+        # Day 66. The sixth, and the first this function cannot finish: the cache
+        # knows the mode and the chunk count, and nothing is reserved until
+        # `arm_split_read`, which `build_app` calls once the capture is priced.
+        split_read=split_read,
         read_block=read_block,
         capture_recorder=capture_recorder,
     )
@@ -1200,9 +1329,16 @@ def build_app(
             budget_bytes=warm_bytes,
             utilization=engine_kwargs.get("utilization", 0.90),
             probe=engine_kwargs.get("probe"),
+            split_read=engine.cache.read.split,
         )
-        if warm:
-            report = warm_engine(engine, capture)
+    # Day 66. Between the plan and the warm-up, and outside the capture branch. After
+    # the plan because its probe is where the split's bytes met the card; before the
+    # warm-up because a warm batch is a decode step and an unarmed split refuses one;
+    # outside the branch because the arena belongs to the read, and a split server
+    # with the graphs off runs a split on every decode step all the same.
+    workspace = arm_split_read(engine, capture)
+    if capture is not None and warm:
+        report = warm_engine(engine, capture)
 
     if tokenizer is None:
         from transformers import AutoTokenizer
@@ -1218,13 +1354,14 @@ def build_app(
         model_name=model_name,
         eos_token_id=eos_token_id,
         vocab_size=engine.model.config.vocab_size,
-        info=boot_info(plan, capture, report),
+        info=boot_info(plan, capture, report, workspace),
     )
     # Hung off the app so a test (and a debugger attached to a live server) can
     # reach the same objects the handlers are holding.
     app.state.plan = plan
     app.state.capture = capture
     app.state.warmup = report
+    app.state.workspace = workspace
     app.state.engine = engine
     app.state.serving = serving
     return app
