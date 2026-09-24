@@ -83,7 +83,8 @@ import torch
 from .captured import (
     DEFAULT_CAPTURE_LIMIT,
     shared_pool_bytes,
-    split_workspace_bytes,
+    split_partial_bytes,
+    split_tile_bytes,
     streamed_workspace_bytes,
 )
 from .compiled import DecodeShape
@@ -550,6 +551,12 @@ class CapturePlan:
                     neither of the other two reads ever needed, because a score
                     rectangle sums the channels away before it is a workspace and a
                     partial accumulator has not been divided yet.
+    arena_rows:     rows the split's partials arena is allocated for, and 0 unless
+                    there is a split. Day 67. The scheduler's slot count, which is not
+                    `max_rows`: a `--warm-rows` trim shortens the list and not the
+                    arena, because a shape the list skipped still runs eagerly
+                    against the same buffers. Pricing the partials at `max_rows` asked
+                    the probe about a fraction of what the cache then reserved.
     """
 
     shapes: tuple[DecodeShape, ...]
@@ -563,6 +570,7 @@ class CapturePlan:
     block: int = 0
     splits: int = 0
     head_dim: int = 0
+    arena_rows: int = 0
 
     @property
     def count(self) -> int:
@@ -587,19 +595,43 @@ class CapturePlan:
         `rows x heads x block`, which is the same max over the same list and has no
         `max_width` in it at all.
 
-        Day 64 adds the term the split read was spending and nobody was charging
-        for. Its partials are a real allocation per launch, and under capture they
-        are served from the shared pool like any other intermediate, so a plan that
-        priced the tiles alone under-reported the arena by the whole workspace and
-        the process found out from the allocator.
+        Day 64 added the split's partials here, as an allocation per launch served
+        from the pool under capture. Day 67 takes them back out, because the same day
+        moved them into an arena allocated once, and a split launch without that
+        arena is refused before it could allocate anything. Under a split this is one
+        score tile per chunk and nothing else, and the partials are `partial_bytes`,
+        printed on the arena's own line. Counted here as well, a reader summing the
+        boot log paid for them twice.
         """
-        return shared_pool_bytes(
-            self.shapes,
-            self.num_heads,
-            block=self.block or None,
-            splits=self.splits or None,
-            head_dim=self.head_dim or None,
-        )
+        if self.splits:
+            return max(
+                (
+                    split_tile_bytes(s, self.num_heads, self.block, self.splits)
+                    for s in self.shapes
+                ),
+                default=0,
+            )
+        return shared_pool_bytes(self.shapes, self.num_heads, block=self.block or None)
+
+    @property
+    def partial_bytes(self) -> int:
+        """What the split's arena will weigh, priced at the rows it is allocated for.
+
+        0 for the other two reads, which hold no arena. Not in `as_dict` and not on
+        `describe`'s line, on purpose: `SplitWorkspace` reports the same number once
+        it exists, under `split_workspace`, and `check_arena_matches_capture` holds
+        the two equal. One number, one owner, and this is the plan's copy of it for
+        the one caller that needs it before the arena exists, which is the probe.
+        """
+        if not self.splits:
+            return 0
+        shape = DecodeShape(rows=self.arena_rows, context_width=self.max_width)
+        return split_partial_bytes(shape, self.num_heads, self.splits, self.head_dim)
+
+    @property
+    def reserved_bytes(self) -> int:
+        """Everything this plan commits the card to beyond the pool: what the probe holds."""
+        return self.pool_bytes + self.partial_bytes
 
     def as_dict(self) -> dict:
         """The shape `/health` reports, under its own key rather than beside the pool."""
@@ -625,10 +657,13 @@ class CapturePlan:
             "read": "the streamed read, which has no width axis",
         }[self.width_bound_by]
         split = f", {self.splits}-way split" if self.splits else ""
+        # Day 67. Named rather than silently left out, because a reader who knows a
+        # split holds partials would otherwise look for them in this number.
+        owner = ", partials on the split workspace line" if self.splits else ""
         return (
             f"CUDA graphs: {self.count} of {self.full_count} shapes, rows <= "
             f"{self.max_rows}, context <= {self.max_width} (capped by {why}){split}, "
-            f"{self.pool_bytes / 1024**2:.1f} MiB of workspace"
+            f"{self.pool_bytes / 1024**2:.1f} MiB of workspace{owner}"
         )
 
 
@@ -739,7 +774,7 @@ def plan_capture(
     # is what says the two agree.
     block = buckets.block if buckets.streamed else 0
 
-    splits = head_dim = 0
+    splits = head_dim = arena_rows = 0
     rows = plan.max_batch_size if max_rows is None else min(max_rows, plan.max_batch_size)
     row_count = sum(1 for r in buckets.rows if r <= rows)
     if row_count < 1:
@@ -779,18 +814,23 @@ def plan_capture(
                 [r for r in buckets.rows if r <= rows], num_heads, width, block
             )
             head_dim = engine.model.config.head_dim
+            # Day 67. The arena is the cache's, sized by its slot count, and a trim
+            # of the list is not a trim of it. See `CapturePlan.arena_rows`.
+            arena_rows = plan.max_batch_size
         if budget_bytes is not None:
             widest = DecodeShape(rows=rows, context_width=width)
             if split_read:
-                need = split_workspace_bytes(widest, num_heads, block, splits, head_dim)
-                if need > budget_bytes:
+                arena = DecodeShape(rows=arena_rows, context_width=width)
+                tiles = split_tile_bytes(widest, num_heads, block, splits)
+                partials = split_partial_bytes(arena, num_heads, splits, head_dim)
+                if tiles + partials > budget_bytes:
                     raise CaptureTooSmall(
-                        f"a {splits}-way split over {rows} rows and {num_heads} heads "
-                        f"is {need} bytes of tiles and partials and the probe found "
-                        f"{budget_bytes}. The partial workspace is "
-                        f"{need - streamed_workspace_bytes(widest, num_heads, block)} "
-                        "of that and it is linear in the split count, so lower "
-                        "max_rows or read without the split"
+                        f"a {splits}-way split is {tiles} bytes of score tiles over "
+                        f"{rows} recorded rows plus {partials} bytes of partials over "
+                        f"{arena_rows} rows, and the probe found {budget_bytes}. The "
+                        "partials are sized by the slot count and not by the list, so "
+                        "a lower max_rows does not shrink them: lower the batch size "
+                        "or read without the split"
                     )
             else:
                 need = streamed_workspace_bytes(widest, num_heads, block)
@@ -855,6 +895,7 @@ def plan_capture(
         block=block,
         splits=splits,
         head_dim=head_dim,
+        arena_rows=arena_rows,
     )
 
 
@@ -1095,6 +1136,16 @@ def check_arena_matches_capture(capture: CapturePlan, workspace: SplitWorkspace)
             f"the capture plan records up to {capture.max_rows} rows and the arena "
             f"holds {workspace.max_rows}: the widest shape in the list would write "
             "partials past the end of the buffer it was recorded against"
+        )
+    # Day 67. The bound above is about what is recorded; this equality is about what
+    # was priced. The probe was asked about `partial_bytes` and nothing else, so an
+    # arena of any other size is memory the budget check never saw.
+    if capture.partial_bytes != workspace.bytes:
+        raise BootUnsound(
+            f"the capture plan priced {capture.partial_bytes} bytes of partials over "
+            f"{capture.arena_rows} rows and the cache allocated {workspace.bytes} over "
+            f"{workspace.max_rows}: the probe checked one arena and the process holds "
+            "another"
         )
 
 

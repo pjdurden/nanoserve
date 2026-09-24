@@ -731,11 +731,13 @@ def test_a_split_plan_carries_the_head_dim_the_other_two_reads_never_needed():
 
 
 def test_the_arena_of_a_split_plan_is_the_tiles_plus_the_partials():
-    """The number Day 63 priced and nothing charged for, now in `pool_bytes`."""
+    """The number Day 63 priced and nothing charged for. Day 64 put all of it in
+    `pool_bytes`; Day 67 moved the partials to the arena's own line, so the Day 64
+    total is now `reserved_bytes`. See `tests/test_partial_owner.py`."""
     engine = _split_engine()
     capture = plan_capture(engine, _split_pool_plan(), split_read=True)
 
-    assert capture.pool_bytes == shared_pool_bytes(
+    assert capture.reserved_bytes == shared_pool_bytes(
         capture.shapes,
         capture.num_heads,
         block=8,

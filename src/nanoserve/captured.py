@@ -797,12 +797,49 @@ def split_workspace_bytes(
     range is load-bearing. Pricing both halves at one itemsize would be wrong in
     whichever direction the deployment chose, so the sum is taken in two.
     """
+    return split_tile_bytes(shape, num_heads, block, splits, itemsize) + split_partial_bytes(
+        shape, num_heads, splits, head_dim, partial_itemsize
+    )
+
+
+def split_tile_bytes(
+    shape: DecodeShape,
+    num_heads: int,
+    block: int,
+    splits: int,
+    itemsize: int = ACTIVATION_ITEMSIZE,
+) -> int:
+    """The half of a split's workspace a CUDA graph's pool holds. Day 67.
+
+    Day 64 priced the tiles and the partials as one number because it assumed both
+    were intermediates of the launch. The tiles are. The partials stopped being one
+    the same day, when they moved into an arena the plan allocates once, and Day 65's
+    read refuses a split launch that was not handed that arena. So a recording never
+    allocates a partial, the pool never holds one, and this is what the pool holds.
+    """
     if itemsize < 1:
         raise ValueError(f"an entry is at least one byte; got {itemsize}")
+    return split_score_cells(shape, num_heads, block, splits) * itemsize
+
+
+def split_partial_bytes(
+    shape: DecodeShape,
+    num_heads: int,
+    splits: int,
+    head_dim: int,
+    partial_itemsize: int = PARTIAL_ITEMSIZE,
+) -> int:
+    """The other half: the arena `SplitWorkspace.bytes` reports, priced before it exists.
+
+    `shape.rows` is the part a caller can get wrong, and Day 67 did. The arena is
+    sized by what is *served*, the slot count, because a shape the capture list
+    trimmed still runs eagerly against the same buffers. A caller pricing it at the
+    widest *recorded* shape asks the probe about a fraction of what the cache then
+    reserves. So `CapturePlan` prices it at `arena_rows` and not at `widest`.
+    """
     if partial_itemsize < 1:
         raise ValueError(f"a partial is at least one byte; got {partial_itemsize}")
-    tiles = split_score_cells(shape, num_heads, block, splits) * itemsize
-    return tiles + partial_cells(shape, num_heads, splits, head_dim) * partial_itemsize
+    return partial_cells(shape, num_heads, splits, head_dim) * partial_itemsize
 
 
 def workspace_saving(shape: DecodeShape, num_heads: int, block: int) -> float:
