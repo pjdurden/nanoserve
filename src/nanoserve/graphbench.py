@@ -70,7 +70,13 @@ from typing import Any
 
 import httpx
 
-from .acceptance import AcceptanceFailure, ClientPlan, run_crowd, wait_until_idle
+from .acceptance import (
+    AcceptanceFailure,
+    ClientPlan,
+    CrowdReport,
+    run_crowd,
+    wait_until_idle,
+)
 from .captured import (
     CaptureStats,
     CaptureUnsound,
@@ -78,7 +84,7 @@ from .captured import (
     check_no_scattered_rows,
     check_replays_dominate,
 )
-from .reads import ReadStats, ReadUnwitnessed
+from .reads import SPLIT, ReadStats, ReadUnwitnessed
 from .servebench import LoadReport, MeasurementUnsound, run_open_loop
 
 #: What a p99 needs before it is a percentile rather than a worst-of. Day 42's note
@@ -147,6 +153,58 @@ def boot_from_health(payload: dict) -> dict:
     """The boot half of the section, without the counters nested inside it."""
     graphs = payload.get("cuda_graphs") or {}
     return {k: v for k, v in graphs.items() if k != "runtime"}
+
+
+def workspace_from_health(payload: dict) -> dict:
+    """The split read's arena as the server published it, or `{}`. Day 68.
+
+    Top level and not under `cuda_graphs`, which is where Day 66 put it: the arena
+    belongs to the read, and a split server with the graphs off holds it all the same.
+    Empty rather than refused, because the other two reads legitimately publish no
+    arena. Whether an empty one is a problem is `check_arm_split`'s question, and it
+    is the only caller that knows it was expecting one.
+    """
+    return dict(payload.get("split_workspace") or {})
+
+
+def longest_read(crowd: CrowdReport) -> int:
+    """The widest context any decode step read for this crowd, off its usage blocks.
+
+    `prompt_tokens + completion_tokens - 1`, maxed over the clients that finished.
+    The one is the last sampled token, which the stream hands back and nothing ever
+    writes into the cache, because the request is done before a step could feed it
+    in. So the final decode step read the prompt and every token but that one.
+
+    Only completed clients count. A 500 carries whatever bill the server sent and
+    says nothing about how far its row really got. A client with no usage block
+    counts 0, and a crowd of those returns 0, which `check_arm_split` refuses by name
+    rather than this function guessing a length for a server that didn't say.
+
+    Why the harness and not a counter: `PagedRead` charges shapes and never contents,
+    because a data-dependent count is a `.item()` per layer per step, and under a
+    captured graph the Python that would do it doesn't run at all. The client is the
+    one party that sees every row's length for free.
+    """
+    widest = 0
+    for result in crowd.completed:
+        usage = result.usage or {}
+        total = int(usage.get("total_tokens", 0))
+        widest = max(widest, total - 1)
+    return widest
+
+
+def split_merge_floor(workspace: dict) -> int | None:
+    """The shortest request, prompt plus completion, whose rows a split really merges.
+
+    A row's last read has to reach one key into the second chunk, so it is
+    `keys_per_split + 1` keys wide, and the request sampled one more token than it
+    read. `None` for a one-chunk arena, because its only chunk covers the whole width
+    and no request the server accepts crosses it: `context_width + 2` would be a
+    length the server refuses, and returning it would read like advice.
+    """
+    if int(workspace.get("splits", 0)) < 2:
+        return None
+    return int(workspace["keys_per_split"]) + 2
 
 
 # --- the requests both arms run ------------------------------------------------------
@@ -238,6 +296,11 @@ class ArmReport:
              60, and kept beside the capture's pair rather than folded into it
              because they are counters of different things: one says how a step was
              *launched*, the other what the read inside it held.
+    longest_row: the widest context a decode step read in the crowd pass, from the
+             clients' own usage blocks. Day 68. See `longest_read` for the minus one
+             and for why the server can't publish it.
+    workspace: the split arena this server published at boot, `{}` for the other
+             two reads. Day 68, and fixed for the life of the process like `boot`.
     """
 
     name: str
@@ -249,6 +312,8 @@ class ArmReport:
     peak_running: int = 0
     read_before: ReadStats = field(default_factory=ReadStats)
     read_after: ReadStats = field(default_factory=ReadStats)
+    longest_row: int = 0
+    workspace: dict = field(default_factory=dict)
 
     @property
     def served(self) -> CaptureStats:
@@ -328,6 +393,8 @@ async def run_arm(
         peak_running=crowd.peak_running,
         read_before=read_from_health(before_health),
         read_after=read_from_health(after_health),
+        longest_row=longest_read(crowd),
+        workspace=workspace_from_health(before_health),
     )
 
 
@@ -585,6 +652,75 @@ def check_arm_read(arm: ArmReport, mode: str) -> None:
             f"the {arm.name} arm ran the {window.mode} read, not the {mode} one: the "
             f"flag did not reach the cache, and nothing else about this server would "
             f"have said so ({window.render()})"
+        )
+
+
+def check_arm_split(arm: ArmReport) -> None:
+    """Refuse a split arm whose rows the split never cut. Day 68.
+
+    `check_arm_read` asks whether the flag arrived. This asks whether the run could
+    have caught a broken split, and on the first two configurations tried the answer
+    was no, for two different reasons that produce the same green:
+
+    *One chunk.* `choose_splits` never cuts a width shorter than twice the partition,
+    so a toy server at `max_model_len=32` plans `splits=1`. That is the streamed read
+    plus a reduce over one partial, and a reduce over one partial is the identity.
+
+    *Every row inside the first chunk.* Two 512-key chunks and 20-token rows: the
+    second chunk walks nothing and stores `-inf, 0, 0`, which drops out of the reduce
+    with no branch. A combine that got the rescale wrong returns the right bytes for
+    that batch, because it only ever rescales one live partial.
+
+    Both are `MeasurementUnsound`, because the server did nothing wrong and the run
+    can't say anything about the combine. A rectangle or streamed arm is an
+    `AcceptanceFailure` instead, for `check_arm_replayed`'s reason about the eager
+    arm: a gate a control passes has stopped distinguishing anything.
+    """
+    window = arm.read
+    if window.mode != SPLIT:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm ran the {window.mode} read, not the split one, so it "
+            "has no chunks to have crossed and a pass here would be this gate agreeing "
+            "with a server that was launched without the flag"
+        )
+    if not window.calls:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm issued no decode reads between its two readings, so "
+            "there is no row that could have crossed a chunk"
+        )
+    if not arm.workspace:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm runs the split read and published no split_workspace "
+            "section, so there is no chunk width to hold its rows against"
+        )
+    published = int(arm.workspace.get("splits", 0))
+    if published != window.splits:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm's boot arena and its read counters disagree about the "
+            f"chunk count ({published} published, {window.splits} counted): both come "
+            "from one arena, so this payload was assembled from two processes"
+        )
+    if window.splits < 2:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm's arena has one chunk "
+            f"({arm.workspace.get('context_width')} keys wide): a one-chunk split is "
+            "the streamed read plus a reduce over one partial, which is the identity, "
+            "so this run cannot catch a combine that is wrong. Widen max_model_len "
+            "past twice the partition"
+        )
+    if not arm.longest_row:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm's clients returned no usage, so the harness never saw "
+            "how long its rows got and cannot say whether any crossed a chunk"
+        )
+    chunk = int(arm.workspace["keys_per_split"])
+    if arm.longest_row <= chunk:
+        raise MeasurementUnsound(
+            f"every row the {arm.name} arm read fit in the first chunk (widest read "
+            f"{arm.longest_row} keys, chunk {chunk}): the other chunks walked nothing "
+            "and the reduce merged one live partial per row, so a combine that got "
+            f"the rescale wrong would have passed. Send a request of at least "
+            f"{split_merge_floor(arm.workspace)} tokens, prompt plus completion"
         )
 
 

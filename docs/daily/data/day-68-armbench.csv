@@ -1,0 +1,4 @@
+config,slots,width,heads,block,splits,keys_per_split,merge_floor,PLANS_crosses,SPLIT_PLANS_crosses
+"toy, Day 60 width",4,32,8,16,1,32,,False,False
+"toy, Day 68 width",4,1024,8,16,2,512,514,False,True
+serving,256,8192,32,32,16,512,514,False,True

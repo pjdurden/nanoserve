@@ -30,6 +30,7 @@ from nanoserve.config import ModelConfig
 from nanoserve.engine import Engine
 from nanoserve.graphbench import (
     check_arm_read,
+    check_arm_split,
     check_arm_was_crowded,
     check_same_answers,
     paired_plans,
@@ -50,7 +51,7 @@ from nanoserve.reads import (
     ReadStats,
 )
 from nanoserve.server import health_payload
-from nanoserve.servebench import burst_arrivals
+from nanoserve.servebench import MeasurementUnsound, burst_arrivals
 from nanoserve.serving import AsyncEngine
 
 
@@ -613,6 +614,106 @@ def test_a_server_on_the_default_read_fails_the_streamed_gate():
     with pytest.raises(Exception, match="streamed"):
         check_arm_read(arm, STREAMED)
     assert arm.read.calls > 0
+
+
+# --- the third arm: a split server over the same socket (Day 68) -----------------------
+#
+# Day 60's pair, with `--split-read` as a third server. The five-line version of this
+# (`_app(split_read=True, bucket_decode=True)` added to the loop above) passes, and it
+# passes on a server that never split: at `max_model_len=32` the planner picks one
+# chunk. Widening to 1024 gets two chunks of 512 keys, and `PLANS`' 20-token rows
+# still sit entirely in the first. So this run has its own width and its own prompts,
+# and `check_arm_split` is what says the combine was actually on the path.
+
+#: Two chunks of 512 keys: `choose_splits` cuts a width at every `DEFAULT_PARTITION`
+#: (512) keys, so 1024 is the narrowest width with a second chunk to cross.
+SPLIT_WIDTH = 1024
+
+#: Prompts that put every row past the first chunk before the first decode step, so
+#: every step of every client merges two live partials rather than one and an empty.
+#: 510 bytes with 12 new tokens and 505 with 16 (a byte is a token under
+#: `ByteTokenizer`, and `paired_plans` pairs them by index) last read 521 and 520 keys. Long prefills are torch on every arm; the
+#: tlsim cost is in the decode reads, which is about 15 s per tiled arm on this box.
+_LONG = "the quick brown fox " * 26
+SPLIT_PLANS = paired_plans(6, prompts=(_LONG[:510], _LONG[:505]), max_tokens=(12, 16))
+
+
+def _split_width_app(**kw):
+    """A server wide enough to split, with a pool that holds four 525-token rows."""
+    cfg = _tiny_config()
+    return _app(
+        max_model_len=SPLIT_WIDTH,
+        kv_cache_bytes=kv_bytes_per_block(cfg, 4, torch.float32) * 1200,
+        **kw,
+    )
+
+
+def _one_arm(app, plans, name):
+    async def scenario():
+        with live_server(app) as server:
+            return await run_arm(server.base_url, plans, burst_arrivals(len(plans)),
+                                 name=name)
+
+    return asyncio.run(asyncio.wait_for(scenario(), 300.0))
+
+
+def test_three_reads_answer_the_same_bytes_and_the_split_really_merged():
+    """Day 60's acceptance claim with its third arm, and the reason it needed a day.
+
+    Same weights, pool, scheduler and tokenizer on all three. The split arm runs with
+    `bucket_decode` because the split refuses to boot without it (Day 65), and that is
+    the one difference beyond the read. The bucket set only rounds shapes, and a
+    rounded row is padding with `context_lens == 0`, which `check_pad_inert` holds
+    inert. Both tiled arms are compared against the rectangle rather than against
+    each other, because the rectangle is the oracle and a pairwise chain would let two
+    wrong arms agree.
+    """
+    split = _one_arm(
+        _split_width_app(split_read=True, bucket_decode=True, read_block=16),
+        SPLIT_PLANS, "split",
+    )
+    streamed = _one_arm(
+        _split_width_app(streamed_read=True, read_block=16), SPLIT_PLANS, "streamed"
+    )
+    rectangle = _one_arm(_split_width_app(), SPLIT_PLANS, "rectangle")
+
+    for arm in (split, streamed, rectangle):
+        check_arm_was_crowded(arm)
+    check_same_answers(split, rectangle)
+    check_same_answers(streamed, rectangle)
+
+    check_arm_read(split, SPLIT)
+    check_arm_read(streamed, STREAMED)
+    check_arm_read(rectangle, RECTANGLE)
+    check_arm_split(split)
+    assert split.workspace["splits"] == 2
+    assert split.longest_row > split.workspace["keys_per_split"]
+
+
+def test_a_split_server_at_the_toy_width_passes_everything_except_the_split_gate():
+    """The first control, and the version of this test that would have shipped. The
+    answers match, the crowd was a crowd, `/health` says `split`, and the arena has
+    one chunk. Every gate from Day 60 passes; only Day 68's refuses."""
+    split = _one_arm(_app(split_read=True, bucket_decode=True, read_block=16),
+                     PLANS, "split")
+    check_arm_was_crowded(split)
+    check_arm_read(split, SPLIT)
+    with pytest.raises(MeasurementUnsound, match="one chunk"):
+        check_arm_split(split)
+
+
+def test_a_split_server_wide_enough_to_split_still_fails_on_short_rows():
+    """The second control. Two chunks this time, and `PLANS`' rows never leave the
+    first one, so the second chunk stores `-inf, 0, 0` on every call. The refusal
+    names the request length that would fix it."""
+    split = _one_arm(
+        _split_width_app(split_read=True, bucket_decode=True, read_block=16),
+        PLANS, "split",
+    )
+    check_arm_read(split, SPLIT)
+    assert split.workspace["splits"] == 2
+    with pytest.raises(MeasurementUnsound, match="first chunk.*514 tokens"):
+        check_arm_split(split)
 
 
 # --- the split read: a third mode, and an arena it does not own -----------------------
