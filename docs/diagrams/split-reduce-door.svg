@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">Pass two got its own door.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The split read's reduce could only be reached from inside the read, so a test of it needed rows longer than a</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">chunk. Now both reads call split_reduce_kernel / split_reduce_triton, and a test hands them partials directly:</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">three tensors and a list saying which chunks saw keys. Every fixture is checked against the mutant first.</text>
+
+  <!-- ===================== LEFT TOP: before and after ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">Before and after: where pass two lives</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="186" font-weight="700" fill="#b91c1c">Day 68</text>
+    <rect x="70" y="194" width="210" height="84" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.2"/>
+    <text x="80" y="212" font-weight="700" fill="#334155">paged_attention_split_*</text>
+    <rect x="80" y="220" width="190" height="20" rx="3" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="88" y="234" fill="#475569">pass one: partials</text>
+    <rect x="80" y="248" width="190" height="20" rx="3" fill="#fecaca" stroke="#b91c1c" stroke-width="1.2"/>
+    <text x="88" y="262" fill="#b91c1c">pass two: closure / launch</text>
+
+    <text x="320" y="186" font-weight="700" fill="#166534">Day 69</text>
+    <rect x="320" y="194" width="240" height="44" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="330" y="212" font-weight="700" fill="#334155">paged_attention_split_*</text>
+    <text x="330" y="228" fill="#475569">pass one, then calls</text>
+    <rect x="320" y="254" width="240" height="44" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="330" y="272" font-weight="700" fill="#166534">split_reduce_kernel / _triton</text>
+    <text x="330" y="288" fill="#166534">(part_max, part_denom, part_acc)</text>
+
+    <rect x="320" y="314" width="240" height="30" rx="5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+    <text x="330" y="333" fill="#b45309" font-weight="700">tests/test_split_reduce.py</text>
+  </g>
+  <path d="M 440 239 L 440 252" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 440 313 L 440 300" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="70" y="302" font-size="10.5" fill="#64748b">Reachable only through a read,</text>
+  <text x="70" y="317" font-size="10.5" fill="#64748b">so only on the rows the read got.</text>
+  <text x="70" y="360" font-size="10.5" font-weight="700" fill="#b45309">The test calls the same function the read calls, not a copy of it.</text>
+
+  <!-- ===================== RIGHT TOP: fixtures ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">The fixtures, graded by the mutant before they grade the reduce</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="186" font-weight="700" fill="#334155">live chunks</text>
+    <text x="820" y="186" font-weight="700" fill="#334155">mutant error</text>
+    <text x="940" y="186" font-weight="700" fill="#334155">reduce error</text>
+    <text x="1050" y="186" font-weight="700" fill="#334155">a test?</text>
+    <line x1="642" y1="196" x2="1128" y2="196" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="642" y="216" fill="#475569">[1, 0, 0, 0]</text>
+    <text x="820" y="216" fill="#b91c1c">1.2e-07</text>
+    <text x="940" y="216" fill="#475569">1.2e-07</text>
+    <text x="1050" y="216" fill="#b91c1c">control</text>
+
+    <text x="642" y="238" fill="#475569">[0, 0, 1]</text>
+    <text x="820" y="238" fill="#b91c1c">2.4e-07</text>
+    <text x="940" y="238" fill="#475569">2.4e-07</text>
+    <text x="1050" y="238" fill="#b91c1c">control</text>
+
+    <text x="642" y="260" fill="#166534" font-weight="700">[1, 1]</text>
+    <text x="820" y="260" fill="#166534" font-weight="700">0.322</text>
+    <text x="940" y="260" fill="#475569">1.8e-07</text>
+    <text x="1050" y="260" fill="#166534" font-weight="700">yes</text>
+
+    <text x="642" y="282" fill="#166534" font-weight="700">[1, 0, 1, 1, 0]</text>
+    <text x="820" y="282" fill="#166534" font-weight="700">0.588</text>
+    <text x="940" y="282" fill="#475569">3.6e-07</text>
+    <text x="1050" y="282" fill="#166534" font-weight="700">yes</text>
+
+    <text x="642" y="304" fill="#166534" font-weight="700">[1, 1, 1, 0]</text>
+    <text x="820" y="304" fill="#166534" font-weight="700">1.38</text>
+    <text x="940" y="304" fill="#475569">2.4e-07</text>
+    <text x="1050" y="304" fill="#166534" font-weight="700">yes</text>
+  </g>
+  <line x1="642" y1="318" x2="1128" y2="318" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="338" font-size="10.5" fill="#64748b">Max abs error vs. the softmax over the union, 2 rows x 3 heads, seed 3.</text>
+  <text x="642" y="353" font-size="10.5" fill="#64748b">mutant: alpha = (m_s == joint), keep the winning chunk and drop the rest.</text>
+  <text x="642" y="368" font-size="10.5" font-weight="700" fill="#b91c1c">One live chunk: the mutant is exact, so it can't be the test.</text>
+
+  <!-- ===================== LEFT BOTTOM: cost ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">What two live partials cost to reach</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="450" font-weight="700" fill="#b91c1c">through the acceptance run (Day 68)</text>
+    <text x="70" y="470" fill="#475569">server at width 1024, chunk 512</text>
+    <text x="70" y="486" fill="#475569">prompt + completion &gt;= 514 tokens</text>
+    <text x="70" y="502" fill="#475569">tlsim decode over ~520 keys, ~35 s</text>
+
+    <text x="330" y="450" font-weight="700" fill="#166534">through the door (Day 69)</text>
+    <text x="330" y="470" fill="#475569">_workspace([True, True])</text>
+    <text x="330" y="486" fill="#475569">3 to 7 keys per chunk, no pool</text>
+    <text x="330" y="502" fill="#475569">16 host tests in ~1 s</text>
+  </g>
+  <line x1="310" y1="440" x2="310" y2="512" stroke="#e2e8f0" stroke-width="1"/>
+  <line x1="72" y1="528" x2="558" y2="528" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="72" y="550" font-size="10.5" fill="#64748b">The thing under test is exp(m_s - M), and it only matters when two m_s are</text>
+  <text x="72" y="565" font-size="10.5" fill="#64748b">finite. A hand-built workspace says which ones are, with a list of booleans.</text>
+  <text x="72" y="580" font-size="10.5" fill="#64748b">The 5-wide pattern also hits the jitted ramp's padding: 5 splits pad to 8,</text>
+  <text x="72" y="595" font-size="10.5" fill="#64748b">and the surplus lanes load -inf, 0, exactly what a dead chunk stores.</text>
+  <text x="72" y="619" font-size="10.5" font-weight="700" fill="#b45309">A live chunk is cheaper to build than a long row.</text>
+
+  <!-- ===================== RIGHT BOTTOM: who catches what ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">Keep-the-winner, and which tests catch it</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">mutant in</text>
+    <text x="820" y="448" font-weight="700" fill="#334155">caught by</text>
+    <line x1="642" y1="458" x2="1128" y2="458" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="642" y="478" fill="#475569">tlsim reduce</text>
+    <text x="820" y="478" fill="#166534" font-weight="700">7 new + 8 in test_flash_decoding</text>
+
+    <text x="642" y="500" fill="#475569">Triton reduce, this box</text>
+    <text x="820" y="500" fill="#b91c1c" font-weight="700">nothing: it never launches</text>
+
+    <text x="642" y="522" fill="#475569">Triton reduce, on a card</text>
+    <text x="820" y="522" fill="#166534" font-weight="700">6 gated tests, by name</text>
+  </g>
+  <line x1="642" y1="538" x2="1128" y2="538" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="558" font-size="10.5" fill="#64748b">Day 63's toy reads already had two live chunks (16-key chunks, 17+ key rows),</text>
+  <text x="642" y="573" font-size="10.5" fill="#64748b">so the model's reduce was covered. The 512-key floor was the acceptance run's.</text>
+  <text x="642" y="588" font-size="10.5" fill="#64748b">Today makes the jitted reduce callable, not verified.</text>
+  <text x="642" y="619" font-size="10.5" font-weight="700" fill="#b91c1c">2233 green. 27 gated skips, waiting on a card.</text>
+</svg>

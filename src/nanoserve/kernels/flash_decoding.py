@@ -652,6 +652,130 @@ def reduce_partials(
     return (acc / denom[..., None])[:, :, None, :]
 
 
+def check_reduce_workspace(partials) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Refuse a workspace pass two cannot fold, reading the launch off the workspace. Day 69.
+
+    `check_partials` grades a workspace against a launch somebody described. Pass two
+    on its own has no launch to grade against: its grid *is* the workspace's leading
+    axes, so the accumulator's shape is taken as the claim and the other two buffers
+    are held to it. Every clause of Day 64's gate still applies, contiguity first,
+    because the reduce addresses the partials with the same flat
+    `(row * n_q + head) * splits + split` that pass one stored them with.
+    """
+    tensors = tuple(partials)
+    if len(tensors) != 3:
+        raise SplitUnsound(
+            f"a split workspace is three buffers, a max, a denominator and an "
+            f"accumulator; got {len(tensors)}"
+        )
+    part_acc = tensors[2]
+    if part_acc.ndim != 4:
+        raise SplitUnsound(
+            f"part_acc has shape {tuple(part_acc.shape)} and a workspace's accumulator "
+            "is [rows, heads, splits, head_dim]: pass two reads its grid off that shape"
+        )
+    rows, n_q, splits, head_dim = part_acc.shape
+    return check_partials(
+        tensors, rows=rows, n_q=n_q, splits=splits, head_dim=head_dim, device=part_acc.device
+    )
+
+
+def split_reduce_kernel(partials, out_dtype: torch.dtype | None = None) -> torch.Tensor:
+    """Pass two alone, as tlsim programs: a workspace in, the attention out. Day 69.
+
+    partials:  `(part_max, part_denom, part_acc)`, `[rows, n_q, splits]` twice and
+               `[rows, n_q, splits, head_dim]`, fp32 and contiguous.
+    out_dtype: what the output is stored as; the read passes the pool's dtype.
+               `None` keeps the partials' fp32.
+
+    Returns [rows, n_q, 1, head_dim].
+
+    This is the reduce Day 63 wrote inside `paged_attention_split_kernel`, lifted out
+    unchanged, and the read now calls it. The reason is a test and not a refactor.
+    Reached only through the read, pass two is exercised on exactly the rows the test
+    fed the read, and Day 68 showed what that means: a row shorter than one chunk
+    leaves every other chunk `-inf`, `0`, `0`, a reduce over one live partial is the
+    identity, and a reduce that keeps only the winning chunk passes. Handed a
+    workspace directly, a test decides how many chunks saw keys without having to
+    build a 514-token row to get there.
+    """
+    part_m, part_denom, part_acc = check_reduce_workspace(partials)
+    rows, n_q, count, d = part_acc.shape
+    dtype = PARTIAL_DTYPE if out_dtype is None else out_dtype
+    m_flat = part_m.reshape(-1)
+    denom_flat = part_denom.reshape(-1)
+    acc_flat = part_acc.reshape(-1)
+    chan = arange(0, d)
+    out_flat = torch.zeros(rows * n_q * d, dtype=dtype)
+
+    def reduce_kernel(prog, m_buf, denom_buf, acc_buf, dst) -> None:
+        # This program owns one (row, head) and reduces its `count` partials.
+        i = prog.program_id(0)
+        h = prog.program_id(1)
+        offs_s = arange(0, count)
+        base = (i * n_q + h) * count
+        m_s = load(m_buf, base + offs_s)  # [count]
+        denom_s = load(denom_buf, base + offs_s)  # [count]
+        acc_s = load(acc_buf, (base + offs_s)[:, None] * d + chan[None, :])  # [count, d]
+        joint = m_s.max()
+        alpha = torch.exp(m_s - joint)  # exactly 0 for an empty chunk
+        out = (alpha[:, None] * acc_s).sum(dim=0) / (alpha * denom_s).sum()
+        store(dst, (i * n_q + h) * d + chan, out.to(dtype))
+
+    launch((rows, n_q), reduce_kernel, m_flat, denom_flat, acc_flat, out_flat)
+    return out_flat.reshape(rows, n_q, 1, d)
+
+
+def split_reduce_triton(partials, out_dtype: torch.dtype | None = None) -> torch.Tensor:
+    """Launch `_split_reduce_fwd` alone on a workspace already on the card. Day 69.
+
+    Same contract as `split_reduce_kernel`, and held to `reduce_partials` by tests
+    gated on a device. `paged_attention_split_triton` calls this for its second pass,
+    so a test of this function is a test of the read's reduce and not of a copy.
+
+    Raises `ValueError` on host tensors and `RuntimeError` when Triton is missing,
+    like every jitted entry point here.
+    """
+    tensors = tuple(partials)
+    if tensors and tensors[0].device.type != "cuda":
+        raise ValueError(
+            f"the Triton reduce reads device memory; the partials are on "
+            f"{tensors[0].device}. Use `split_reduce` for a dispatch that falls back "
+            "to the CPU model"
+        )
+    if not has_triton():
+        raise RuntimeError("the triton package is not installed; `split_reduce` falls back")
+    part_m, part_denom, part_acc = check_reduce_workspace(tensors)
+    rows, n_q, count, d = part_acc.shape
+    dtype = PARTIAL_DTYPE if out_dtype is None else out_dtype
+    out = torch.empty((rows, n_q, d), dtype=dtype, device=part_acc.device)
+    _split_reduce_fwd[(rows, n_q)](
+        part_m,
+        part_denom,
+        part_acc,
+        out,
+        n_q * d,
+        SPLITS=count,
+        HEAD_DIM=d,
+        BLOCK_D=next_power_of_2(d),
+        BLOCK_S=next_power_of_2(count),
+        num_warps=4,
+    )
+    return out[:, :, None, :]
+
+
+def split_reduce(partials, out_dtype: torch.dtype | None = None) -> torch.Tensor:
+    """Pass two on whichever backend the workspace's device can run. Day 69.
+
+    The same dispatch as `paged_attention_split`, keyed on where the partials live,
+    because that is the only tensor pass two touches.
+    """
+    tensors = tuple(partials)
+    if tensors and select_backend(tensors[0].device) == "triton":
+        return split_reduce_triton(tensors, out_dtype=out_dtype)
+    return split_reduce_kernel(tensors, out_dtype=out_dtype)
+
+
 def paged_attention_split_kernel(
     q: torch.Tensor,
     k_pool: torch.Tensor,
@@ -791,24 +915,17 @@ def paged_attention_split_kernel(
         part_acc,
     )
 
-    out_flat = torch.zeros(batch * n_q * d, dtype=q.dtype)
-
-    def reduce_kernel(prog, m_buf, denom_buf, acc_buf, dst) -> None:
-        # This program owns one (row, head) and reduces its `count` partials.
-        i = prog.program_id(0)
-        h = prog.program_id(1)
-        offs_s = arange(0, count)
-        base = (i * n_q + h) * count
-        m_s = load(m_buf, base + offs_s)  # [count]
-        denom_s = load(denom_buf, base + offs_s)  # [count]
-        acc_s = load(acc_buf, (base + offs_s)[:, None] * d + chan[None, :])  # [count, d]
-        joint = m_s.max()
-        alpha = torch.exp(m_s - joint)  # exactly 0 for an empty chunk
-        out = (alpha[:, None] * acc_s).sum(dim=0) / (alpha * denom_s).sum()
-        store(dst, (i * n_q + h) * d + chan, out.to(q.dtype))
-
-    launch((batch, n_q), reduce_kernel, part_m, part_denom, part_acc, out_flat)
-    return out_flat.reshape(batch, n_q, 1, d)
+    # Pass two is its own entry point since Day 69, and this is its only caller in
+    # the read. The flat buffers go back to their shapes as views: no copy, and the
+    # gate it runs is the same one a handed-in workspace already passed.
+    return split_reduce_kernel(
+        (
+            part_m.reshape(batch, n_q, count),
+            part_denom.reshape(batch, n_q, count),
+            part_acc.reshape(batch, n_q, count, d),
+        ),
+        out_dtype=q.dtype,
+    )
 
 
 if triton is not None:  # pragma: no cover - compiled and run only on a GPU box
@@ -1029,7 +1146,6 @@ def paged_attention_split_triton(
             head_dim=geom.head_dim,
             device=q.device,
         )
-    out = torch.empty_like(q_rows)
 
     _paged_attention_split_fwd[(geom.batch, geom.n_q, count)](
         q_rows,
@@ -1052,19 +1168,9 @@ def paged_attention_split_triton(
         BLOCK_N=next_power_of_2(block),
         num_warps=4,
     )
-    _split_reduce_fwd[(geom.batch, geom.n_q)](
-        part_m,
-        part_denom,
-        part_acc,
-        out,
-        geom.stride_q_row,
-        SPLITS=count,
-        HEAD_DIM=geom.head_dim,
-        BLOCK_D=next_power_of_2(geom.head_dim),
-        BLOCK_S=next_power_of_2(count),
-        num_warps=4,
-    )
-    return out[:, :, None, :]  # [batch, n_q, 1, d], the shape o_proj expects
+    # Day 69: pass two through its own entry point, so the function the reduce tests
+    # launch is the function the read launches.
+    return split_reduce_triton((part_m, part_denom, part_acc), out_dtype=q.dtype)
 
 
 def paged_attention_split(
