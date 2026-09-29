@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">Pass one got its own door too.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The read only shows a test the reduced answer, so whatever pass one stored in a chunk's slot is folded before</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">anyone looks. Now both reads call split_partials_kernel / split_partials_triton, and a test grades each chunk's</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">(max, denom, acc) against a direct softmax over exactly the keys that chunk owns.</text>
+
+  <!-- ===================== LEFT TOP: the read, as two doors ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">The split read is now two calls</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="180" width="490" height="30" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="82" y="199" font-weight="700" fill="#334155">paged_attention_split_kernel / _triton (q, pools, mapping, lens)</text>
+
+    <rect x="70" y="232" width="230" height="52" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="80" y="250" font-weight="700" fill="#166534">split_partials_*  (Day 70)</text>
+    <text x="80" y="266" fill="#166534">pool in, workspace out</text>
+    <text x="80" y="278" fill="#166534">grid (row, head, split)</text>
+
+    <rect x="330" y="232" width="230" height="52" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.2"/>
+    <text x="340" y="250" font-weight="700" fill="#166534">split_reduce_*  (Day 69)</text>
+    <text x="340" y="266" fill="#166534">workspace in, attention out</text>
+    <text x="340" y="278" fill="#166534">grid (row, head)</text>
+
+    <rect x="70" y="306" width="230" height="28" rx="5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+    <text x="80" y="324" fill="#b45309" font-weight="700">tests/test_split_partials.py</text>
+    <rect x="330" y="306" width="230" height="28" rx="5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+    <text x="340" y="324" fill="#b45309" font-weight="700">tests/test_split_reduce.py</text>
+  </g>
+  <path d="M 185 211 L 185 230" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 300 258 L 328 258" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 185 305 L 185 286" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 445 305 L 445 286" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="70" y="360" font-size="10.5" font-weight="700" fill="#b45309">Each pass has a named target; the read is just the first feeding the second.</text>
+
+  <!-- ===================== RIGHT TOP: the chunk contract ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">What a chunk's slot must hold, and what the overrun stores</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="186" fill="#475569">row of 20 keys, chunk 8, 3 splits</text>
+    <!-- 24 key cells of 18px -->
+    <g stroke="#ffffff" stroke-width="1">
+      <rect x="642" y="198" width="144" height="22" fill="#c7d2fe"/>
+      <rect x="786" y="198" width="144" height="22" fill="#a5b4fc"/>
+      <rect x="930" y="198" width="72" height="22" fill="#818cf8"/>
+      <rect x="1002" y="198" width="72" height="22" fill="#e2e8f0"/>
+    </g>
+    <text x="700" y="213" fill="#1e1b4b">chunk 0</text>
+    <text x="840" y="213" fill="#1e1b4b">chunk 1</text>
+    <text x="940" y="213" fill="#ffffff">chunk 2</text>
+    <text x="1012" y="213" fill="#64748b">padding</text>
+
+    <text x="642" y="246" font-weight="700" fill="#166534">honest: [s*8, min(s*8+8, 20))</text>
+    <rect x="642" y="254" width="144" height="10" rx="2" fill="#16a34a"/>
+    <rect x="788" y="268" width="142" height="10" rx="2" fill="#16a34a"/>
+    <rect x="932" y="282" width="70" height="10" rx="2" fill="#16a34a"/>
+
+    <text x="642" y="316" font-weight="700" fill="#b91c1c">overrun: [s*8, 20), chunk end dropped</text>
+    <rect x="642" y="324" width="360" height="8" rx="2" fill="#f87171"/>
+    <rect x="788" y="336" width="214" height="8" rx="2" fill="#f87171"/>
+    <rect x="932" y="348" width="70" height="8" rx="2" fill="#f87171"/>
+  </g>
+  <text x="1016" y="272" font-size="10.5" fill="#166534">each key once</text>
+  <text x="1016" y="342" font-size="10.5" fill="#b91c1c">later keys 2-3x</text>
+
+  <!-- ===================== LEFT BOTTOM: the table ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">The overrun, graded two ways (one row, width 24, chunk 8)</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" font-weight="700" fill="#334155">keys</text>
+    <text x="130" y="448" font-weight="700" fill="#334155">live</text>
+    <text x="190" y="448" font-weight="700" fill="#334155">slot error</text>
+    <text x="300" y="448" font-weight="700" fill="#334155">read error</text>
+    <text x="410" y="448" font-weight="700" fill="#334155">kernel read</text>
+    <line x1="70" y1="456" x2="558" y2="456" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="70" y="476" fill="#475569">3</text><text x="130" y="476" fill="#475569">1</text>
+    <text x="190" y="476" fill="#b91c1c">0</text><text x="300" y="476" fill="#b91c1c">6.0e-08</text><text x="410" y="476" fill="#475569">6.0e-08</text>
+    <text x="70" y="496" fill="#475569">8</text><text x="130" y="496" fill="#475569">1</text>
+    <text x="190" y="496" fill="#b91c1c">3.0e-08</text><text x="300" y="496" fill="#b91c1c">1.2e-07</text><text x="410" y="496" fill="#475569">1.2e-07</text>
+    <text x="70" y="516" fill="#166534" font-weight="700">9</text><text x="130" y="516" fill="#475569">2</text>
+    <text x="190" y="516" fill="#166534" font-weight="700">0.455</text><text x="300" y="516" fill="#166534" font-weight="700">0.112</text><text x="410" y="516" fill="#475569">1.2e-07</text>
+    <text x="70" y="536" fill="#166534" font-weight="700">16</text><text x="130" y="536" fill="#475569">2</text>
+    <text x="190" y="536" fill="#166534" font-weight="700">2.30</text><text x="300" y="536" fill="#166534" font-weight="700">0.213</text><text x="410" y="536" fill="#475569">1.8e-07</text>
+    <text x="70" y="556" fill="#166534" font-weight="700">24</text><text x="130" y="556" fill="#475569">3</text>
+    <text x="190" y="556" fill="#166534" font-weight="700">3.04</text><text x="300" y="556" fill="#166534" font-weight="700">0.182</text><text x="410" y="556" fill="#475569">1.2e-07</text>
+  </g>
+  <line x1="70" y1="570" x2="558" y2="570" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="70" y="590" font-size="10.5" fill="#64748b">Max abs error, seed 3. Slot error is on the accumulators, read error on the output.</text>
+  <text x="70" y="608" font-size="10.5" fill="#64748b">The slot shows the bug 4 to 17x louder than the reduced answer does.</text>
+  <text x="70" y="626" font-size="10.5" font-weight="700" fill="#b91c1c">One live chunk: the overrun is exact, like Day 68's mutant.</text>
+
+  <!-- ===================== RIGHT BOTTOM: who catches what ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">The overrun, and which tests catch it</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">overrun in</text>
+    <text x="820" y="448" font-weight="700" fill="#334155">caught by</text>
+    <line x1="642" y1="458" x2="1128" y2="458" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="642" y="478" fill="#475569">tlsim pass one</text>
+    <text x="820" y="478" fill="#166534" font-weight="700">7 of 14 new + 8 in test_flash_decoding</text>
+
+    <text x="642" y="500" fill="#475569">Triton pass one, this box</text>
+    <text x="820" y="500" fill="#b91c1c" font-weight="700">nothing: it never launches</text>
+
+    <text x="642" y="522" fill="#475569">Triton pass one, on a card</text>
+    <text x="820" y="522" fill="#166534" font-weight="700">4 gated tests, chunk by chunk</text>
+  </g>
+  <line x1="642" y1="538" x2="1128" y2="538" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="558" font-size="10.5" fill="#64748b">The oracle and the mutant are one helper with one flag, so the control</text>
+  <text x="642" y="573" font-size="10.5" fill="#64748b">and the thing it controls cannot drift apart. A monkeypatched overrun</text>
+  <text x="642" y="588" font-size="10.5" fill="#64748b">breaks the read on 40 keys and leaves it exact on 3.</text>
+  <text x="642" y="619" font-size="10.5" font-weight="700" fill="#b91c1c">2247 green. 31 gated skips, waiting on a card.</text>
+</svg>

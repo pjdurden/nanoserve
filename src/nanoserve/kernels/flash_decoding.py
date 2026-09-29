@@ -103,7 +103,13 @@ __all__ = [
     "partition_width",
     "plan_splits",
     "reduce_partials",
+    "split_partials",
+    "split_partials_kernel",
+    "split_partials_triton",
     "split_plan",
+    "split_reduce",
+    "split_reduce_kernel",
+    "split_reduce_triton",
 ]
 
 
@@ -776,7 +782,7 @@ def split_reduce(partials, out_dtype: torch.dtype | None = None) -> torch.Tensor
     return split_reduce_kernel(tensors, out_dtype=out_dtype)
 
 
-def paged_attention_split_kernel(
+def split_partials_kernel(
     q: torch.Tensor,
     k_pool: torch.Tensor,
     v_pool: torch.Tensor,
@@ -789,41 +795,25 @@ def paged_attention_split_kernel(
     context_bounds: tuple[int, int] | None = None,
     validated: bool = False,
     partials=None,
-) -> torch.Tensor:
-    """The split decode read as two grids of tlsim programs. The model, Day 63.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pass one alone, as tlsim programs: a pool in, the workspace out. Day 70.
 
-    Same contract as `paged_attention_batched_reference`, and held to it: the split
-    count is a performance knob and every value returns the same attention.
+    Same arguments as `paged_attention_split_kernel`, which calls this and then
+    `split_reduce_kernel`. Returns `(part_max, part_denom, part_acc)`,
+    `[rows, n_q, splits]` twice and `[rows, n_q, splits, head_dim]`, fp32. A handed-in
+    workspace is written in place and returned as itself, so the caller's buffers are
+    the answer and no copy of them exists.
 
-    q, k_pool, v_pool, slot_mapping, context_lens, n_rep, scale, context_bounds,
-    validated: exactly as in the unsplit read, including the refusals, because a read
-    that accepts inputs its oracle rejects cannot be compared to it.
-    block:  keys folded per program step.
-    splits: chunks per row. `None` means the handed-in workspace's split axis if
-            there is one, and otherwise `choose_splits` on the mapping's *width* and
-            the grid, which is the capture-safe default: no argument may be a reason
-            to read the lengths tensor.
-    partials: Day 64. `(part_max, part_denom, part_acc)` owned by somebody else,
-            already narrowed to this launch's rows, written in place. `None` keeps
-            the old behaviour and allocates three tensors per call.
+    Chunk `s` of row `i` owns positions `[s * chunk, min(s * chunk + chunk, ctx))`,
+    and its slot holds the partial softmax over exactly those keys: their max, the
+    unnormalised denominator against it, and the same weights on the values. That is
+    a contract a test can check one chunk at a time, which the read cannot offer: the
+    read shows only the reduced answer, and a pass one that forgets where its chunk
+    ends (`hi = ctx`, every chunk walking to the row's end) is exact through the read
+    on any row that fits in one chunk. Day 68's mutant had the same shape one pass
+    later, right whenever exactly one chunk is live.
 
-    Returns [batch, n_q, 1, d].
-
-    Two launches, which is the shape of the thing and not an implementation detail.
-
-    *Pass one*, grid `(row, head, split)`. Each program reads its row's length, works
-    out which slice of the history its chunk owns, walks that slice `block` keys at a
-    time exactly as Day 59's loop does, and stores its three partials. A chunk that
-    starts past the row's end walks zero tiles and stores `-inf`, `0`, `0`: it cannot
-    decline to write, because pass two is going to read its slot either way.
-
-    *Pass two*, grid `(row, head)`. Each program loads its row's `splits` partials,
-    takes the joint max, rescales and sums. That is `reduce_partials` written as a
-    program, and the plain-torch version is the oracle it is checked against.
-
-    Still a model: this is tlsim on the CPU and slower than the read it replaces by a
-    wide margin. What it pins is the addressing, the chunk arithmetic and the empty
-    partial, so the jitted version has a fixed target.
+    This is the pass one Day 63 wrote inside the read, lifted out unchanged.
     """
     geom = check_batched_inputs(
         q, k_pool, v_pool, slot_mapping, context_lens, n_rep, context_bounds, validated
@@ -915,17 +905,83 @@ def paged_attention_split_kernel(
         part_acc,
     )
 
-    # Pass two is its own entry point since Day 69, and this is its only caller in
-    # the read. The flat buffers go back to their shapes as views: no copy, and the
-    # gate it runs is the same one a handed-in workspace already passed.
-    return split_reduce_kernel(
-        (
-            part_m.reshape(batch, n_q, count),
-            part_denom.reshape(batch, n_q, count),
-            part_acc.reshape(batch, n_q, count, d),
-        ),
-        out_dtype=q.dtype,
+    # Handed in: the caller's own tensors, checked and written in place. Owned: the
+    # flat buffers go back to their shapes as views, no copy.
+    if partials is not None:
+        return held
+    return (
+        part_m.reshape(batch, n_q, count),
+        part_denom.reshape(batch, n_q, count),
+        part_acc.reshape(batch, n_q, count, d),
     )
+
+
+def paged_attention_split_kernel(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+    block: int = DEFAULT_BLOCK,
+    splits: int | None = None,
+    context_bounds: tuple[int, int] | None = None,
+    validated: bool = False,
+    partials=None,
+) -> torch.Tensor:
+    """The split decode read as two grids of tlsim programs. The model, Day 63.
+
+    Same contract as `paged_attention_batched_reference`, and held to it: the split
+    count is a performance knob and every value returns the same attention.
+
+    q, k_pool, v_pool, slot_mapping, context_lens, n_rep, scale, context_bounds,
+    validated: exactly as in the unsplit read, including the refusals, because a read
+    that accepts inputs its oracle rejects cannot be compared to it.
+    block:  keys folded per program step.
+    splits: chunks per row. `None` means the handed-in workspace's split axis if
+            there is one, and otherwise `choose_splits` on the mapping's *width* and
+            the grid, which is the capture-safe default: no argument may be a reason
+            to read the lengths tensor.
+    partials: Day 64. `(part_max, part_denom, part_acc)` owned by somebody else,
+            already narrowed to this launch's rows, written in place. `None` keeps
+            the old behaviour and allocates three tensors per call.
+
+    Returns [batch, n_q, 1, d].
+
+    Two launches, which is the shape of the thing and not an implementation detail.
+
+    *Pass one*, grid `(row, head, split)`. Each program reads its row's length, works
+    out which slice of the history its chunk owns, walks that slice `block` keys at a
+    time exactly as Day 59's loop does, and stores its three partials. A chunk that
+    starts past the row's end walks zero tiles and stores `-inf`, `0`, `0`: it cannot
+    decline to write, because pass two is going to read its slot either way.
+
+    *Pass two*, grid `(row, head)`. Each program loads its row's `splits` partials,
+    takes the joint max, rescales and sums. That is `reduce_partials` written as a
+    program, and the plain-torch version is the oracle it is checked against.
+
+    Still a model: this is tlsim on the CPU and slower than the read it replaces by a
+    wide margin. What it pins is the addressing, the chunk arithmetic and the empty
+    partial, so the jitted version has a fixed target.
+    """
+    # Day 70: both passes through their own entry points, looked up on the module at
+    # call time, so the function a pass test calls is the function the read calls.
+    partials = split_partials_kernel(
+        q,
+        k_pool,
+        v_pool,
+        slot_mapping,
+        context_lens,
+        n_rep,
+        scale,
+        block=block,
+        splits=splits,
+        context_bounds=context_bounds,
+        validated=validated,
+        partials=partials,
+    )
+    return split_reduce_kernel(partials, out_dtype=q.dtype)
 
 
 if triton is not None:  # pragma: no cover - compiled and run only on a GPU box
@@ -1062,7 +1118,7 @@ if triton is not None:  # pragma: no cover - compiled and run only on a GPU box
         tl.store(out_ptr + out_off, out.to(out_ptr.dtype.element_ty), mask=mask_d)
 
 
-def paged_attention_split_triton(
+def split_partials_triton(
     q: torch.Tensor,
     k_pool: torch.Tensor,
     v_pool: torch.Tensor,
@@ -1075,29 +1131,16 @@ def paged_attention_split_triton(
     context_bounds: tuple[int, int] | None = None,
     validated: bool = False,
     partials=None,
-) -> torch.Tensor:
-    """Launch the two split passes. Same contract as the oracle, every tensor on CUDA.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Launch `_paged_attention_split_fwd` alone, every tensor on CUDA. Day 70.
 
-    Returns [batch, n_q, 1, d], matching `paged_attention_batched_reference` to about
-    1e-3. The split reassociates the exponent sums once more than the unsplit kernel
-    already does, so it is close and not bit-identical to that either: the accuracy
-    trade every flash-decoding kernel makes, with the partials in fp32 whatever the
-    pool holds.
-
-    **`partials` is Day 64, and it is the caveat Day 63 wrote, corrected.** That day
-    said a captured region cannot allocate. It can: a `torch.empty` under capture is
-    served from the graph's pool and its address is baked into the replay like every
-    other intermediate, and the launch is perfectly legal. What is wrong with it is
-    quieter. That allocation is charged to the shared arena, once per graph, at the
-    largest shape in the list, and *nothing prices it*: `CapturePlan.pool_bytes` was
-    the score term alone, so a process running this read reserved an arena it had
-    under-reported by the partials and found out from the allocator. Handing the
-    buffers in moves the number into `split_workspace_bytes`, where a plan can be
-    wrong about it out loud. Outside a graph it is the plainer thing it looks like:
-    three allocations per read per layer per step.
+    Same contract as `split_partials_kernel`, held to a direct per-chunk softmax by
+    tests gated on a device. `paged_attention_split_triton` calls this for its first
+    pass, so a test of this function is a test of the read's pass one and not of a
+    copy. A handed-in workspace comes back as itself.
 
     Raises `ValueError` on host tensors and `RuntimeError` when Triton is missing,
-    rather than letting a launch crash somewhere unreadable.
+    like every jitted entry point here.
     """
     geom = check_batched_inputs(
         q, k_pool, v_pool, slot_mapping, context_lens, n_rep, context_bounds, validated
@@ -1107,7 +1150,8 @@ def paged_attention_split_triton(
     if q.device.type != "cuda":
         raise ValueError(
             f"the Triton kernel reads device memory; q is on {q.device}. "
-            "Use `paged_attention_split` for a dispatch that falls back to the CPU model"
+            "Use `paged_attention_split` or `split_partials` for a dispatch that falls "
+            "back to the CPU model"
         )
     if not has_triton():
         raise RuntimeError(
@@ -1168,9 +1212,100 @@ def paged_attention_split_triton(
         BLOCK_N=next_power_of_2(block),
         num_warps=4,
     )
-    # Day 69: pass two through its own entry point, so the function the reduce tests
-    # launch is the function the read launches.
-    return split_reduce_triton((part_m, part_denom, part_acc), out_dtype=q.dtype)
+    return part_m, part_denom, part_acc
+
+
+def paged_attention_split_triton(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+    block: int = DEFAULT_BLOCK,
+    splits: int | None = None,
+    context_bounds: tuple[int, int] | None = None,
+    validated: bool = False,
+    partials=None,
+) -> torch.Tensor:
+    """Launch the two split passes. Same contract as the oracle, every tensor on CUDA.
+
+    Returns [batch, n_q, 1, d], matching `paged_attention_batched_reference` to about
+    1e-3. The split reassociates the exponent sums once more than the unsplit kernel
+    already does, so it is close and not bit-identical to that either: the accuracy
+    trade every flash-decoding kernel makes, with the partials in fp32 whatever the
+    pool holds.
+
+    **`partials` is Day 64, and it is the caveat Day 63 wrote, corrected.** That day
+    said a captured region cannot allocate. It can: a `torch.empty` under capture is
+    served from the graph's pool and its address is baked into the replay like every
+    other intermediate, and the launch is perfectly legal. What is wrong with it is
+    quieter. That allocation is charged to the shared arena, once per graph, at the
+    largest shape in the list, and *nothing prices it*: `CapturePlan.pool_bytes` was
+    the score term alone, so a process running this read reserved an arena it had
+    under-reported by the partials and found out from the allocator. Handing the
+    buffers in moves the number into `split_workspace_bytes`, where a plan can be
+    wrong about it out loud. Outside a graph it is the plainer thing it looks like:
+    three allocations per read per layer per step.
+
+    Raises `ValueError` on host tensors and `RuntimeError` when Triton is missing,
+    rather than letting a launch crash somewhere unreadable.
+    """
+    # Day 70: pass one and pass two through their own entry points, so the functions
+    # the pass tests launch are the functions the read launches.
+    partials = split_partials_triton(
+        q,
+        k_pool,
+        v_pool,
+        slot_mapping,
+        context_lens,
+        n_rep,
+        scale,
+        block=block,
+        splits=splits,
+        context_bounds=context_bounds,
+        validated=validated,
+        partials=partials,
+    )
+    return split_reduce_triton(partials, out_dtype=q.dtype)
+
+
+def split_partials(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    scale: float | None = None,
+    block: int = DEFAULT_BLOCK,
+    splits: int | None = None,
+    context_bounds: tuple[int, int] | None = None,
+    validated: bool = False,
+    partials=None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pass one on whichever backend this device can run. Day 70.
+
+    Keyed on `q`, like the read, because pass one reads the pool through it.
+    """
+    backend = (
+        split_partials_triton if select_backend(q.device) == "triton" else split_partials_kernel
+    )
+    return backend(
+        q,
+        k_pool,
+        v_pool,
+        slot_mapping,
+        context_lens,
+        n_rep,
+        scale,
+        block=block,
+        splits=splits,
+        context_bounds=context_bounds,
+        validated=validated,
+        partials=partials,
+    )
 
 
 def paged_attention_split(
