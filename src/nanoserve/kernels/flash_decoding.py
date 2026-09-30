@@ -59,7 +59,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .paged_attention import cdiv
+from .paged_attention import cdiv, paged_attention_batched_reference
 from .tlsim import arange, launch, load, store
 from .triton_batched_attention import DEFAULT_BLOCK, check_batched_inputs, slot_index_dtype
 from .triton_paged_attention import has_triton, next_power_of_2, select_backend
@@ -92,9 +92,12 @@ __all__ = [
     "DEFAULT_PARTITION",
     "DEFAULT_TARGET_PROGRAMS",
     "PARTIAL_DTYPE",
+    "PROBE_ATOL",
+    "SplitProbe",
     "SplitPlan",
     "SplitUnsound",
     "check_partials",
+    "chunk_partials_reference",
     "choose_splits",
     "partial_splits",
     "paged_attention_split",
@@ -102,6 +105,7 @@ __all__ = [
     "paged_attention_split_triton",
     "partition_width",
     "plan_splits",
+    "probe_split_passes",
     "reduce_partials",
     "split_partials",
     "split_partials_kernel",
@@ -1367,4 +1371,251 @@ def paged_attention_split(
         context_bounds=context_bounds,
         validated=validated,
         partials=partials,
+    )
+
+
+# --- Day 71: the boot probe ------------------------------------------------------------
+
+#: How far a pass may sit from the plain-torch reference before the probe calls it
+#: wrong. Both sides upcast the same pool values to fp32 and fold them in fp32, so an
+#: honest pass is off by rounding, 2e-6 at most on the probe's case; Day 70's overrun
+#: is off by 4 and Day 68's keep-the-winner by 1.7. The gap is six orders of
+#: magnitude and the bound sits in the middle of it.
+PROBE_ATOL = 1e-3
+
+
+def chunk_partials_reference(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    context_lens: torch.Tensor,
+    n_rep: int,
+    chunk: int,
+    count: int,
+    scale: float | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Each chunk's partial softmax, from the keys it owns, in plain torch. Day 71.
+
+    Day 70's test oracle moved into the module, unchanged, because a server is now
+    going to call it. Chunk `s` of row `i` owns positions `[s * chunk, min(s * chunk
+    + chunk, ctx))`; its slot is the largest score among them, `sum(exp(s - m))`, and
+    the same weights on the values, unnormalised. A chunk that owns nothing is `-inf`,
+    `0`, `0`. Returns `(part_max, part_denom, part_acc)` on the host, fp32.
+
+    Loops and no launch, on purpose. This is the thing every pass one is graded
+    against, so it shares no code with either of them: not the tile walk, not the
+    online rescale, not the flat slot arithmetic. A bug in any of those would have to
+    be made twice, in two different shapes, to hide.
+    """
+    rows, n_q, _, d = q.shape
+    if scale is None:
+        scale = d**-0.5
+    part_max = torch.full((rows, n_q, count), float("-inf"))
+    part_denom = torch.zeros(rows, n_q, count)
+    part_acc = torch.zeros(rows, n_q, count, d)
+    for i in range(rows):
+        ctx = int(context_lens[i])
+        for h in range(n_q):
+            for s in range(count):
+                lo = s * chunk
+                hi = min(lo + chunk, ctx)
+                if lo >= hi:
+                    continue
+                slots = slot_mapping[i, lo:hi].cpu()
+                k = k_pool.cpu()[slots, h // n_rep].float()
+                v = v_pool.cpu()[slots, h // n_rep].float()
+                sc = scale * (k @ q[i, h, 0].cpu().float())
+                m = sc.max()
+                p = torch.exp(sc - m)
+                part_max[i, h, s] = m
+                part_denom[i, h, s] = p.sum()
+                part_acc[i, h, s] = (p[:, None] * v).sum(dim=0)
+    return part_max, part_denom, part_acc
+
+
+@dataclass(frozen=True)
+class SplitProbe:
+    """What the boot probe graded, on which backend, and how far off each pass was.
+
+    backend:        "triton" or "tlsim", whichever `split_partials` dispatched to on
+                    the device the server will serve from. The field is the point:
+                    a probe that says `tlsim` on a card is a probe of the wrong code.
+    block, chunk:   the tile the read folds and the chunk the probe cut, one tile.
+    splits:         chunks per row in the probe's workspace.
+    head_dim, n_rep: the model's head geometry, so GQA's head-to-KV-head map is
+                    exercised the way the served read exercises it.
+    dtype:          the pool's dtype.
+    live_chunks:    per row, how many chunks own at least one key. The probe's
+                    controls: one row at 1, where Day 68's and Day 70's mutants are
+                    both exact, and one at `splits`, where both break.
+    pass_one_error: max abs gap between `split_partials` and the reference, over
+                    every slot of every buffer.
+    pass_two_error: max abs gap between `split_reduce` over the *reference* partials
+                    and `reduce_partials` over the same, so pass two is graded on
+                    inputs pass one did not produce.
+    read_error:     the two passes composed, against the attention over the whole row.
+    atol:           the bound all three were held to.
+    """
+
+    backend: str
+    block: int
+    chunk: int
+    splits: int
+    head_dim: int
+    n_rep: int
+    dtype: torch.dtype
+    live_chunks: tuple[int, ...]
+    pass_one_error: float
+    pass_two_error: float
+    read_error: float
+    atol: float
+
+    def as_dict(self) -> dict:
+        return {
+            "backend": self.backend,
+            "block": self.block,
+            "chunk": self.chunk,
+            "splits": self.splits,
+            "head_dim": self.head_dim,
+            "n_rep": self.n_rep,
+            "dtype": str(self.dtype).removeprefix("torch."),
+            "live_chunks": list(self.live_chunks),
+            "pass_one_error": self.pass_one_error,
+            "pass_two_error": self.pass_two_error,
+            "read_error": self.read_error,
+            "atol": self.atol,
+        }
+
+    def render(self) -> str:
+        return (
+            f"split probe on {self.backend}: {self.splits} chunks of {self.chunk} keys, "
+            f"live {list(self.live_chunks)}, pass one {self.pass_one_error:.1e}, "
+            f"pass two {self.pass_two_error:.1e}, read {self.read_error:.1e} "
+            f"(bound {self.atol:.0e})"
+        )
+
+
+def _slot_gap(got: torch.Tensor, want: torch.Tensor) -> float:
+    """Max abs difference, where two `-inf`s agree and one `-inf` is infinitely off."""
+    got = got.detach().to("cpu", PARTIAL_DTYPE)
+    want = want.detach().to("cpu", PARTIAL_DTYPE)
+    both_empty = torch.isneginf(got) & torch.isneginf(want)
+    gap = (got - want).abs().masked_fill(both_empty, 0.0)
+    gap = torch.nan_to_num(gap, nan=float("inf"))
+    return float(gap.max()) if gap.numel() else 0.0
+
+
+def probe_split_passes(
+    device,
+    *,
+    block: int = DEFAULT_BLOCK,
+    head_dim: int = 64,
+    n_rep: int = 1,
+    dtype: torch.dtype = torch.float32,
+    atol: float = PROBE_ATOL,
+    seed: int = 0,
+) -> SplitProbe:
+    """Run both passes on a tiny case on `device`, grade each by name, or refuse. Day 71.
+
+    Days 69 and 70 gave each pass its own door and its own test file, and on this box
+    those files only ever reach the tlsim programs: the jitted passes are gated tests
+    somebody has to remember to run on a card. A server does not have to remember,
+    because it knows its device before it serves. So this is the check it runs.
+
+    The case is chosen, not sampled. Two rows over a three-tile mapping, the chunk
+    one tile wide: row 0 holds `2 * block + 1` keys, one past the second boundary, so
+    all three chunks are live and the last owns exactly one key (Day 70 found the
+    first key past a boundary is where the overrun starts). Row 1 holds one key, so
+    one chunk is live and two are empty. Row 1 is the control: every mutant this repo
+    has planted is exact on it. Two KV heads, each read by `n_rep` query heads.
+
+    Three grades, in the order a failure should be blamed:
+
+      1. pass one: `split_partials` against `chunk_partials_reference`, every slot.
+      2. pass two: `split_reduce` over the *reference's* partials against
+         `reduce_partials` over the same. A broken pass one cannot hide a broken
+         pass two here, or the other way round.
+      3. the read: the two composed, against the attention over the whole row.
+
+    `split_partials` and `split_reduce` are looked up on this module when called, so
+    a mutant planted there is the one graded; that is how the tests plant them.
+
+    Raises `SplitUnsound` naming the pass. Returns the `SplitProbe` otherwise.
+    """
+    if head_dim < 1:
+        raise ValueError(f"a head is at least one channel wide; got {head_dim}")
+    if n_rep < 1:
+        raise ValueError(f"each KV head is read by at least one query head; got {n_rep}")
+    device = torch.device(device)
+    width = 3 * block
+    count, chunk = partition_width(width, block, splits=3)
+    lens = [2 * block + 1, 1]
+    n_kv = 2
+    n_q = n_kv * n_rep
+    num_slots = 2 * width + 1
+
+    generator = torch.Generator().manual_seed(seed)
+    k_pool = torch.randn(num_slots, n_kv, head_dim, generator=generator).to(dtype)
+    v_pool = torch.randn(num_slots, n_kv, head_dim, generator=generator).to(dtype)
+    q = torch.randn(len(lens), n_q, 1, head_dim, generator=generator).to(dtype)
+    mapping = torch.zeros(len(lens), width, dtype=torch.long)
+    for i, n in enumerate(lens):
+        mapping[i, :n] = torch.randperm(num_slots, generator=generator)[:n]
+    context_lens = torch.tensor(lens)
+    host = (q, k_pool, v_pool, mapping, context_lens)
+    on_device = tuple(t.to(device) for t in host)
+
+    want = chunk_partials_reference(*host, n_rep=n_rep, chunk=chunk, count=count)
+    live = tuple(sum(1 for s in range(count) if s * chunk < n) for n in lens)
+    backend = select_backend(device)
+
+    got = split_partials(*on_device, n_rep, block=block, splits=count)
+    one = max(_slot_gap(g, w) for g, w in zip(got, want))
+    if not one < atol:
+        raise SplitUnsound(
+            f"split probe on {backend}: pass one is {one:.3g} from the reference in "
+            f"some slot (bound {atol:g}), on a row of {lens[0]} keys cut into "
+            f"{count} chunks of {chunk}. Each slot is graded against a softmax over "
+            "exactly the keys its chunk owns, so a chunk that walks past its own end "
+            "or starts in the wrong place lands here. This backend's split read would "
+            "serve a finite, plausible, wrong attention"
+        )
+
+    reduced = split_reduce(tuple(t.to(device) for t in want))
+    two = _slot_gap(reduced, reduce_partials(*want))
+    if not two < atol:
+        raise SplitUnsound(
+            f"split probe on {backend}: pass two is {two:.3g} from the reference "
+            f"(bound {atol:g}) over partials the reference made, with "
+            f"{live[0]} live chunks on one row and {live[1]} on the other. A reduce "
+            "that drops or double-counts a live chunk lands here, and it is exact on "
+            "any row with one live chunk, which is every request under one partition"
+        )
+
+    # The whole-row reference in fp32 over the same pool values, because both passes
+    # fold in fp32 and a bf16 reference would be the least accurate thing in the room.
+    exact = paged_attention_batched_reference(
+        q.float(), k_pool.float(), v_pool.float(), mapping, context_lens, n_rep=n_rep
+    )
+    read = _slot_gap(split_reduce(got), exact)
+    if not read < atol:
+        raise SplitUnsound(
+            f"split probe on {backend}: each pass agrees with its reference and the "
+            f"read they compose is {read:.3g} off (bound {atol:g}). Pass one's "
+            "workspace and pass two's reading of it disagree about the layout"
+        )
+    return SplitProbe(
+        backend=backend,
+        block=block,
+        chunk=chunk,
+        splits=count,
+        head_dim=head_dim,
+        n_rep=n_rep,
+        dtype=dtype,
+        live_chunks=live,
+        pass_one_error=one,
+        pass_two_error=two,
+        read_error=read,
+        atol=atol,
     )

@@ -91,7 +91,7 @@ from .compiled import DecodeShape
 from .reads import DEFAULT_BLOCK
 from .config import ModelConfig
 from .engine import Engine
-from .kernels.flash_decoding import plan_splits
+from .kernels.flash_decoding import SplitProbe, SplitUnsound, plan_splits, probe_split_passes
 from .loader import EMBED, Weights, load_weights
 from .model import LlamaModel
 from .partials import SplitWorkspace
@@ -959,6 +959,45 @@ def arm_split_read(
     return workspace
 
 
+def probe_split_read(engine: Engine, *, device=None) -> SplitProbe | None:
+    """Grade the backend this split server will serve on, before it serves. Day 71.
+
+    `probe_split_passes` on the engine's own device, with the read's own tile, the
+    model's own head width and GQA factor, and the weights' dtype, which is the pool's.
+    Those four are what the served read will be launched with, and a probe run with
+    anything else grades a kernel specialisation the server never compiles: `BLOCK_N`,
+    `HEAD_DIM` and `N_REP` are all `constexpr` in the jitted pass one.
+
+    Called by `build_app` before `arm_split_read`, and the order is deliberate. A
+    probe that fails refuses the boot, and refusing it before the arena is reserved
+    means a refused server never held the memory. The probe's own workspace is a few
+    kilobytes and is dropped when this returns.
+
+    Returns `None` for either other read, like `arm_split_read`. A failure is a
+    `BootUnsound` that carries the probe's words, which name the pass.
+    """
+    read = engine.cache.read
+    if not read.split:
+        return None
+    weights = engine.model.weights[EMBED]
+    if device is None:
+        device = weights.device
+    cfg = engine.model.config
+    try:
+        return probe_split_passes(
+            device,
+            block=read.block,
+            head_dim=cfg.head_dim,
+            n_rep=cfg.num_attention_heads // cfg.num_key_value_heads,
+            dtype=weights.dtype,
+        )
+    except SplitUnsound as err:
+        raise BootUnsound(
+            f"this server was asked for the split read and its boot probe failed, so "
+            f"it will not serve one: {err}"
+        ) from err
+
+
 # --- what the process says about itself -------------------------------------------
 
 
@@ -967,6 +1006,7 @@ def boot_info(
     capture: CapturePlan | None = None,
     report: WarmupReport | None = None,
     workspace: SplitWorkspace | None = None,
+    probe: SplitProbe | None = None,
 ) -> dict:
     """The `/health` payload: every decision this launch made on somebody's behalf.
 
@@ -996,6 +1036,10 @@ def boot_info(
     # read and a split server with the graphs off holds it all the same.
     if workspace is not None:
         info["split_workspace"] = workspace.as_dict()
+    # Day 71. Beside the arena, because it is the arena's read that was graded, and
+    # the backend it names is the first thing to check on a new card.
+    if probe is not None:
+        info["split_probe"] = probe.as_dict()
     return info
 
 
@@ -1165,6 +1209,17 @@ def check_boot_info(info: dict) -> None:
             "cannot derive, and it is the first thing you want when a server is "
             "preempting more than you expected"
         )
+    # Day 71. `build_app` refuses to boot on a failed probe, so a payload that records
+    # one came from a process wired by hand, or from a record edited after the fact.
+    probe = info.get("split_probe")
+    if probe is not None:
+        worst = max(probe["pass_one_error"], probe["pass_two_error"], probe["read_error"])
+        if not worst < probe["atol"]:
+            raise BootUnsound(
+                f"this payload's split probe on {probe['backend']} is {worst:.3g} off "
+                f"(bound {probe['atol']:g}) and the server is up: a failed probe is a "
+                "refused boot, so either the probe or the payload is not this process's"
+            )
     graphs = info.get("cuda_graphs")
     if graphs is None:
         return
@@ -1387,6 +1442,9 @@ def build_app(
     # warm-up because a warm batch is a decode step and an unarmed split refuses one;
     # outside the branch because the arena belongs to the read, and a split server
     # with the graphs off runs a split on every decode step all the same.
+    # Day 71. Before the arena, so a server whose split passes are wrong on this
+    # device refuses to boot without ever having reserved the memory for them.
+    split_probe = probe_split_read(engine)
     workspace = arm_split_read(engine, capture)
     if capture is not None and warm:
         report = warm_engine(engine, capture)
@@ -1405,7 +1463,7 @@ def build_app(
         model_name=model_name,
         eos_token_id=eos_token_id,
         vocab_size=engine.model.config.vocab_size,
-        info=boot_info(plan, capture, report, workspace),
+        info=boot_info(plan, capture, report, workspace, split_probe),
     )
     # Hung off the app so a test (and a debugger attached to a live server) can
     # reach the same objects the handlers are holding.
@@ -1413,6 +1471,7 @@ def build_app(
     app.state.capture = capture
     app.state.warmup = report
     app.state.workspace = workspace
+    app.state.split_probe = split_probe
     app.state.engine = engine
     app.state.serving = serving
     return app
