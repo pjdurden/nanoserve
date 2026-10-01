@@ -55,13 +55,20 @@ programs, which is the model the jitted version transcribes.
 
 from __future__ import annotations
 
+import statistics
+import time
 from dataclasses import dataclass
 
 import torch
 
 from .paged_attention import cdiv, paged_attention_batched_reference
 from .tlsim import arange, launch, load, store
-from .triton_batched_attention import DEFAULT_BLOCK, check_batched_inputs, slot_index_dtype
+from .triton_batched_attention import (
+    DEFAULT_BLOCK,
+    check_batched_inputs,
+    paged_attention_batched,
+    slot_index_dtype,
+)
 from .triton_paged_attention import has_triton, next_power_of_2, select_backend
 
 try:  # Triton rides along with the Linux GPU torch wheel; a CPU wheel has no module.
@@ -95,6 +102,7 @@ __all__ = [
     "PROBE_ATOL",
     "SplitProbe",
     "SplitPlan",
+    "SplitTiming",
     "SplitUnsound",
     "check_partials",
     "chunk_partials_reference",
@@ -114,6 +122,7 @@ __all__ = [
     "split_reduce",
     "split_reduce_kernel",
     "split_reduce_triton",
+    "time_split_read",
 ]
 
 
@@ -1618,4 +1627,204 @@ def probe_split_passes(
         pass_two_error=two,
         read_error=read,
         atol=atol,
+    )
+
+
+# --- Day 72: the boot timing ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SplitTiming:
+    """What the split read cost on this device, next to what the plan said it would.
+
+    backend:           whichever backend both reads dispatched to. Same field, same
+                       reason as `SplitProbe.backend`.
+    rows, splits:      the timed case: one long row and `rows - 1` one-key rows, cut
+                       into `splits` chunks of one tile each.
+    block, head_dim,
+    n_rep, dtype:      the geometry the reads were launched with, the engine's own.
+    tail_tiles:        tiles the slowest split program walks, always 1 here.
+    unsplit_tail_tiles: tiles the slowest unsplit program walks, the long row.
+    predicted:         `SplitPlan.wave_speedup` for the case: what a fully resident
+                       grid gets back, from tile counts alone.
+    unsplit_ms,
+    split_ms:          median wall time per call of `paged_attention_batched` and
+                       `paged_attention_split` on the case, warm, synchronised.
+    repeats:           timed calls per read, after one untimed warm call each.
+    """
+
+    backend: str
+    rows: int
+    splits: int
+    block: int
+    head_dim: int
+    n_rep: int
+    dtype: torch.dtype
+    tail_tiles: int
+    unsplit_tail_tiles: int
+    predicted: float
+    unsplit_ms: float
+    split_ms: float
+    repeats: int
+
+    @property
+    def measured(self) -> float:
+        """Unsplit over split, the same way round as `predicted`: above 1 pays."""
+        return self.unsplit_ms / self.split_ms if self.split_ms > 0 else float("inf")
+
+    @property
+    def pays(self) -> bool:
+        """Whether the split was faster than the read it replaces on this case.
+
+        Reported, never enforced. The case is a few rows and the serving batch is
+        not, so a split that loses here can still win at 64 rows, and a boot refused
+        on this number would be refused on the wrong batch.
+        """
+        return self.measured > 1.0
+
+    def as_dict(self) -> dict:
+        return {
+            "backend": self.backend,
+            "rows": self.rows,
+            "splits": self.splits,
+            "block": self.block,
+            "head_dim": self.head_dim,
+            "n_rep": self.n_rep,
+            "dtype": str(self.dtype).removeprefix("torch."),
+            "tail_tiles": self.tail_tiles,
+            "unsplit_tail_tiles": self.unsplit_tail_tiles,
+            "predicted": self.predicted,
+            "unsplit_ms": round(self.unsplit_ms, 4),
+            "split_ms": round(self.split_ms, 4),
+            "measured": self.measured,
+            "pays": self.pays,
+            "repeats": self.repeats,
+        }
+
+    def render(self) -> str:
+        return (
+            f"split timing on {self.backend}: {self.rows} rows, tail "
+            f"{self.unsplit_tail_tiles} -> {self.tail_tiles} tiles, predicted "
+            f"{self.predicted:.2f}x, measured {self.measured:.2f}x "
+            f"({self.unsplit_ms:.3f} ms unsplit, {self.split_ms:.3f} ms split, "
+            f"median of {self.repeats})"
+        )
+
+
+def _sync(device: torch.device) -> None:
+    """A launch returns before its kernel ends; the clock has to wait for the card."""
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def time_split_read(
+    device,
+    *,
+    block: int = DEFAULT_BLOCK,
+    head_dim: int = 64,
+    n_rep: int = 1,
+    dtype: torch.dtype = torch.float32,
+    long_tiles: int = 4,
+    short_rows: int = 3,
+    repeats: int = 5,
+    atol: float = PROBE_ATOL,
+    clock=time.perf_counter,
+    seed: int = 0,
+) -> SplitTiming:
+    """Time the split read against the read it replaces, on `device`. Day 72.
+
+    Day 71's probe says the passes are right here. This says whether they are worth
+    it here, and puts the answer next to the plan's prediction, so the first boot on
+    a card reports both numbers and the gap between them.
+
+    The case is the one the prediction is about. One row `long_tiles * block` keys
+    long and `short_rows` rows of one key, over a mapping as wide as the long row,
+    cut into `long_tiles` chunks of one tile. Unsplit, one program per head walks
+    `long_tiles` tiles while the rest walk one; split, no program walks more than one.
+    So `SplitPlan.wave_speedup` is exactly `long_tiles`, and the probe's case would
+    not do: its tail is three tiles of a block, too short for anything but launch
+    overhead to show.
+
+    Both reads get one untimed warm call, because on a card the first call compiles
+    the kernel and that is a once-per-process cost, not a per-step one. Then
+    `repeats` calls each, alternating so drift lands on both sides, and the median
+    of each. The clock is read after `_sync`, because a launch returns long before
+    its kernel finishes.
+
+    The two outputs are checked against each other first, to `atol`. The probe
+    graded a different case, and a fast wrong answer is not a speedup.
+
+    `paged_attention_batched` and `paged_attention_split` are looked up on this
+    module when called, like the probe's passes, so a test can plant the time they
+    are charged. `clock` is injectable for the same reason.
+    """
+    if long_tiles < 2:
+        raise ValueError(
+            f"a long row of {long_tiles} tiles has nothing to split: the case needs at "
+            "least two tiles so the split tail is shorter than the unsplit one"
+        )
+    if repeats < 1:
+        raise ValueError(f"a timing needs at least one timed call; got repeats={repeats}")
+    if head_dim < 1:
+        raise ValueError(f"a head is at least one channel wide; got {head_dim}")
+    if n_rep < 1:
+        raise ValueError(f"each KV head is read by at least one query head; got {n_rep}")
+    device = torch.device(device)
+    width = long_tiles * block
+    lens = [width] + [1] * short_rows
+    n_kv = 2
+    n_q = n_kv * n_rep
+    plan = split_plan(lens, n_q, head_dim, block=block, splits=long_tiles,
+                      context_width=width)
+    num_slots = sum(lens) + 1
+
+    generator = torch.Generator().manual_seed(seed)
+    k_pool = torch.randn(num_slots, n_kv, head_dim, generator=generator).to(dtype)
+    v_pool = torch.randn(num_slots, n_kv, head_dim, generator=generator).to(dtype)
+    q = torch.randn(len(lens), n_q, 1, head_dim, generator=generator).to(dtype)
+    mapping = torch.zeros(len(lens), width, dtype=torch.long)
+    for i, n in enumerate(lens):
+        mapping[i, :n] = torch.randperm(num_slots, generator=generator)[:n]
+    case = tuple(t.to(device) for t in (q, k_pool, v_pool, mapping, torch.tensor(lens)))
+    backend = select_backend(device)
+
+    def unsplit():
+        return paged_attention_batched(*case, n_rep, block=block)
+
+    def split():
+        return paged_attention_split(*case, n_rep, block=block, splits=plan.splits)
+
+    want, got = unsplit(), split()
+    _sync(device)
+    gap = _slot_gap(got, want)
+    if not gap < atol:
+        raise SplitUnsound(
+            f"split timing on {backend}: the timed split read is {gap:.3g} from the "
+            f"unsplit read on the same case (bound {atol:g}), a row of {width} keys "
+            f"cut into {plan.splits} chunks. The probe passed on its own case and this "
+            "one disagrees, and a fast wrong answer is not a speedup"
+        )
+
+    times = {unsplit: [], split: []}
+    for _ in range(repeats):
+        for read in (unsplit, split):
+            _sync(device)
+            start = clock()
+            read()
+            _sync(device)
+            times[read].append((clock() - start) * 1e3)
+    return SplitTiming(
+        backend=backend,
+        rows=plan.rows,
+        splits=plan.splits,
+        block=block,
+        head_dim=head_dim,
+        n_rep=n_rep,
+        dtype=dtype,
+        tail_tiles=plan.tail_tiles,
+        unsplit_tail_tiles=plan.unsplit_tail_tiles,
+        predicted=plan.wave_speedup,
+        unsplit_ms=statistics.median(times[unsplit]),
+        split_ms=statistics.median(times[split]),
+        repeats=repeats,
     )

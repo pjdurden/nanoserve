@@ -91,7 +91,14 @@ from .compiled import DecodeShape
 from .reads import DEFAULT_BLOCK
 from .config import ModelConfig
 from .engine import Engine
-from .kernels.flash_decoding import SplitProbe, SplitUnsound, plan_splits, probe_split_passes
+from .kernels.flash_decoding import (
+    SplitProbe,
+    SplitTiming,
+    SplitUnsound,
+    plan_splits,
+    probe_split_passes,
+    time_split_read,
+)
 from .loader import EMBED, Weights, load_weights
 from .model import LlamaModel
 from .partials import SplitWorkspace
@@ -998,6 +1005,45 @@ def probe_split_read(engine: Engine, *, device=None) -> SplitProbe | None:
         ) from err
 
 
+def measure_split_read(engine: Engine, *, device=None) -> SplitTiming | None:
+    """Time the split read against the unsplit one on this device, before it serves.
+
+    Day 72. `time_split_read` with the same four numbers `probe_split_read` takes
+    from the engine, for the same reason: the jitted reads are specialised on
+    `BLOCK_N`, `HEAD_DIM` and `N_REP`, and timing a specialisation the server never
+    launches would be timing a different kernel.
+
+    Called by `build_app` after the probe and before the arena. After the probe,
+    because a time is only worth reporting for a read already graded correct. Before
+    the arena, for the probe's reason: the timed reads allocate their own partials,
+    and a refusal here should leave nothing reserved.
+
+    The ratio is reported and never enforced. A split that loses on four rows can win
+    on sixty-four, so the only failure is the timed reads disagreeing, which is a
+    `BootUnsound` like the probe's. Returns `None` for either other read.
+    """
+    read = engine.cache.read
+    if not read.split:
+        return None
+    weights = engine.model.weights[EMBED]
+    if device is None:
+        device = weights.device
+    cfg = engine.model.config
+    try:
+        return time_split_read(
+            device,
+            block=read.block,
+            head_dim=cfg.head_dim,
+            n_rep=cfg.num_attention_heads // cfg.num_key_value_heads,
+            dtype=weights.dtype,
+        )
+    except SplitUnsound as err:
+        raise BootUnsound(
+            f"this server was asked for the split read and its boot timing found the "
+            f"timed reads disagree, so it will not serve one: {err}"
+        ) from err
+
+
 # --- what the process says about itself -------------------------------------------
 
 
@@ -1007,6 +1053,7 @@ def boot_info(
     report: WarmupReport | None = None,
     workspace: SplitWorkspace | None = None,
     probe: SplitProbe | None = None,
+    timing: SplitTiming | None = None,
 ) -> dict:
     """The `/health` payload: every decision this launch made on somebody's behalf.
 
@@ -1040,6 +1087,10 @@ def boot_info(
     # the backend it names is the first thing to check on a new card.
     if probe is not None:
         info["split_probe"] = probe.as_dict()
+    # Day 72. Beside the probe: "is it right here" and "is it worth it here" are the
+    # two questions a new card answers, and the second means nothing without the first.
+    if timing is not None:
+        info["split_timing"] = timing.as_dict()
     return info
 
 
@@ -1219,6 +1270,22 @@ def check_boot_info(info: dict) -> None:
                 f"this payload's split probe on {probe['backend']} is {worst:.3g} off "
                 f"(bound {probe['atol']:g}) and the server is up: a failed probe is a "
                 "refused boot, so either the probe or the payload is not this process's"
+            )
+    # Day 72. A timing is only reported for a read the probe passed, on the backend
+    # the probe graded. A payload that breaks either is two processes' records in one.
+    timing = info.get("split_timing")
+    if timing is not None:
+        if probe is None:
+            raise BootUnsound(
+                f"this payload times a split read on {timing['backend']} that nobody "
+                "graded: the probe runs first on every split boot, so a timing with no "
+                "probe beside it is a speed for a read that may be wrong"
+            )
+        if timing["backend"] != probe["backend"]:
+            raise BootUnsound(
+                f"this payload timed the split read on the {timing['backend']} backend "
+                f"and graded it on {probe['backend']}: one process picks one backend, "
+                "so the speed and the correctness are about two different kernels"
             )
     graphs = info.get("cuda_graphs")
     if graphs is None:
@@ -1445,6 +1512,9 @@ def build_app(
     # Day 71. Before the arena, so a server whose split passes are wrong on this
     # device refuses to boot without ever having reserved the memory for them.
     split_probe = probe_split_read(engine)
+    # Day 72. After the probe, because only a graded read is worth timing; before the
+    # arena, for the probe's reason.
+    split_timing = measure_split_read(engine)
     workspace = arm_split_read(engine, capture)
     if capture is not None and warm:
         report = warm_engine(engine, capture)
@@ -1463,7 +1533,7 @@ def build_app(
         model_name=model_name,
         eos_token_id=eos_token_id,
         vocab_size=engine.model.config.vocab_size,
-        info=boot_info(plan, capture, report, workspace, split_probe),
+        info=boot_info(plan, capture, report, workspace, split_probe, split_timing),
     )
     # Hung off the app so a test (and a debugger attached to a live server) can
     # reach the same objects the handlers are holding.
@@ -1472,6 +1542,7 @@ def build_app(
     app.state.warmup = report
     app.state.workspace = workspace
     app.state.split_probe = split_probe
+    app.state.split_timing = split_timing
     app.state.engine = engine
     app.state.serving = serving
     return app
