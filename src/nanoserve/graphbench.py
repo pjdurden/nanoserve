@@ -167,6 +167,105 @@ def workspace_from_health(payload: dict) -> dict:
     return dict(payload.get("split_workspace") or {})
 
 
+@dataclass(frozen=True)
+class SplitBoot:
+    """The split read's two boot grades as the server published them. Day 73.
+
+    probe:  `split_probe`, Day 71: both passes held against the reference on this
+            device, at this geometry, before the door opened.
+    timing: `split_timing`, Day 72: both reads timed on a case the plan's prediction
+            is about, with the prediction beside the measurement.
+
+    Plain dicts, as published, and not the kernel's dataclasses rebuilt: the harness
+    reads a payload over a socket and should not need torch to say what it read. Both
+    empty for the other two reads, which grade nothing at boot. Fixed for the life of
+    the process like `ArmReport.workspace`, so one reading is the whole record.
+    """
+
+    probe: dict = field(default_factory=dict)
+    timing: dict = field(default_factory=dict)
+
+    @property
+    def graded(self) -> bool:
+        return bool(self.probe)
+
+    @property
+    def backend(self) -> str:
+        """The backend the probe graded, or "" for a boot that graded nothing."""
+        return str(self.probe.get("backend", ""))
+
+    @property
+    def worst_error(self) -> float:
+        """The probe's worst gap of its three, the number its bound is held against."""
+        return max(
+            float(self.probe["pass_one_error"]),
+            float(self.probe["pass_two_error"]),
+            float(self.probe["read_error"]),
+        )
+
+    @property
+    def predicted(self) -> float:
+        return float(self.timing["predicted"])
+
+    @property
+    def measured(self) -> float:
+        return float(self.timing["measured"])
+
+    def row(self) -> dict:
+        """The table's columns. Same keys graded or not, so a CSV header from one arm
+        fits every arm in the sweep."""
+        if not self.graded:
+            return dict.fromkeys(
+                ("split_backend", "split_read_error", "split_predicted",
+                 "split_measured", "split_pays")
+            )
+        timed = bool(self.timing)
+        return {
+            "split_backend": self.backend,
+            "split_read_error": float(self.probe["read_error"]),
+            "split_predicted": self.predicted if timed else None,
+            "split_measured": round(self.measured, 4) if timed else None,
+            "split_pays": bool(self.timing["pays"]) if timed else None,
+        }
+
+    def render(self) -> str:
+        """One line under the arm's row: the grade, then the prediction and the clock.
+
+        "Did not pay" names the timed case and not the serving batch, because that is
+        the only case it was measured on. On a serial backend it is the expected
+        answer: tlsim collects the work and never the wave.
+        """
+        if not self.graded:
+            return ""
+        grade = (
+            f"graded on {self.backend}: read {float(self.probe['read_error']):.1e} "
+            f"(bound {float(self.probe['atol']):.0e})"
+        )
+        if not self.timing:
+            return f"{grade}; not timed"
+        verdict = "paid" if self.timing["pays"] else "did not pay"
+        return (
+            f"{grade}; predicted {self.predicted:.2f}x, measured {self.measured:.2f}x "
+            f"({float(self.timing['unsplit_ms']):.3f} ms unsplit, "
+            f"{float(self.timing['split_ms']):.3f} ms split), {verdict} on the "
+            f"{self.timing['rows']}-row timed case"
+        )
+
+
+def split_boot_from_health(payload: dict) -> SplitBoot:
+    """The split read's boot grades off a `/health` reading, or an empty record. Day 73.
+
+    Empty rather than refused, for `workspace_from_health`'s reason: the other two
+    reads legitimately publish neither section. `check_arm_split_graded` is the caller
+    that knows a split arm should have both. Copies, so a report never aliases the
+    payload it was read from.
+    """
+    return SplitBoot(
+        probe=dict(payload.get("split_probe") or {}),
+        timing=dict(payload.get("split_timing") or {}),
+    )
+
+
 def longest_read(crowd: CrowdReport) -> int:
     """The widest context any decode step read for this crowd, off its usage blocks.
 
@@ -301,6 +400,9 @@ class ArmReport:
              and for why the server can't publish it.
     workspace: the split arena this server published at boot, `{}` for the other
              two reads. Day 68, and fixed for the life of the process like `boot`.
+    split_boot: the split read's probe and timing, off the same reading as
+             `workspace` and empty for the same two reads. Day 73. It is what puts
+             "graded on triton, predicted 4x, measured Nx" under the arm's row.
     """
 
     name: str
@@ -314,6 +416,7 @@ class ArmReport:
     read_after: ReadStats = field(default_factory=ReadStats)
     longest_row: int = 0
     workspace: dict = field(default_factory=dict)
+    split_boot: SplitBoot = field(default_factory=SplitBoot)
 
     @property
     def served(self) -> CaptureStats:
@@ -332,11 +435,16 @@ class ArmReport:
     def render(self) -> str:
         load = self.load
         capture = self.served.render() if self.graphed else "no capture"
-        return (
+        line = (
             f"{self.name:>7}  ITL p50 {load.itl_p50 * 1e3:.1f} ms  p99 "
             f"{load.itl_p99 * 1e3:.1f} ms  (n={load.n_itl_samples})  TTFT p50 "
             f"{load.ttft_p50 * 1e3:.1f} ms  {load.output_tokens} tokens  |  {capture}"
         )
+        # Day 73. Under the row and not in it: the boot grades are fixed for the
+        # process and the row is one load, so a sweep repeats the line by design.
+        if self.split_boot.graded:
+            line += f"\n{'':>7}  {self.split_boot.render()}"
+        return line
 
 
 async def read_health(base_url: str, *, timeout: float = 30.0) -> dict:
@@ -395,6 +503,7 @@ async def run_arm(
         read_after=read_from_health(after_health),
         longest_row=longest_read(crowd),
         workspace=workspace_from_health(before_health),
+        split_boot=split_boot_from_health(before_health),
     )
 
 
@@ -721,6 +830,69 @@ def check_arm_split(arm: ArmReport) -> None:
             "and the reduce merged one live partial per row, so a combine that got "
             f"the rescale wrong would have passed. Send a request of at least "
             f"{split_merge_floor(arm.workspace)} tokens, prompt plus completion"
+        )
+
+
+def check_arm_split_graded(arm: ArmReport) -> None:
+    """Refuse a split arm whose boot grade is not about the read that served. Day 73.
+
+    `check_boot_info` holds the probe against its bound and the timing against the
+    probe, but it only ever sees the boot record. The harness is the one party with
+    the read counters from around a real crowd beside it, and those name the backend
+    every decode read in the window dispatched to. A grade on tlsim over a window
+    served on triton is a record stitched from two processes, and the grade says
+    nothing about the kernel that answered.
+
+    All `AcceptanceFailure` but one. `build_app` probes and times every split boot,
+    so a split arm missing either section, or carrying a probe over its bound, is not
+    the engine this harness was written for. The exception is an empty window, which
+    is the run's fault and not the server's, and `check_arm_split` calls it the same.
+
+    The timing's verdict is never checked: a split that lost on the four-row timed
+    case can still win at the serving batch, and a gate on it would fail the wrong run.
+    """
+    window = arm.read
+    if window.mode != SPLIT:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm ran the {window.mode} read, not the split one, so "
+            "there is no boot grade to hold against what it served"
+        )
+    boot = arm.split_boot
+    if not boot.graded:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm runs the split read and published no split_probe: "
+            "every split boot grades both passes before it serves, so this server "
+            "either is not this engine or lost the section on the way to /health"
+        )
+    if not boot.worst_error < float(boot.probe["atol"]):
+        raise AcceptanceFailure(
+            f"the {arm.name} arm's probe on {boot.backend} is {boot.worst_error:.0e} off "
+            f"(bound {float(boot.probe['atol']):.0e}) and the server is up: a failed "
+            "probe is a refused boot, so the probe is not this process's"
+        )
+    if not boot.timing:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm published a split_probe and no split_timing: the "
+            "timing runs right after the probe on every split boot, so the record is "
+            "missing half of what the boot did"
+        )
+    timed_on = boot.timing.get("backend")
+    if timed_on != boot.backend:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm's split read was timed on {timed_on} and graded on "
+            f"{boot.backend}: one process picks one backend, so the speed and the grade "
+            "are about two kernels"
+        )
+    if not window.calls:
+        raise MeasurementUnsound(
+            f"the {arm.name} arm issued no decode reads between its two readings, so "
+            "no backend served anything to hold the boot grade against"
+        )
+    if window.backend != boot.backend:
+        raise AcceptanceFailure(
+            f"the {arm.name} arm's boot was graded on {boot.backend} and its crowd was "
+            f"served on {window.backend}: the grade is about a kernel that answered "
+            "nobody, and the kernel that answered was never graded"
         )
 
 

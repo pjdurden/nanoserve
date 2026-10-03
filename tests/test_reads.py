@@ -31,6 +31,7 @@ from nanoserve.engine import Engine
 from nanoserve.graphbench import (
     check_arm_read,
     check_arm_split,
+    check_arm_split_graded,
     check_arm_was_crowded,
     check_same_answers,
     paired_plans,
@@ -688,6 +689,13 @@ def test_three_reads_answer_the_same_bytes_and_the_split_really_merged():
     check_arm_split(split)
     assert split.workspace["splits"] == 2
     assert split.longest_row > split.workspace["keys_per_split"]
+
+    # Day 73: the boot's grade came off the same /health, and it is about the backend
+    # that served the crowd. The other two arms graded nothing at boot.
+    check_arm_split_graded(split)
+    assert split.split_boot.backend == split.read.backend == "tlsim"
+    assert "graded on tlsim" in split.render().splitlines()[1]
+    assert not streamed.split_boot.graded and not rectangle.split_boot.graded
 
 
 def test_a_split_server_at_the_toy_width_passes_everything_except_the_split_gate():

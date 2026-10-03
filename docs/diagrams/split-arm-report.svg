@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The split arm reads its own boot grades, and holds them to what served.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Days 71 and 72 put split_probe and split_timing in /health. The acceptance harness read neither.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Now run_arm lifts both into the arm's report, prints them under the arm's row, and one new gate checks</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">that the backend graded at boot is the backend that answered the crowd. The timing is printed, never gated.</text>
+
+  <!-- ===================== LEFT TOP: the data path ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">One /health reading, three sections, one record</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="180" width="150" height="96" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="82" y="199" font-weight="700" fill="#334155">GET /health</text>
+    <text x="82" y="219" fill="#475569">split_workspace (68)</text>
+    <text x="82" y="237" fill="#166534" font-weight="700">split_probe (71)</text>
+    <text x="82" y="255" fill="#166534" font-weight="700">split_timing (72)</text>
+
+    <rect x="260" y="180" width="140" height="52" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="270" y="200" font-weight="700" fill="#166534">split_boot_from</text>
+    <text x="270" y="214" font-weight="700" fill="#166534">_health  (Day 73)</text>
+    <text x="270" y="226" fill="#166534">copies, empty if absent</text>
+
+    <rect x="430" y="180" width="130" height="52" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="440" y="200" font-weight="700" fill="#334155">ArmReport</text>
+    <text x="440" y="216" fill="#475569">.split_boot</text>
+
+    <rect x="260" y="262" width="140" height="44" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="270" y="281" font-weight="700" fill="#334155">ArmReport.read</text>
+    <text x="270" y="297" fill="#475569">counters, a crowd</text>
+
+    <rect x="430" y="262" width="130" height="44" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="440" y="281" font-weight="700" fill="#166534">check_arm_split</text>
+    <text x="440" y="295" font-weight="700" fill="#166534">_graded</text>
+  </g>
+  <path d="M 220 210 L 258 206" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 400 206 L 428 206" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 495 232 L 495 260" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 400 284 L 428 284" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="70" y="336" font-size="10.5" fill="#64748b">Plain dicts, as published: the harness reads a socket and should not need</text>
+  <text x="70" y="352" font-size="10.5" fill="#64748b">torch to say what it read. Taken off the first reading, like the arena.</text>
+
+  <!-- ===================== RIGHT TOP: the report ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">What the arm's row prints now</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="636" y="180" width="498" height="70" rx="5" fill="#1e1b4b"/>
+    <text x="646" y="200" fill="#e2e8f0">  split  ITL p50 41.2 ms  p99 58.0 ms  (n=180)  TTFT p50 ...</text>
+    <text x="646" y="220" fill="#86efac">         graded on tlsim: read 3.0e-07 (bound 1e-04); predicted</text>
+    <text x="646" y="238" fill="#86efac">         4.00x, measured 0.52x (...), did not pay on the 4-row timed case</text>
+  </g>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="276" fill="#475569">streamed / rectangle arms</text>
+    <text x="860" y="276" fill="#475569">one line, as before</text>
+    <text x="642" y="296" fill="#475569">CSV columns</text>
+    <text x="860" y="296" fill="#475569">split_backend, _read_error,</text>
+    <text x="860" y="310" fill="#475569">_predicted, _measured, _pays</text>
+  </g>
+  <text x="642" y="340" font-size="10.5" fill="#64748b">Same keys graded or not, so one header fits every arm in a sweep.</text>
+  <text x="642" y="358" font-size="10.5" font-weight="700" fill="#b45309">On a card this line reads: graded on triton, predicted 4x, measured Nx.</text>
+
+  <!-- ===================== LEFT BOTTOM: the gate ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">check_arm_split_graded, in order</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" font-weight="700" fill="#334155">refused when</text>
+    <text x="370" y="448" font-weight="700" fill="#334155">as</text>
+    <line x1="70" y1="458" x2="558" y2="458" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="70" y="478" fill="#475569">the arm did not run the split read</text>
+    <text x="370" y="478" fill="#b91c1c">AcceptanceFailure</text>
+    <text x="70" y="496" fill="#475569">no split_probe</text>
+    <text x="370" y="496" fill="#b91c1c">AcceptanceFailure</text>
+    <text x="70" y="514" fill="#475569">probe over its bound, server up</text>
+    <text x="370" y="514" fill="#b91c1c">AcceptanceFailure</text>
+    <text x="70" y="532" fill="#475569">probe but no split_timing</text>
+    <text x="370" y="532" fill="#b91c1c">AcceptanceFailure</text>
+    <text x="70" y="550" fill="#475569">timed on one backend, graded on another</text>
+    <text x="370" y="550" fill="#b91c1c">AcceptanceFailure</text>
+    <text x="70" y="568" fill="#475569">no decode reads in the window</text>
+    <text x="370" y="568" fill="#b45309">MeasurementUnsound</text>
+    <text x="70" y="586" fill="#166534" font-weight="700">graded on X, served on Y</text>
+    <text x="370" y="586" fill="#b91c1c" font-weight="700">AcceptanceFailure</text>
+  </g>
+  <line x1="70" y1="600" x2="558" y2="600" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="70" y="622" font-size="10.5" font-weight="700" fill="#b45309">Never checked: whether the split paid. Four rows is not the serving batch.</text>
+
+  <!-- ===================== RIGHT BOTTOM: who can see what ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">Who can see which mismatch</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="448" font-weight="700" fill="#334155">check</text>
+    <text x="860" y="448" font-weight="700" fill="#334155">holds</text>
+    <line x1="642" y1="458" x2="1128" y2="458" stroke="#e2e8f0" stroke-width="1"/>
+
+    <text x="642" y="478" fill="#475569">build_app (71, 72)</text>
+    <text x="860" y="478" fill="#475569">probe vs reference, at boot</text>
+
+    <text x="642" y="500" fill="#475569">check_boot_info (72)</text>
+    <text x="860" y="500" fill="#475569">timing vs probe, one record</text>
+
+    <text x="642" y="522" fill="#166534" font-weight="700">check_arm_split_graded (73)</text>
+    <text x="860" y="522" fill="#166534" font-weight="700">boot grade vs served counters</text>
+  </g>
+  <line x1="642" y1="538" x2="1128" y2="538" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="642" y="558" font-size="10.5" fill="#64748b">The boot record never sees a decode step. The read counters around a</text>
+  <text x="642" y="573" font-size="10.5" fill="#64748b">real crowd name the backend that answered, and only the harness holds</text>
+  <text x="642" y="588" font-size="10.5" fill="#64748b">both. A grade on tlsim over a crowd served on triton graded nobody.</text>
+  <text x="642" y="619" font-size="10.5" font-weight="700" fill="#b91c1c">2310 green. 34 gated skips, waiting on a card.</text>
+</svg>
