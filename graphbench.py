@@ -41,6 +41,18 @@ Day-57 coverage.
     cd ~/nanoserve && .venv/bin/python graphbench.py --coverage \
         --csv docs/daily/data/day-58-graphbench.csv
 
+**`--split-read` is the third arm, and Day 74 is what put it here.** A third server,
+booted as the graphed arm with the split read on, so the two differ in the read and
+nothing else and its ratios are taken against the graphed arm. It boots first, because
+its arena decides the load: `split_prompt` repeats `--prompt` until it alone is past
+the merge floor by the checkpoint's own tokenizer, and all three arms are sent that
+padded prompt so the answers stay comparable. Its five claims (`split_claims`) join the
+list, and its boot grades print under its row and land in the CSV.
+
+    cd ~/nanoserve && .venv/bin/python graphbench.py --weights ./weights \
+        --device cuda --rates 1,2,4,8 --requests 32 --max-tokens 128 --split-read \
+        --csv docs/daily/data/day-74-graphbench.csv
+
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
 speed, so the "recorded" arm is a forward plus a copy. `--allow-cpu` is there for
@@ -70,6 +82,8 @@ from nanoserve.graphbench import (
     check_tail_not_worse,
     paired_plans,
     run_arm,
+    split_claims,
+    split_prompt,
 )
 from nanoserve.servebench import (
     MeasurementUnsound,
@@ -230,16 +244,26 @@ def schedule_for(kind: str, n: int, *, rate: float | None, seed: int) -> list[fl
     raise SystemExit(f"unknown arrival process {kind!r}")
 
 
-def build_one(args, *, graphs: bool):
+def build_one(args, *, graphs: bool, split: bool = False):
     """One arm's app: the same launcher call with the week's three flags on or off.
 
     Both arms get the same pool, the same served context, the same compile setting
     and the same scheduler. The only difference between the two processes is the
     capture, which is what makes the difference between the two reports attributable
     to it.
+
+    `split` is Day 74's third arm, and only on top of `graphs`: the split read refuses
+    to boot without the bucketed decode (Day 65), and a split server without the
+    capture would differ from the graphed arm in two things. Refused here by name,
+    before a checkpoint is loaded to find that out.
     """
     from nanoserve.launch import build_app
 
+    if split and not graphs:
+        raise SystemExit(
+            "the split arm is the graphed arm with the split read on: the split needs "
+            "the bucketed decode to boot at all"
+        )
     return build_app(
         args.weights,
         device=args.device,
@@ -258,42 +282,95 @@ def build_one(args, *, graphs: bool):
         # changes at once, and the eager arm pays the same row copy per completion
         # for none of the benefit.
         compact_rows=not args.no_compact,
+        split_read=split,
         warm=not args.no_warm,
         warm_rows=args.warm_rows,
         warm_width=args.warm_width,
     )
 
 
+def describe(app) -> None:
+    for line in app.state.plan.describe().splitlines():
+        print(f"  {line}", file=sys.stderr, flush=True)
+    if app.state.capture is not None:
+        print(f"  {app.state.capture.describe()}", file=sys.stderr, flush=True)
+
+
+def serve_arm(args, app, name: str, plans, arrivals, rate: float | None):
+    with ExitStack() as stack:
+        server = stack.enter_context(live_server(app))
+        return asyncio.run(
+            run_arm(
+                server.base_url,
+                plans,
+                arrivals,
+                name=name,
+                target_rate=rate,
+                timeout=args.timeout,
+            )
+        )
+
+
+def padded_prompt(args, app) -> str:
+    """`--prompt` past the split arm's merge floor, counted the way the server will.
+
+    The arena comes off the booted app and not off `/health`, because it is the same
+    object `boot_info` publishes and the load has to exist before any request does.
+    The tokenizer is loaded from the checkpoint, as `build_app` loads it, and counted
+    with `encode`, which is the call the completions handler makes on a string.
+    """
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(str(args.weights))
+    workspace = app.state.workspace.as_dict() if app.state.workspace else {}
+    prompt = split_prompt(
+        args.prompt,
+        workspace,
+        count=lambda text: len(tokenizer.encode(text)),
+        max_tokens=args.max_tokens,
+        max_model_len=args.max_model_len,
+    )
+    print(
+        f"  prompt padded to {len(tokenizer.encode(prompt))} tokens, past a "
+        f"{workspace['keys_per_split']}-key chunk",
+        file=sys.stderr,
+        flush=True,
+    )
+    return prompt
+
+
 def measure(args, label: str, rate: float | None) -> ArmDelta:
-    """Both arms, one offered load, and the comparison between them."""
+    """Every arm, one offered load, and the comparison between them.
+
+    With `--split-read` the split arm goes first, because its arena is what decides
+    how long the prompt has to be, and the other two must be sent the same plans.
+    """
+    reports = {}
+    prompt = args.prompt
+    split_app = None
+    if args.split_read:
+        print(f"\n[{label}] loading the split arm ...", file=sys.stderr, flush=True)
+        split_app = build_one(args, graphs=True, split=True)
+        describe(split_app)
+        prompt = padded_prompt(args, split_app)
     plans = paired_plans(
         args.requests,
-        prompts=(args.prompt,),
+        prompts=(prompt,),
         max_tokens=(args.max_tokens,),
         seed=args.seed,
     )
     arrivals = schedule_for(args.arrivals, len(plans), rate=rate, seed=args.seed)
-    reports = {}
+    if split_app is not None:
+        reports["split"] = serve_arm(args, split_app, "split", plans, arrivals, rate)
+        # One process's worth of engine at a time: the next arm loads its own pool.
+        del split_app
     for name, graphs in (("graphs", True), ("eager", False)):
         print(f"\n[{label}] loading the {name} arm ...", file=sys.stderr, flush=True)
         app = build_one(args, graphs=graphs)
-        for line in app.state.plan.describe().splitlines():
-            print(f"  {line}", file=sys.stderr, flush=True)
-        if app.state.capture is not None:
-            print(f"  {app.state.capture.describe()}", file=sys.stderr, flush=True)
-        with ExitStack() as stack:
-            server = stack.enter_context(live_server(app))
-            reports[name] = asyncio.run(
-                run_arm(
-                    server.base_url,
-                    plans,
-                    arrivals,
-                    name=name,
-                    target_rate=rate,
-                    timeout=args.timeout,
-                )
-            )
-    return ArmDelta(graphs=reports["graphs"], eager=reports["eager"])
+        describe(app)
+        reports[name] = serve_arm(args, app, name, plans, arrivals, rate)
+        del app
+    return ArmDelta(graphs=reports["graphs"], eager=reports["eager"], split=reports.get("split"))
 
 
 def write_csv(where: str, rows: list[dict]) -> None:
@@ -311,18 +388,24 @@ def print_table(rows: list[dict]) -> None:
         f"{'load':>10} {'ITL p50 graphs':>15} {'eager':>8} {'x':>6} "
         f"{'ITL p99 graphs':>15} {'eager':>8} {'x':>6} {'replayed':>9}"
     )
+    split = "split_itl_p50_ms" in rows[0]
+    if split:
+        header += f" {'ITL p50 split':>14} {'vs graphs':>10}"
     print(header)
     print("-" * len(header))
     for r in rows:
-        print(
+        line = (
             f"{r['load']:>10} {r['graphs_itl_p50_ms']:>14.2f}m {r['eager_itl_p50_ms']:>7.2f}m "
             f"{r['itl_p50_speedup']:>5.2f}x {r['graphs_itl_p99_ms']:>14.2f}m "
             f"{r['eager_itl_p99_ms']:>7.2f}m {r['itl_p99_speedup']:>5.2f}x "
             f"{r['replay_share']:>8.0%}"
         )
+        if split:
+            line += f" {r['split_itl_p50_ms']:>13.2f}m {r['split_itl_p50_speedup']:>9.2f}x"
+        print(line)
 
 
-def main() -> None:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="compare a graphed nanoserve with an eager one")
     target = p.add_argument_group("the two servers")
     target.add_argument("--weights", default=None, help="the checkpoint both arms load")
@@ -353,6 +436,12 @@ def main() -> None:
         action="store_true",
         help="run without a device, where a replay is a stand-in and no faster",
     )
+    target.add_argument(
+        "--split-read",
+        action="store_true",
+        help="a third arm: the graphed server with the split read on, prompts padded "
+        "past its merge floor",
+    )
 
     load = p.add_argument_group("the load")
     load.add_argument("--requests", type=int, default=16)
@@ -373,7 +462,11 @@ def main() -> None:
         action="store_true",
         help="fail if the arms disagree, or the comparison does not support itself",
     )
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = make_parser().parse_args()
 
     if args.coverage:
         rows = run_coverage(args)
@@ -432,6 +525,7 @@ def main() -> None:
                 lambda: check_tail_not_worse(delta, tolerance=args.tolerance),
                 "the tail did not get worse",
             ),
+            *split_claims(delta),
         ):
             try:
                 check()

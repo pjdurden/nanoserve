@@ -64,7 +64,7 @@ nothing in the engine imports it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -306,6 +306,62 @@ def split_merge_floor(workspace: dict) -> int | None:
     return int(workspace["keys_per_split"]) + 2
 
 
+def split_prompt(
+    prompt: str,
+    workspace: dict,
+    *,
+    count: Callable[[str], int],
+    max_tokens: int,
+    max_model_len: int,
+) -> str:
+    """The prompt, repeated until it alone reaches the split's merge floor. Day 74.
+
+    `check_arm_split` refuses a run whose rows all fit in the first chunk, and the
+    script's default prompt is six tokens against a 512-key chunk. So the load every
+    arm runs is padded here, after the split arm has booted and published its arena
+    and before any plan is built, because the three arms must be sent the same bytes.
+
+    The prompt alone clears the floor, and `max_tokens` is not counted toward it. A
+    completion can stop at EOS on its second token, so prompt plus budget is a row
+    length on paper only. The prompt is the half of the row the client controls.
+
+    `count` is the server's own tokenizer, wrapped by the caller: a word count would
+    be off by the tokenizer's ratio in the direction that fails the gate. Whole
+    copies, so the text stays the prompt rather than a cut-off tail of it.
+
+    Refused rather than returned: a one-chunk arena has no floor (`split_merge_floor`
+    says why), and a padded prompt plus `max_tokens` past `max_model_len` is a 400 on
+    every request, which a run would then measure as a server that failed everyone.
+    """
+    if not prompt.strip():
+        raise ValueError("an empty prompt cannot be padded to a length")
+    floor = split_merge_floor(workspace)
+    if floor is None:
+        raise MeasurementUnsound(
+            "the split arm's arena has one chunk "
+            f"({workspace.get('context_width')} keys wide), so no prompt can cross "
+            "into a second one: widen max_model_len past twice the partition"
+        )
+    text, have = prompt, count(prompt)
+    while have < floor:
+        longer = f"{text} {prompt}"
+        grown = count(longer)
+        if grown <= have:
+            raise ValueError(
+                f"the token count did not grow when the prompt was repeated ({have} "
+                "both times), so no number of copies reaches the floor"
+            )
+        text, have = longer, grown
+    if have + max_tokens > max_model_len:
+        raise MeasurementUnsound(
+            f"the prompt padded to the merge floor is {have} tokens and each request "
+            f"asks for {max_tokens} more, past max_model_len={max_model_len}: the "
+            "server would refuse every request. Lower --max-tokens or raise "
+            "--max-model-len"
+        )
+    return text
+
+
 # --- the requests both arms run ------------------------------------------------------
 
 
@@ -523,10 +579,15 @@ class ArmDelta:
     p50 and p99 are never collapsed into one number here. They are answers to two
     different questions this week asked: the middle is what a replay saves per step,
     and the tail is what a warm-up saves in front of one unlucky client.
+
+    `split` is Day 74's third arm, and `None` for the two-arm run. It boots as the
+    graphed arm with the split read on, so its ratios are against `graphs` and never
+    against `eager`: that would be the capture and the read changed at once.
     """
 
     graphs: ArmReport
     eager: ArmReport
+    split: ArmReport | None = None
 
     @staticmethod
     def _ratio(slow: float, fast: float) -> float:
@@ -562,9 +623,27 @@ class ArmDelta:
     def throughput_ratio(self) -> float:
         return self._ratio(self.graphs.load.output_tps, self.eager.load.output_tps)
 
+    @property
+    def split_itl_p50_speedup(self) -> float:
+        """Graphed over split, so above one means the split read was faster."""
+        if self.split is None:
+            return 0.0
+        return self._ratio(self.graphs.load.itl_p50, self.split.load.itl_p50)
+
+    @property
+    def split_itl_p99_speedup(self) -> float:
+        if self.split is None:
+            return 0.0
+        return self._ratio(self.graphs.load.itl_p99, self.split.load.itl_p99)
+
     def row(self) -> dict:
-        """One line of the table, in the units a reader can compare."""
-        return {
+        """One line of the table, in the units a reader can compare.
+
+        The split columns come after the two-arm ones, so yesterday's CSV is a prefix
+        of today's, and only when the arm exists: a sweep is all two-arm or all
+        three-arm, so every row in one file has the same keys either way.
+        """
+        row = {
             "graphs_itl_p50_ms": round(self.graphs.load.itl_p50 * 1e3, 3),
             "eager_itl_p50_ms": round(self.eager.load.itl_p50 * 1e3, 3),
             "itl_p50_speedup": round(self.itl_p50_speedup, 3),
@@ -579,19 +658,34 @@ class ArmDelta:
             "graphs_held": self.graphs.boot.get("graphs_held", 0),
             "recorded_while_serving": self.graphs.served.captures,
         }
+        if self.split is not None:
+            row.update(
+                split_itl_p50_ms=round(self.split.load.itl_p50 * 1e3, 3),
+                split_itl_p99_ms=round(self.split.load.itl_p99 * 1e3, 3),
+                split_tok_s=round(self.split.load.output_tps, 2),
+                split_itl_p50_speedup=round(self.split_itl_p50_speedup, 3),
+                split_itl_p99_speedup=round(self.split_itl_p99_speedup, 3),
+                **self.split.split_boot.row(),
+            )
+        return row
 
     def render(self) -> str:
-        return "\n".join(
-            [
-                self.graphs.render(),
-                self.eager.render(),
-                f"  ITL p50  {self.itl_p50_speedup:.2f}x  "
-                f"({self.itl_p50_saved_ms:+.2f} ms a token)",
-                f"  ITL p99  {self.itl_p99_speedup:.2f}x  "
-                f"({self.itl_p99_saved_ms:+.2f} ms a token)",
-                f"  tok/s    {self.throughput_ratio:.2f}x",
-            ]
-        )
+        lines = [self.graphs.render(), self.eager.render()]
+        if self.split is not None:
+            lines.append(self.split.render())
+        lines += [
+            f"  ITL p50  {self.itl_p50_speedup:.2f}x  "
+            f"({self.itl_p50_saved_ms:+.2f} ms a token)",
+            f"  ITL p99  {self.itl_p99_speedup:.2f}x  "
+            f"({self.itl_p99_saved_ms:+.2f} ms a token)",
+            f"  tok/s    {self.throughput_ratio:.2f}x",
+        ]
+        if self.split is not None:
+            lines.append(
+                f"  split vs graphs  ITL p50 {self.split_itl_p50_speedup:.2f}x  "
+                f"p99 {self.split_itl_p99_speedup:.2f}x"
+            )
+        return "\n".join(lines)
 
 
 # --- claim 1: the same answers ------------------------------------------------------
@@ -1003,3 +1097,37 @@ def check_tail_not_worse(
             "remove per-step launch overhead, so a slower tail is a recording that is "
             "still happening or a replay that is doing more work than the forward"
         )
+
+
+# --- the third arm's claims, as the script runs them (Day 74) -------------------------
+
+
+def split_claims(delta: ArmDelta) -> list[tuple[Callable[[], None], str]]:
+    """The split arm's five gates, as `(check, note)` pairs, or `[]` for two arms.
+
+    A list rather than a function that raises, because the script reports every claim
+    and only stops on `--sanity`: one failed gate should not hide the four after it.
+    Empty for a two-arm run, so the caller appends it unconditionally.
+
+    In the order a reader should meet a failure. A lone row is admissibility and says
+    nothing else in the list is worth reading. Different bytes are a wrong answer. The
+    last three narrow from "the flag arrived" to "the rows crossed a chunk" to "the
+    boot grade is about the kernel that answered", and each one assumes the one
+    before it passed. Answers are held to the graphed arm, the split arm's twin.
+    """
+    split = delta.split
+    if split is None:
+        return []
+    return [
+        (lambda: check_arm_was_crowded(split), "the split arm batched"),
+        (
+            lambda: check_same_answers(split, delta.graphs),
+            "the split arm gave the graphed arm's same answers",
+        ),
+        (lambda: check_arm_read(split, SPLIT), "the split flag reached the cache"),
+        (lambda: check_arm_split(split), "the split arm's rows crossed a chunk"),
+        (
+            lambda: check_arm_split_graded(split),
+            "the split arm's boot grade is about the read that served",
+        ),
+    ]

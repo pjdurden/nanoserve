@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">graphbench.py gets its third arm: --split-read.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The three-arm run only existed inside tests/test_reads.py. The script a card run would use booted graphs</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">and eager, and neither split. Now the split arm boots first, its arena decides how long the prompt is,</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">all three arms get the same padded load, and five more claims join the list.</text>
+
+  <!-- ===================== LEFT TOP: the order ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">measure(), with --split-read</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="180" width="140" height="52" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="80" y="200" font-weight="700" fill="#166534">1. boot split arm</text>
+    <text x="80" y="216" fill="#166534">graphs + split_read</text>
+
+    <rect x="240" y="180" width="150" height="52" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="250" y="200" font-weight="700" fill="#166534">2. split_prompt</text>
+    <text x="250" y="216" fill="#166534">pad past merge floor</text>
+
+    <rect x="420" y="180" width="140" height="52" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="430" y="200" font-weight="700" fill="#334155">3. paired_plans</text>
+    <text x="430" y="216" fill="#475569">one list, 3 arms</text>
+
+    <rect x="70" y="268" width="140" height="44" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="80" y="287" font-weight="700" fill="#334155">4. serve split</text>
+    <text x="80" y="302" fill="#475569">then free it</text>
+
+    <rect x="240" y="268" width="150" height="44" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="250" y="287" font-weight="700" fill="#334155">5. graphs, eager</text>
+    <text x="250" y="302" fill="#475569">same plans</text>
+
+    <rect x="420" y="268" width="140" height="44" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="430" y="287" font-weight="700" fill="#166534">ArmDelta</text>
+    <text x="430" y="302" fill="#166534">.split vs .graphs</text>
+  </g>
+  <path d="M 210 206 L 238 206" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 390 206 L 418 206" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 490 232 L 140 266" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 210 290 L 238 290" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 390 290 L 418 290" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="70" y="340" font-size="10.5" fill="#64748b">Split first, because its arena is the only thing that knows the floor.</text>
+  <text x="70" y="356" font-size="10.5" fill="#64748b">One engine at a time on the card: each arm loads its own pool.</text>
+
+  <!-- ===================== RIGHT TOP: the padding ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">split_prompt: the prompt alone clears the floor</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="642" y="186" fill="#475569">chunk = keys_per_split = 512    floor = chunk + 2 = 514</text>
+
+    <rect x="642" y="200" width="20" height="18" fill="#c7d2fe"/>
+    <text x="672" y="213" fill="#475569">"The capital of France is"  6 tokens, inside chunk one</text>
+
+    <rect x="642" y="230" width="240" height="18" fill="#86efac"/>
+    <rect x="882" y="230" width="6" height="18" fill="#16a34a"/>
+    <line x1="878" y1="224" x2="878" y2="256" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <text x="896" y="243" fill="#166534">repeated: 514+ tokens</text>
+    <text x="830" y="268" fill="#b91c1c">512</text>
+  </g>
+  <g font-size="10" font-family="ui-monospace, monospace">
+    <text x="642" y="296" fill="#475569">counted with tokenizer.encode, the call the server makes</text>
+    <text x="642" y="314" fill="#475569">whole copies, so the text is still the prompt</text>
+    <text x="642" y="332" fill="#475569">refused: one-chunk arena, or prompt + max_tokens past</text>
+    <text x="642" y="348" fill="#475569">max_model_len (a 400 on every request)</text>
+  </g>
+  <text x="642" y="368" font-size="10.5" font-weight="700" fill="#b45309">Not prompt + max_tokens: a completion can stop at EOS on its second token.</text>
+
+  <!-- ===================== LEFT BOTTOM: the claims ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">split_claims(delta), in the order a reader meets them</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" font-weight="700" fill="#334155">claim</text>
+    <text x="330" y="448" font-weight="700" fill="#334155">gate</text>
+    <line x1="70" y1="458" x2="558" y2="458" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="70" y="478" fill="#475569">the split arm batched</text>
+    <text x="330" y="478" fill="#475569">check_arm_was_crowded (41)</text>
+    <text x="70" y="498" fill="#475569">same answers as the graphed arm</text>
+    <text x="330" y="498" fill="#475569">check_same_answers (57)</text>
+    <text x="70" y="518" fill="#475569">the split flag reached the cache</text>
+    <text x="330" y="518" fill="#475569">check_arm_read (60)</text>
+    <text x="70" y="538" fill="#475569">the rows crossed a chunk</text>
+    <text x="330" y="538" fill="#475569">check_arm_split (68)</text>
+    <text x="70" y="558" fill="#166534" font-weight="700">the grade is about what served</text>
+    <text x="330" y="558" fill="#166534" font-weight="700">check_arm_split_graded (73)</text>
+  </g>
+  <line x1="70" y1="574" x2="558" y2="574" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="70" y="596" font-size="10.5" fill="#64748b">A list, not a raise: one failed gate must not hide the four after it.</text>
+  <text x="70" y="622" font-size="10.5" font-weight="700" fill="#b45309">Two-arm run: split_claims returns [], so the script needs no if.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the report ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">What a three-arm load prints</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9" font-family="ui-monospace, monospace">
+    <rect x="636" y="440" width="498" height="104" rx="5" fill="#1e1b4b"/>
+    <text x="646" y="460" fill="#e2e8f0"> graphs  ITL p50 20.0 ms  p99 ...  |  replays</text>
+    <text x="646" y="476" fill="#e2e8f0">  eager  ITL p50 30.0 ms  p99 ...  |  no capture</text>
+    <text x="646" y="492" fill="#e2e8f0">  split  ITL p50 16.0 ms  p99 ...  |  replays</text>
+    <text x="646" y="508" fill="#86efac">         graded on triton: read ... predicted 4.00x, measured Nx</text>
+    <text x="646" y="532" fill="#fde68a">  split vs graphs  ITL p50 1.25x  p99 1.25x</text>
+  </g>
+  <text x="642" y="566" font-size="10.5" fill="#64748b">Ratios against graphs, never eager: the split arm is the graphed arm</text>
+  <text x="642" y="581" font-size="10.5" fill="#64748b">plus one flag. CSV: split columns after the two-arm ones, so yesterday's</text>
+  <text x="642" y="596" font-size="10.5" fill="#64748b">header is a prefix of today's. Numbers above are the test fixture.</text>
+  <text x="642" y="622" font-size="10.5" font-weight="700" fill="#b91c1c">2338 green. 34 gated skips, waiting on a card.</text>
+</svg>
