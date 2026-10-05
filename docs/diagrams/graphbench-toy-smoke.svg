@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">graphbench.py runs as a process, and its first run finds three bugs.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Every test of the script since Day 57 patched build_app out, so any keyword went through. A toy checkpoint</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">on disk lets the script do what a card run does: read a path, load a tokenizer, boot three servers, write a CSV.</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">The first run died at boot. 14 seconds on a CPU, before any card time was booked.</text>
+
+  <!-- ===================== LEFT TOP: the checkpoint ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">write_toy_checkpoint(dir): what ./weights holds, at toy size</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="180" width="230" height="40" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="80" y="197" font-weight="700" fill="#334155">config.json</text>
+    <text x="80" y="211" fill="#475569">2 layers, GQA 8:2, vocab 256</text>
+
+    <rect x="70" y="230" width="230" height="40" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="80" y="247" font-weight="700" fill="#334155">model.safetensors</text>
+    <text x="80" y="261" fill="#475569">HF names, no lm_head (tied)</text>
+
+    <rect x="70" y="280" width="230" height="40" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="80" y="297" font-weight="700" fill="#166534">tokenizer.json (+ config)</text>
+    <text x="80" y="311" fill="#166534">byte-level BPE, zero merges</text>
+
+    <rect x="330" y="180" width="230" height="140" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="342" y="200" font-weight="700" fill="#334155">read by the real calls</text>
+    <text x="342" y="222" fill="#475569">ModelConfig.from_json</text>
+    <text x="342" y="240" fill="#475569">load_weights</text>
+    <text x="342" y="258" fill="#475569">AutoTokenizer.from_pretrained</text>
+    <text x="342" y="284" fill="#166534">nothing injected</text>
+    <text x="342" y="302" fill="#166534">one byte = one id</text>
+  </g>
+  <path d="M 300 250 L 328 250" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="70" y="344" font-size="10.5" fill="#64748b">No EOS token: a random model that could sample one would end a client early.</text>
+  <text x="70" y="360" font-size="10.5" fill="#64748b">Refuses a directory that already holds a checkpoint. Same seed, same bytes.</text>
+
+  <!-- ===================== RIGHT TOP: the bugs ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">what the first run found (all three since Day 57)</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="178" width="490" height="54" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="652" y="196" font-weight="700" fill="#b91c1c">1. TypeError: build_engine() got 'compile_decode'</text>
+    <text x="652" y="212" fill="#475569">the script passed it, build_engine had no name for it.</text>
+    <text x="652" y="226" fill="#166534">fix: build_engine threads it to Engine.build</text>
+
+    <rect x="640" y="240" width="490" height="54" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="652" y="258" font-weight="700" fill="#b91c1c">2. the "graphs" arm never asked for capture_decode</text>
+    <text x="652" y="274" fill="#475569">buckets + persistent inputs, graphs off.</text>
+    <text x="652" y="288" fill="#166534">fix: capture_decode=graphs in build_one</text>
+
+    <rect x="640" y="302" width="490" height="54" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="652" y="320" font-weight="700" fill="#b91c1c">3. --compile default="default"</text>
+    <text x="652" y="336" fill="#475569">torch.compile's word; the engine's modes are off|dynamic|static.</text>
+    <text x="652" y="350" fill="#166534">fix: default "dynamic", choices=MODES</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: the run ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">the smoke: one process, read the way a person reads it</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" fill="#334155">graphbench.py --weights $TMP --allow-cpu --split-read</text>
+    <text x="70" y="463" fill="#334155">  --arrivals burst --max-model-len 1024 --requests 6</text>
+
+    <text x="70" y="492" fill="#475569">[burst] loading the split arm ...</text>
+    <text x="70" y="507" font-weight="700" fill="#166534">  prompt padded to 524 tokens, past a 512-key chunk</text>
+    <text x="70" y="522" fill="#475569">[burst] loading the graphs arm ...</text>
+    <text x="70" y="537" fill="#475569">[burst] loading the eager arm ...</text>
+
+    <text x="70" y="566" fill="#475569">24-byte prompt, copies joined by a space:</text>
+    <text x="70" y="581" fill="#475569">n copies = 25n - 1 bytes. 20 = 499 &lt; 514 &lt;= 524 = 21.</text>
+  </g>
+  <text x="70" y="612" font-size="10.5" font-weight="700" fill="#b45309">One byte per token, so the test says the padded length in advance.</text>
+  <text x="70" y="627" font-size="10.5" fill="#64748b">The order is asserted too: split, then padding, then graphs, then eager.</text>
+
+  <!-- ===================== RIGHT BOTTOM: the claims ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">what it printed after the fixes (CPU, fixture-sized)</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="640" y="448" fill="#475569">graphs  32 replays, 100% replayed</text>
+    <text x="640" y="463" fill="#475569">split   graded on tlsim: read 2.4e-07 (bound 1e-03)</text>
+
+    <text x="640" y="490" fill="#166534">ok    same answers</text>
+    <text x="640" y="505" fill="#166534">ok    the capture was used</text>
+    <text x="640" y="520" fill="#166534">ok    the split arm gave the graphed arm's same answers</text>
+    <text x="640" y="535" fill="#166534">ok    the split arm's rows crossed a chunk</text>
+    <text x="640" y="550" fill="#166534">ok    the split arm's boot grade is about the read that served</text>
+    <text x="640" y="565" fill="#b91c1c">FAIL  the arms are comparable: 11 frame gaps, wants 20</text>
+
+    <text x="640" y="592" fill="#475569">CSV: 25 columns, split_itl_p50_ms ... split_pays</text>
+  </g>
+  <text x="640" y="618" font-size="10.5" font-weight="700" fill="#b45309">The one FAIL is the sample gate doing its job on a 6-request smoke.</text>
+  <text x="640" y="632" font-size="10.5" fill="#64748b">No speed claim here: on CPU the recorder is a stand-in and the split is tlsim.</text>
+</svg>

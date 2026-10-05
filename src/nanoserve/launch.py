@@ -1334,6 +1334,7 @@ def build_engine(
     kv_cache_bytes: int | None = None,
     num_blocks: int | None = None,
     profile: bool = True,
+    compile_decode: str | None = None,
     bucket_decode: bool = False,
     persist_inputs: bool = False,
     capture_decode: bool = False,
@@ -1430,6 +1431,11 @@ def build_engine(
         # num_blocks * block_size]` int64 would be hundreds of megabytes of pure
         # addressing on a real card. See `nanoserve.slots.check_table_fits`.
         max_model_len=plan.max_model_len,
+        # Day 75. Day 49's mode, passed through and never chosen here. `graphbench.py`
+        # had been handing it to `build_app` since Day 57 and this signature had no
+        # name for it, which nobody saw because every test of the script patched
+        # `build_app` out. A run over a checkpoint on disk was the first to call it.
+        compile_decode=compile_decode,
         bucket_decode=bucket_decode,
         persist_inputs=persist_inputs,
         capture_decode=capture_decode,

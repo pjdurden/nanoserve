@@ -29,6 +29,7 @@ this file is the script's arithmetic and its wiring.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +39,7 @@ from test_split_report import PROBE, TIMING, _payload
 
 from nanoserve.acceptance import AcceptanceFailure
 from nanoserve.captured import CaptureStats
+from nanoserve.launch import build_app, build_engine
 from nanoserve.graphbench import (
     ArmDelta,
     ArmReport,
@@ -304,7 +306,7 @@ def _args(**kw):
     base = dict(
         weights="./weights", device="cpu", dtype="auto", block_size=16,
         max_batch_size=8, max_model_len=2048, num_blocks=None, kv_cache_bytes=None,
-        compile="default", no_compile=False, no_compact=False, no_warm=False,
+        compile="dynamic", no_compile=False, no_compact=False, no_warm=False,
         warm_rows=None, warm_width=None,
     )
     base.update(kw)
@@ -348,3 +350,43 @@ def test_the_script_takes_the_flag():
     parser = script.make_parser()
     assert parser.parse_args(["--split-read"]).split_read is True
     assert parser.parse_args([]).split_read is False
+
+
+# --- Day 75: what the patched `build_app` above could not see -------------------------
+
+
+def test_every_flag_the_script_hands_the_launcher_is_one_it_takes(launched):
+    """The patch above takes any keyword, so `build_one` could pass a name nothing
+    downstream knew and every test here still passed. Held to the real signatures:
+    a keyword `build_app` does not name itself goes on to `build_engine`."""
+    takes = set(inspect.signature(build_app).parameters) | set(
+        inspect.signature(build_engine).parameters
+    )
+    script = _script()
+    for graphs, split in ((True, True), (True, False), (False, False)):
+        script.build_one(_args(), graphs=graphs, split=split)
+    for kw in launched:
+        assert set(kw) <= takes, set(kw) - takes
+
+
+def test_the_graphed_arm_asks_for_the_capture_and_the_eager_arm_does_not(launched):
+    """Buckets and persistent inputs are what a capture needs, not the capture. Without
+    `capture_decode` the "graphs" arm boots with the graphs off and replays nothing."""
+    script = _script()
+    script.build_one(_args(), graphs=True)
+    script.build_one(_args(), graphs=False)
+    graphs, eager = launched
+    assert graphs["capture_decode"] is True
+    assert eager["capture_decode"] is False
+
+
+def test_the_default_compile_mode_is_one_the_engine_accepts():
+    """`--compile` defaulted to "default", which is `torch.compile`'s word and not
+    `CompiledDecode`'s, so a card run without `--no-compile` would have refused to boot
+    its first arm. The parser now only offers the engine's own modes."""
+    from nanoserve.compiled import MODES
+
+    parser = _script().make_parser()
+    assert parser.parse_args([]).compile in MODES
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--compile", "default"])

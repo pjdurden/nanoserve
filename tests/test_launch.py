@@ -564,3 +564,19 @@ def test_the_vocab_guard_is_wired_from_the_config_the_launcher_read():
     response = _run(scenario())
     assert response.status_code == 400
     assert "vocab" in response.json()["detail"]
+
+
+# --- Day 75: the compile reaches the engine through the launcher ----------------------
+
+
+def test_build_engine_threads_the_compile_mode_to_the_engine():
+    """`graphbench.py` has passed `compile_decode` to `build_app` since Day 57, and
+    nothing below `build_app` took it until a run over a checkpoint on disk found the
+    `TypeError`. Every test of the script before that patched `build_app` out."""
+    engine, _ = _build(compile_decode="dynamic")
+    assert engine.decode_forward.mode == "dynamic"
+
+
+def test_build_engine_leaves_the_compile_off_by_default():
+    engine, _ = _build()
+    assert engine.decode_forward.mode == "off"

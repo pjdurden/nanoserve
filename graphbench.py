@@ -71,6 +71,7 @@ from pathlib import Path
 import torch
 
 from nanoserve.acceptance import AcceptanceFailure, live_server
+from nanoserve.compiled import MODES
 from nanoserve.graphbench import (
     ArmDelta,
     check_arm_replayed,
@@ -273,9 +274,14 @@ def build_one(args, *, graphs: bool, split: bool = False):
         max_model_len=args.max_model_len,
         num_blocks=args.num_blocks,
         kv_cache_bytes=args.kv_cache_bytes,
-        compile_decode=None if args.no_compile else args.compile,
+        compile_decode=None if args.no_compile or args.compile == "off" else args.compile,
         bucket_decode=graphs,
         persist_inputs=graphs,
+        # Day 75. The flag the other two exist for, and the one this call left out
+        # from Day 57 to Day 74: buckets and persistent inputs without it boot a
+        # "graphs" arm with the graphs off. The first run of this script as a process
+        # (`tests/test_toy_script.py`) is what noticed.
+        capture_decode=graphs,
         # Day 58, and it goes to *both* arms on purpose. A persistent batch is a
         # scheduler property, not a capture one: giving it only to the graphed arm
         # would make the difference between the two reports attributable to two
@@ -421,7 +427,11 @@ def make_parser() -> argparse.ArgumentParser:
     target.add_argument("--max-model-len", type=int, default=2048)
     target.add_argument("--num-blocks", type=int, default=None, help="skip KV sizing")
     target.add_argument("--kv-cache-bytes", type=int, default=None)
-    target.add_argument("--compile", default="default", help="the Day-49 mode, both arms")
+    # Day 75: the engine's own modes, offered by name. The default was "default",
+    # `torch.compile`'s word, which `CompiledDecode` refuses at boot.
+    target.add_argument(
+        "--compile", default="dynamic", choices=MODES, help="the Day-49 mode, both arms"
+    )
     target.add_argument("--no-compile", action="store_true", help="neither arm compiles")
     target.add_argument("--no-warm", action="store_true", help="record lazily, the control")
     target.add_argument("--warm-rows", type=int, default=None)
