@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The sweep runs clean, and every row now carries its own verdict.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A two-rate smoke (--arrivals fixed --rates 200,400) ran the half of main the burst smoke skipped, and passed</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">the first time. What it showed: the log printed FAIL twice per rate, and the table and CSV under it said nothing.</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">The CSV is the part that goes into a notebook without the log.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">before: the log knows, the row does not</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="70" y="178" width="490" height="96" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="82" y="196" font-weight="700" fill="#334155">stdout, 200 rps</text>
+    <text x="82" y="214" fill="#166534">ok    the graphed arm batched</text>
+    <text x="82" y="230" fill="#b91c1c">FAIL  the arms are comparable: 11 frame gaps, wants 20</text>
+    <text x="82" y="246" fill="#b91c1c">FAIL  the tail did not get worse: 1.27x past 10%</text>
+    <text x="82" y="262" fill="#166534">ok    the split arm's rows crossed a chunk  (+8 more ok)</text>
+
+    <rect x="70" y="290" width="490" height="66" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="308" font-weight="700" fill="#b91c1c">sweep.csv</text>
+    <text x="82" y="324" fill="#475569">load,graphs_itl_p50_ms,...,replay_share</text>
+    <text x="82" y="340" fill="#475569">200 rps,9.712,...,1.0      looks the same as a clean row</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the refactor ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">the change: one list, graded once, written twice</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="180" width="150" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="650" y="198" font-weight="700" fill="#334155">claims(delta, args)</text>
+    <text x="650" y="214" fill="#475569">8 two-arm gates</text>
+    <text x="650" y="228" fill="#475569">+ split_claims (5)</text>
+
+    <rect x="815" y="180" width="150" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="825" y="198" font-weight="700" fill="#334155">grade(pairs)</text>
+    <text x="825" y="214" fill="#475569">(note, exc | None)</text>
+    <text x="825" y="228" fill="#475569">refusals only</text>
+
+    <rect x="990" y="180" width="140" height="56" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="1000" y="198" font-weight="700" fill="#166534">verdict_columns</text>
+    <text x="1000" y="214" fill="#166534">claims_ok</text>
+    <text x="1000" y="228" fill="#166534">claims_failed</text>
+
+    <text x="642" y="270" fill="#475569">the log prints from the graded list, the row is updated from it.</text>
+    <text x="642" y="288" fill="#475569">grade catches AcceptanceFailure and MeasurementUnsound only:</text>
+    <text x="642" y="304" fill="#b91c1c">a KeyError in a check still crashes, not a quiet FAIL.</text>
+    <text x="642" y="328" fill="#475569">--sanity now prints every claim before it exits:</text>
+    <text x="642" y="344" fill="#475569">the second FAIL often explains the first.</text>
+  </g>
+  <path d="M 790 208 L 813 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 965 208 L 988 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== LEFT BOTTOM: the sweep smoke ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">the sweep smoke: what the burst smoke never reached</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" fill="#334155">graphbench.py --split-read --arrivals fixed --rates 200,400</text>
+    <text x="70" y="472" fill="#166534">ok  per rate: split, graphs, eager boot again, in that order</text>
+    <text x="70" y="490" fill="#166534">ok  per rate: the prompt pads to the same 524 tokens</text>
+    <text x="70" y="508" fill="#166534">ok  per rate: all five split claims and same answers</text>
+    <text x="70" y="526" fill="#166534">ok  print_table runs (skipped for one row) with split columns</text>
+    <text x="70" y="544" fill="#166534">ok  two CSV rows under one header, the burst CSV's header</text>
+    <text x="70" y="574" fill="#475569">200 and 400 rps so six fixed arrivals land inside one step:</text>
+    <text x="70" y="590" fill="#475569">the split arm still batches. 6 boots, about 15 s on CPU.</text>
+    <text x="70" y="616" fill="#64748b">passed the first time: the find was what the table left out.</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: after ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">after: the table and CSV say what the log said</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <g xml:space="preserve"><rect x="640" y="440" width="490" height="66" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="652" y="458" font-weight="700" fill="#334155">     load  ITL p50 graphs ... vs graphs  claims</text>
+    <text x="652" y="476" fill="#475569">  200 rps           9.71m ...     0.05x  <tspan fill="#b91c1c" font-weight="700">11/13</tspan></text>
+    <text x="652" y="492" fill="#475569">  400 rps          10.38m ...     0.06x  <tspan fill="#b91c1c" font-weight="700">11/13</tspan></text></g>
+
+    <rect x="640" y="516" width="490" height="66" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="652" y="534" font-weight="700" fill="#166534">sweep.csv, two new columns at the end</text>
+    <text x="652" y="550" fill="#475569">...,replay_share,claims_ok,claims_failed</text>
+    <text x="652" y="566" fill="#475569">...,1.0,11,the arms are comparable; the tail did not...</text>
+    <text x="652" y="604" fill="#64748b">at the end, so a CSV from before is still a prefix.</text>
+    <text x="652" y="620" fill="#64748b">empty claims_failed = a clean row. Filter on it.</text>
+  </g>
+</svg>

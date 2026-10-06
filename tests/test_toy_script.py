@@ -202,3 +202,128 @@ def test_the_csv_carries_the_split_columns(smoke):
         assert column in rows[0]
     assert rows[0]["load"] == "burst"
 
+
+
+# --- 3. Day 76: the sweep, as a process ------------------------------------------------
+#
+# The card run is `--rates 1,2,4,8 --arrivals ...`, not `--arrivals burst`, and the
+# burst smoke above never reached the half of `main` a sweep takes: the label made
+# from each rate, the loop that boots all three arms again per rate, `print_table`
+# (skipped for one row), and a CSV with more than one row under one header. Two rates
+# are the fewest that reach all of it. They are high, 200 and 400 per second, so six
+# fixed arrivals land inside one step's worth of time and the split arm still batches.
+
+SWEEP_RATES = ("200", "400")
+
+
+@pytest.fixture(scope="module")
+def sweep(checkpoint, tmp_path_factory):
+    out = tmp_path_factory.mktemp("sweep") / "sweep.csv"
+    cmd = [
+        sys.executable, str(REPO / "graphbench.py"),
+        "--weights", str(checkpoint),
+        "--device", "cpu", "--dtype", "float32", "--allow-cpu",
+        "--split-read", "--arrivals", "fixed", "--rates", ",".join(SWEEP_RATES),
+        "--max-model-len", "1024", "--block-size", "16",
+        "--max-batch-size", "4", "--num-blocks", "160",
+        "--requests", "6", "--max-tokens", "8",
+        "--no-compile", "--warm-rows", "4",
+        "--csv", str(out),
+    ]
+    done = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=900)
+    return done, out
+
+
+def _sweep_rows(sweep) -> list[dict]:
+    with sweep[1].open() as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_the_sweep_exits_cleanly(sweep):
+    done, _ = sweep
+    assert done.returncode == 0, done.stderr[-3000:]
+
+
+def test_every_rate_boots_all_three_arms_in_order(sweep):
+    """Each rate is its own `measure`, so each boots its own three servers, split
+    first. A sweep that reused a server across rates would carry one rate's warm pool
+    into the next rate's numbers."""
+    err = sweep[0].stderr
+    at = 0
+    for rate in SWEEP_RATES:
+        for arm in ("split", "graphs", "eager"):
+            at = err.index(f"[{rate} rps] loading the {arm} arm", at)
+
+
+def test_every_rate_pads_the_prompt_to_the_same_length(sweep):
+    """The padding comes off the split arm's arena, which is booted again per rate.
+    Same flags, same arena, same prompt: a different count would mean the two rows of
+    the table were not sent the same work."""
+    lines = [x for x in sweep[0].stderr.splitlines() if "prompt padded to" in x]
+    assert len(lines) == len(SWEEP_RATES)
+    assert len(set(lines)) == 1
+
+
+def test_every_rate_reports_every_split_claim(sweep):
+    out = sweep[0].stdout
+    for note in ("the split arm batched", "the split arm gave the graphed arm's same answers",
+                 "the split flag reached the cache", "the split arm's rows crossed a chunk",
+                 "the split arm's boot grade is about the read that served", "same answers"):
+        assert out.count(f"ok    {note}") == len(SWEEP_RATES), out[-3000:]
+
+
+def test_the_sweep_prints_the_table_with_the_split_columns(sweep):
+    out = sweep[0].stdout
+    header = next(x for x in out.splitlines() if "ITL p50 graphs" in x)
+    assert "ITL p50 split" in header and "vs graphs" in header
+    below = out.splitlines()[out.splitlines().index(header) + 2:]
+    for rate in SWEEP_RATES:
+        assert any(x.strip().startswith(f"{rate} rps") for x in below), out[-3000:]
+
+
+def test_the_sweep_csv_has_one_row_per_rate_under_one_header(sweep):
+    rows = _sweep_rows(sweep)
+    assert [r["load"] for r in rows] == [f"{rate} rps" for rate in SWEEP_RATES]
+    assert all(set(r) == set(rows[0]) for r in rows)
+    for r in rows:
+        assert float(r["split_itl_p50_ms"]) > 0
+        assert float(r["graphs_itl_p50_ms"]) > 0
+
+
+def test_the_sweep_csv_header_is_the_burst_csv_header(smoke, sweep):
+    """The two loads take different branches of `main`, and the columns must not
+    depend on which: a sweep's CSV and a burst's CSV go into the same notebook."""
+    with smoke[1].open() as fh:
+        burst = next(csv.reader(fh))
+    with sweep[1].open() as fh:
+        swept = next(csv.reader(fh))
+    assert swept == burst
+
+
+def test_the_sweep_csv_names_the_gates_its_log_failed(sweep):
+    """Day 76. The six-request smoke fails the comparability gate on purpose (11 gaps
+    against 20). Before today the CSV row said nothing of it."""
+    out = sweep[0].stdout
+    for r in _sweep_rows(sweep):
+        failed = r["claims_failed"].split("; ")
+        assert "the arms are comparable" in failed
+        assert all(f"FAIL  {note}:" in out for note in failed)
+        assert int(r["claims_ok"]) + len(failed) == 13
+
+
+def test_the_sweep_table_shows_each_row_held_over_total(sweep):
+    out = sweep[0].stdout
+    lines = out.splitlines()
+    header = next(x for x in lines if "ITL p50 graphs" in x)
+    assert header.rstrip().endswith("claims")
+    # Below the header, so the per-rate log heading ("200 rps:") is not the match.
+    table = lines[lines.index(header) + 2:]
+    for r in _sweep_rows(sweep):
+        line = next(x for x in table if x.strip().startswith(r["load"]))
+        assert line.rstrip().endswith(f"{r['claims_ok']}/13")
+
+
+def test_the_verdict_columns_come_after_every_column_yesterday_had(sweep):
+    header = list(_sweep_rows(sweep)[0])
+    assert header[-2:] == ["claims_ok", "claims_failed"]
+    assert header.index("replay_share") < header.index("claims_ok")

@@ -65,6 +65,7 @@ import argparse
 import asyncio
 import csv
 import sys
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -379,6 +380,68 @@ def measure(args, label: str, rate: float | None) -> ArmDelta:
     return ArmDelta(graphs=reports["graphs"], eager=reports["eager"], split=reports.get("split"))
 
 
+def claims(delta: ArmDelta, args) -> list[tuple[Callable[[], None], str]]:
+    """Every gate one offered load is held to, as `(check, note)` in print order.
+
+    The two-arm gates first, then `split_claims`, which is empty for a two-arm run.
+    Day 76 moved this out of `main` so the row and the log grade the same list.
+    """
+    return [
+        (lambda: check_arm_was_crowded(delta.graphs), "the graphed arm batched"),
+        (lambda: check_arm_was_crowded(delta.eager), "the eager arm batched"),
+        (lambda: check_same_answers(delta.graphs, delta.eager), "same answers"),
+        (lambda: check_arm_replayed(delta.graphs), "the capture was used"),
+        (
+            lambda: check_nothing_recorded_while_serving(delta.graphs),
+            "nothing recorded while serving",
+        ),
+        (
+            lambda: check_arms_comparable(
+                delta.graphs, delta.eager, min_samples=args.min_samples
+            ),
+            "the arms are comparable",
+        ),
+        (lambda: check_arm_replayed_every_step(delta.graphs), "the capture covered every step"),
+        (
+            lambda: check_tail_not_worse(delta, tolerance=args.tolerance),
+            "the tail did not get worse",
+        ),
+        *split_claims(delta),
+    ]
+
+
+def grade(pairs) -> list[tuple[str, Exception | None]]:
+    """Run each check and keep `(note, exc)`, with `None` for a pass.
+
+    Only the two refusals a gate raises are kept. Anything else is a bug in a check,
+    and a bug should crash the run rather than print as one more FAIL.
+    """
+    out: list[tuple[str, Exception | None]] = []
+    for check, note in pairs:
+        try:
+            check()
+            out.append((note, None))
+        except (AcceptanceFailure, MeasurementUnsound) as exc:
+            out.append((note, exc))
+    return out
+
+
+#: Between failed notes in `claims_failed`. No note holds it, so a split gives them back.
+FAILED_SEP = "; "
+
+
+def verdict_columns(graded) -> dict:
+    """The row's own verdict: how many claims held, and which ones did not.
+
+    At the end of the row, so a CSV written before Day 76 is a prefix of one after it.
+    An empty `claims_failed` is a clean row; a reader filters on it.
+    """
+    return {
+        "claims_ok": sum(exc is None for _, exc in graded),
+        "claims_failed": FAILED_SEP.join(note for note, exc in graded if exc is not None),
+    }
+
+
 def write_csv(where: str, rows: list[dict]) -> None:
     path = Path(where)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,6 +460,8 @@ def print_table(rows: list[dict]) -> None:
     split = "split_itl_p50_ms" in rows[0]
     if split:
         header += f" {'ITL p50 split':>14} {'vs graphs':>10}"
+    # Day 76: held over total, so a row its own gates refused cannot pass for clean.
+    header += f" {'claims':>7}"
     print(header)
     print("-" * len(header))
     for r in rows:
@@ -408,6 +473,9 @@ def print_table(rows: list[dict]) -> None:
         )
         if split:
             line += f" {r['split_itl_p50_ms']:>13.2f}m {r['split_itl_p50_speedup']:>9.2f}x"
+        failed = len(r["claims_failed"].split(FAILED_SEP)) if r["claims_failed"] else 0
+        total = r["claims_ok"] + failed
+        line += f" {r['claims_ok']:>3}/{total:<3}"
         print(line)
 
 
@@ -511,39 +579,14 @@ def main() -> None:
         row["replay_share"] = round(delta.graphs.served.replay_share, 4)
         rows.append(row)
 
-        # The claims, reported rather than raised unless --sanity says otherwise.
-        for check, note in (
-            (lambda: check_arm_was_crowded(delta.graphs), "the graphed arm batched"),
-            (lambda: check_arm_was_crowded(delta.eager), "the eager arm batched"),
-            (lambda: check_same_answers(delta.graphs, delta.eager), "same answers"),
-            (lambda: check_arm_replayed(delta.graphs), "the capture was used"),
-            (
-                lambda: check_nothing_recorded_while_serving(delta.graphs),
-                "nothing recorded while serving",
-            ),
-            (
-                lambda: check_arms_comparable(
-                    delta.graphs, delta.eager, min_samples=args.min_samples
-                ),
-                "the arms are comparable",
-            ),
-            (
-                lambda: check_arm_replayed_every_step(delta.graphs),
-                "the capture covered every step",
-            ),
-            (
-                lambda: check_tail_not_worse(delta, tolerance=args.tolerance),
-                "the tail did not get worse",
-            ),
-            *split_claims(delta),
-        ):
-            try:
-                check()
-                print(f"  ok    {note}")
-            except (AcceptanceFailure, MeasurementUnsound) as exc:
-                print(f"  FAIL  {note}:\n        {exc}")
-                if args.sanity:
-                    raise SystemExit("\nthis comparison does not support its numbers")
+        # The claims, reported rather than raised unless --sanity says otherwise, and
+        # (Day 76) carried on the row, so the CSV says what the log said.
+        graded = grade(claims(delta, args))
+        row.update(verdict_columns(graded))
+        for note, exc in graded:
+            print(f"  ok    {note}" if exc is None else f"  FAIL  {note}:\n        {exc}")
+        if args.sanity and row["claims_failed"]:
+            raise SystemExit("\nthis comparison does not support its numbers")
 
     if len(rows) > 1:
         print()
