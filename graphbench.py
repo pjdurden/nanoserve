@@ -72,7 +72,7 @@ from pathlib import Path
 import torch
 
 from nanoserve.acceptance import AcceptanceFailure, live_server
-from nanoserve.compiled import MODES
+from nanoserve.compiled import MODES, dynamo_frames_abandoned, reset_compile_cache
 from nanoserve.graphbench import (
     ArmDelta,
     check_arm_replayed,
@@ -82,6 +82,7 @@ from nanoserve.graphbench import (
     check_nothing_recorded_while_serving,
     check_same_answers,
     check_tail_not_worse,
+    compile_claims,
     paired_plans,
     run_arm,
     split_claims,
@@ -351,12 +352,23 @@ def measure(args, label: str, rate: float | None) -> ArmDelta:
 
     With `--split-read` the split arm goes first, because its arena is what decides
     how long the prompt has to be, and the other two must be sent the same plans.
+
+    Day 77: when the run compiles, every arm boots after `reset_compile_cache` and is
+    charged the frames dynamo abandons between its boot and the end of its load. The
+    arms share one process and dynamo keys its cache on the code object, so without
+    the reset the second arm to compile `LlamaModel.forward` inherits the first one's
+    entries, and on the toy run that was the eager arm, run in the interpreter.
     """
     reports = {}
+    compiling = not (args.no_compile or args.compile == "off")
+    abandoned: dict[str, int] = {}
     prompt = args.prompt
     split_app = None
     if args.split_read:
         print(f"\n[{label}] loading the split arm ...", file=sys.stderr, flush=True)
+        if compiling:
+            reset_compile_cache()
+        before = dynamo_frames_abandoned()
         split_app = build_one(args, graphs=True, split=True)
         describe(split_app)
         prompt = padded_prompt(args, split_app)
@@ -369,21 +381,32 @@ def measure(args, label: str, rate: float | None) -> ArmDelta:
     arrivals = schedule_for(args.arrivals, len(plans), rate=rate, seed=args.seed)
     if split_app is not None:
         reports["split"] = serve_arm(args, split_app, "split", plans, arrivals, rate)
+        abandoned["split"] = dynamo_frames_abandoned() - before
         # One process's worth of engine at a time: the next arm loads its own pool.
         del split_app
     for name, graphs in (("graphs", True), ("eager", False)):
         print(f"\n[{label}] loading the {name} arm ...", file=sys.stderr, flush=True)
+        if compiling:
+            reset_compile_cache()
+        before = dynamo_frames_abandoned()
         app = build_one(args, graphs=graphs)
         describe(app)
         reports[name] = serve_arm(args, app, name, plans, arrivals, rate)
+        abandoned[name] = dynamo_frames_abandoned() - before
         del app
-    return ArmDelta(graphs=reports["graphs"], eager=reports["eager"], split=reports.get("split"))
+    return ArmDelta(
+        graphs=reports["graphs"],
+        eager=reports["eager"],
+        split=reports.get("split"),
+        abandoned=abandoned if compiling else None,
+    )
 
 
 def claims(delta: ArmDelta, args) -> list[tuple[Callable[[], None], str]]:
     """Every gate one offered load is held to, as `(check, note)` in print order.
 
-    The two-arm gates first, then `split_claims`, which is empty for a two-arm run.
+    The two-arm gates first, then `split_claims`, which is empty for a two-arm run,
+    then (Day 77) `compile_claims`, which is empty for a run that did not compile.
     Day 76 moved this out of `main` so the row and the log grade the same list.
     """
     return [
@@ -407,6 +430,7 @@ def claims(delta: ArmDelta, args) -> list[tuple[Callable[[], None], str]]:
             "the tail did not get worse",
         ),
         *split_claims(delta),
+        *compile_claims(delta),
     ]
 
 

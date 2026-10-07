@@ -431,6 +431,40 @@ def dynamo_frames_compiled() -> int:
     return int(counters["frames"].get("ok", 0))
 
 
+#: How dynamo names the give-up in its `unimplemented` counter. A prefix, because the
+#: rest of the key is the explanation and the hints, and those are prose that moves
+#: between releases.
+ABANDONED_KEY = "Dynamo recompile limit exceeded"
+
+
+def dynamo_frames_abandoned() -> int:
+    """Frames dynamo has given up on at the recompile limit, in this process.
+
+    Day 77. The fallback `RECOMPILE_LIMIT` warns about, counted rather than logged:
+    once a frame's entries reach the limit dynamo bumps this and runs the frame in
+    the interpreter from then on, and the only other trace is one warning on stderr.
+    Read it around an arm and the difference says whether that arm ran the forward
+    it compiled. `torch._dynamo.reset()` empties the cache and leaves this alone, so
+    a reading taken across a reset still counts what was lost before it.
+    """
+    from torch._dynamo.utils import counters
+
+    return int(sum(n for key, n in counters["unimplemented"].items()
+                   if key.startswith(ABANDONED_KEY)))
+
+
+def reset_compile_cache() -> None:
+    """Empty dynamo's per-code cache, as a fresh process would find it.
+
+    Day 77. Dynamo keys its entries on the code object and not on the model, so two
+    engines in one process share one list per function, and the second to compile
+    `LlamaModel.forward` inherits the first one's entries against its limit. A
+    benchmark that boots arms in sequence calls this between them so each arm gets
+    the whole limit, whatever order they were booted in.
+    """
+    torch._dynamo.reset()
+
+
 # --- the arithmetic of paying for a compile ------------------------------------------
 
 

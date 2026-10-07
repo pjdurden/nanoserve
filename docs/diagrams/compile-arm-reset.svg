@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The compiled run passed, and its control arm was not compiled.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The first smoke with --compile dynamic exited 0 with every claim ok. Its stderr said dynamo hit the recompile</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">limit under "loading the eager arm": the arms share one process, dynamo keys its cache on the code object,</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">and the second arm to compile LlamaModel.forward inherited the first one's entries.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">before: one cache per function, shared by every arm</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="186" font-weight="700" fill="#334155">LlamaModel.forward, entries in one list (limit 8)</text>
+    <rect x="70" y="198" width="54" height="26" rx="4" fill="#eef2ff" stroke="#c7d2fe"/>
+    <rect x="128" y="198" width="54" height="26" rx="4" fill="#eef2ff" stroke="#c7d2fe"/>
+    <rect x="186" y="198" width="54" height="26" rx="4" fill="#eef2ff" stroke="#c7d2fe"/>
+    <rect x="244" y="198" width="54" height="26" rx="4" fill="#eef2ff" stroke="#c7d2fe"/>
+    <rect x="302" y="198" width="54" height="26" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="360" y="198" width="54" height="26" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="418" y="198" width="54" height="26" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="476" y="198" width="54" height="26" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="78" y="215" fill="#334155">graphs</text>
+    <text x="136" y="215" fill="#334155">graphs</text>
+    <text x="194" y="215" fill="#334155">graphs</text>
+    <text x="252" y="215" fill="#334155">graphs</text>
+    <text x="313" y="215" fill="#9a3412">eager</text>
+    <text x="371" y="215" fill="#9a3412">eager</text>
+    <text x="429" y="215" fill="#9a3412">eager</text>
+    <text x="487" y="215" fill="#9a3412">eager</text>
+    <rect x="70" y="240" width="490" height="62" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="258" fill="#b91c1c">torch._dynamo hit config.recompile_limit (8)</text>
+    <text x="82" y="274" fill="#b91c1c">   last reason: tensor 'args[0]' size mismatch, expected 1, actual 4</text>
+    <text x="82" y="290" fill="#475569">the eager arm's forward runs in the interpreter from here on</text>
+    <text x="70" y="326" fill="#475569">no raise, same answers, every claim ok: only slower,</text>
+    <text x="70" y="342" fill="#475569">and the table credits that to the capture.</text>
+    <text x="70" y="362" fill="#64748b">which arm loses depends on the order the arms booted in.</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the change ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">the change: reset, count, claim</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="180" width="150" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="650" y="198" font-weight="700" fill="#334155">reset_compile_cache</text>
+    <text x="650" y="214" fill="#475569">before each arm</text>
+    <text x="650" y="228" fill="#475569">boots, if compiling</text>
+
+    <rect x="815" y="180" width="150" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="825" y="198" font-weight="700" fill="#334155">frames_abandoned</text>
+    <text x="825" y="214" fill="#475569">read around boot</text>
+    <text x="825" y="228" fill="#475569">and load, per arm</text>
+
+    <rect x="990" y="180" width="140" height="56" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="1000" y="198" font-weight="700" fill="#166534">compile_claims</text>
+    <text x="1000" y="214" fill="#166534">every compiled arm</text>
+    <text x="1000" y="228" fill="#166534">stayed compiled</text>
+
+    <text x="642" y="270" fill="#475569">the count is dynamo's own: counters["unimplemented"]</text>
+    <text x="642" y="286" fill="#475569">under "Dynamo recompile limit exceeded". reset() empties</text>
+    <text x="642" y="302" fill="#475569">the cache and leaves the counter alone.</text>
+    <text x="642" y="328" fill="#475569">--no-compile: no reset, abandoned is None, no claim.</text>
+    <text x="642" y="344" fill="#475569">None is not zero: nothing to abandon, nothing to claim.</text>
+  </g>
+  <path d="M 790 208 L 813 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 965 208 L 988 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== LEFT BOTTOM: the compiled smoke ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">the compiled smoke, two arms, burst, toy checkpoint</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" fill="#334155">graphbench.py --compile dynamic --arrivals burst --allow-cpu</text>
+    <text x="70" y="472" fill="#166534">ok  exits 0, and "recompile_limit" is nowhere in stderr</text>
+    <text x="70" y="490" fill="#166534">ok  compile  frames abandoned at the limit: graphs 0, eager 0</text>
+    <text x="70" y="508" fill="#166534">ok  same answers, over a capture recorded on a compiled forward</text>
+    <text x="70" y="526" fill="#166534">ok  the capture was used, and covered every step</text>
+    <text x="70" y="544" fill="#166534">ok  every compiled arm stayed compiled, in the log and the CSV</text>
+    <text x="70" y="574" fill="#475569">about 90 s on this box, most of it inductor: in the suite,</text>
+    <text x="70" y="590" fill="#475569">no marker needed. 2402 green.</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: what is left ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">after: the three-arm compiled run, on CPU</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="440" width="490" height="66" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="652" y="458" font-weight="700" fill="#334155">--split-read --compile dynamic</text>
+    <text x="652" y="476" fill="#475569">before: 2m45s, graphs and split arms both hit the limit</text>
+    <text x="652" y="492" fill="#475569">after:  1m30s, <tspan fill="#b91c1c" font-weight="700">split 1</tspan>, graphs 0, eager 0</text>
+
+    <rect x="640" y="516" width="490" height="66" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="652" y="534" font-weight="700" fill="#b91c1c">FAIL  every compiled arm stayed compiled</text>
+    <text x="652" y="550" fill="#475569">split_kernel under tlsim: a Python loop over program ids,</text>
+    <text x="652" y="566" fill="#475569">guarded on i == 0 and given up at the ninth entry</text>
+    <text x="652" y="604" fill="#64748b">a CPU stand-in for the triton kernel. Now it says so,</text>
+    <text x="652" y="620" fill="#64748b">in the log and in claims_failed, instead of in stderr.</text>
+  </g>
+</svg>

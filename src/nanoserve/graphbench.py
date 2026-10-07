@@ -583,11 +583,17 @@ class ArmDelta:
     `split` is Day 74's third arm, and `None` for the two-arm run. It boots as the
     graphed arm with the split read on, so its ratios are against `graphs` and never
     against `eager`: that would be the capture and the read changed at once.
+
+    `abandoned` is Day 77: per arm, the frames dynamo gave up on at the recompile
+    limit while that arm booted and served, read off `dynamo_frames_abandoned`. `None`
+    when the run did not compile, which is not the same thing as all zeros: there was
+    nothing to abandon, so there is nothing to claim.
     """
 
     graphs: ArmReport
     eager: ArmReport
     split: ArmReport | None = None
+    abandoned: dict[str, int] | None = None
 
     @staticmethod
     def _ratio(slow: float, fast: float) -> float:
@@ -685,6 +691,9 @@ class ArmDelta:
                 f"  split vs graphs  ITL p50 {self.split_itl_p50_speedup:.2f}x  "
                 f"p99 {self.split_itl_p99_speedup:.2f}x"
             )
+        if self.abandoned is not None:
+            counts = ", ".join(f"{arm} {n}" for arm, n in self.abandoned.items())
+            lines.append(f"  compile  frames abandoned at the limit: {counts}")
         return "\n".join(lines)
 
 
@@ -1131,3 +1140,37 @@ def split_claims(delta: ArmDelta) -> list[tuple[Callable[[], None], str]]:
             "the split arm's boot grade is about the read that served",
         ),
     ]
+
+
+# --- the compile's claim, as the script runs it (Day 77) -------------------------------
+
+
+def check_no_frame_abandoned(delta: ArmDelta) -> None:
+    """Refuse a compiled comparison in which an arm's forward fell back to the interpreter.
+
+    Every arm was booted with the same `--compile`, and the comparison is only about
+    the capture (or the read) if every arm's forward ran compiled. Dynamo's give-up
+    raises nothing and changes no answer, so no other claim can see it: the arm
+    still batches, still agrees byte for byte, and is slower for a reason the table
+    would credit to whatever the arms were meant to differ in.
+    """
+    lost = {arm: n for arm, n in (delta.abandoned or {}).items() if n}
+    if lost:
+        named = ", ".join(f"the {arm} arm {n}" for arm, n in lost.items())
+        raise AcceptanceFailure(
+            f"dynamo gave up on frames at the recompile limit ({named}): those arms "
+            "ran part of the forward in the interpreter, so the difference between "
+            "the arms is partly a compile one arm did not get"
+        )
+
+
+def compile_claims(delta: ArmDelta) -> list[tuple[Callable[[], None], str]]:
+    """The compile's one gate as a `(check, note)` pair, or `[]` for an uncompiled run.
+
+    Last in the list, after `split_claims`: it is about the harness's fairness to the
+    arms rather than about any one of them, and a run that fails it has its other
+    verdicts to read first.
+    """
+    if delta.abandoned is None:
+        return []
+    return [(lambda: check_no_frame_abandoned(delta), "every compiled arm stayed compiled")]
