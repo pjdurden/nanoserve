@@ -66,6 +66,7 @@ class Program:
         return self._grid[axis]
 
 
+@torch.compiler.disable
 def launch(grid: int | tuple[int, ...], kernel: Callable[..., None], *args) -> None:
     """Run `kernel(prog, *args)` once for every program id in `grid`.
 
@@ -79,6 +80,14 @@ def launch(grid: int | tuple[int, ...], kernel: Callable[..., None], *args) -> N
     On hardware the programs run in parallel in an unspecified order; here they run
     sequentially in row-major (lexicographic) program-id order, which is why a
     correct kernel must give each program a disjoint tile: order must not matter.
+
+    Day 78: the loop is opaque to `torch.compile`, the way a launch is. A compiled
+    forward that reaches here breaks the graph, runs the grid in the interpreter and
+    resumes after it, which is what a card does with a Triton launch: one call, not a
+    grid for dynamo to walk. Traced into, the loop was worse than slow. A kernel body
+    that reads a length as an int breaks there, the rest of it becomes a resume frame
+    guarded on `program_id`, every program is a new guard, and Day 77's three-arm
+    compiled run gave that frame up at the recompile limit in the split arm.
     """
     if isinstance(grid, int):
         grid = (grid,)

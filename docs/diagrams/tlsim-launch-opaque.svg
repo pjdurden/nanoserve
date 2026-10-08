@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4338ca"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">A stand-in for a launch has to be opaque like a launch.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 77's gate caught the split arm losing one frame under --compile dynamic. On a laptop the split read is</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">tlsim: launch() is a Python loop over program ids, and dynamo traced into it, one program at a time.</text>
+  <text x="50" y="112" font-size="14.5" fill="#64748b">One decorator on tlsim.launch makes it a single call, the way a card treats a Triton launch.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="150" font-size="13.5" font-weight="700" fill="#334155">before: dynamo walks the grid</text>
+  <rect x="50" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="186" fill="#334155">split_kernel(prog, ...)</text>
+    <text x="70" y="202" fill="#334155">  i = prog.program_id(0)</text>
+    <text x="70" y="218" fill="#b91c1c">  ctx = int(load(len_buf, ...)[0])   # graph break</text>
+    <text x="70" y="234" fill="#9a3412">  qi = q_rows[i, h]                  # resume frame, guard i == 0</text>
+    <text x="70" y="262" font-weight="700" fill="#334155">resume_in_split_kernel, entries (limit 8)</text>
+    <rect x="70" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="128" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="186" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="244" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="302" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="360" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="418" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="476" y="272" width="54" height="24" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="80" y="288" fill="#9a3412">i=0</text>
+    <text x="138" y="288" fill="#9a3412">i=1</text>
+    <text x="196" y="288" fill="#9a3412">h=1</text>
+    <text x="254" y="288" fill="#9a3412">s=1</text>
+    <text x="312" y="288" fill="#9a3412">...</text>
+    <text x="370" y="288" fill="#9a3412">...</text>
+    <text x="428" y="288" fill="#9a3412">...</text>
+    <text x="486" y="288" fill="#9a3412">...</text>
+    <rect x="70" y="306" width="490" height="30" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="325" fill="#b91c1c">torch._dynamo hit config.recompile_limit (8): split 1</text>
+    <text x="70" y="358" fill="#475569">ids 0 and 1 are always specialised, so (row, head, chunk) outruns 8.</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the change ===================== -->
+  <text x="620" y="150" font-size="13.5" font-weight="700" fill="#334155">the change: one decorator, every tlsim kernel</text>
+  <rect x="620" y="162" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="180" width="140" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="650" y="198" font-weight="700" fill="#334155">compiled forward</text>
+    <text x="650" y="214" fill="#475569">graph up to the</text>
+    <text x="650" y="228" fill="#475569">read</text>
+
+    <rect x="805" y="180" width="160" height="56" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="815" y="198" font-weight="700" fill="#166534">tlsim.launch</text>
+    <text x="815" y="214" fill="#166534">@torch.compiler.disable</text>
+    <text x="815" y="228" fill="#166534">grid runs in Python</text>
+
+    <rect x="990" y="180" width="140" height="56" rx="5" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+    <text x="1000" y="198" font-weight="700" fill="#334155">resume</text>
+    <text x="1000" y="214" fill="#475569">graph after the</text>
+    <text x="1000" y="228" fill="#475569">read</text>
+
+    <text x="642" y="270" fill="#475569">the honest move: the stand-in behaves like the launch it</text>
+    <text x="642" y="286" fill="#475569">models. A card hands dynamo one call, never a grid to walk.</text>
+    <text x="642" y="312" fill="#475569">the other move, teaching the gate that a tlsim frame is not</text>
+    <text x="642" y="328" fill="#475569">the forward, is a gate that excuses its own failures.</text>
+    <text x="642" y="354" fill="#64748b">split passes, the reduce and the streamed read: all one launch.</text>
+  </g>
+  <path d="M 780 208 L 803 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M 965 208 L 988 208" stroke="#4338ca" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== LEFT BOTTOM: the tests ===================== -->
+  <text x="50" y="412" font-size="13.5" font-weight="700" fill="#334155">tests/test_tlsim_compile.py, three layers</text>
+  <rect x="50" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <text x="70" y="448" fill="#334155">1. launch: a (4, 3, 3) grid, a break, then all three ids</text>
+    <text x="70" y="466" fill="#166534">   ok  no frame abandoned at the default limit (was 1)</text>
+    <text x="70" y="482" fill="#166534">   ok  writes exactly what the eager launch writes</text>
+    <text x="70" y="506" fill="#334155">2. the split read, compiled, recompile_limit=2</text>
+    <text x="70" y="524" fill="#166534">   ok  no frame abandoned (was 1), same attention as the oracle</text>
+    <text x="70" y="548" fill="#334155">3. graphbench.py --split-read --compile dynamic, a process</text>
+    <text x="70" y="566" fill="#166534">   ok  "recompile_limit" and "split_kernel" absent from stderr</text>
+    <text x="70" y="582" fill="#166534">   ok  frames abandoned at the limit: split 0, graphs 0, eager 0</text>
+    <text x="70" y="598" fill="#166534">   ok  every compiled arm stayed compiled, in the log and the CSV</text>
+    <text x="70" y="622" fill="#475569">2410 green.</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: before and after ===================== -->
+  <text x="620" y="412" font-size="13.5" font-weight="700" fill="#334155">the three-arm compiled toy run, before and after</text>
+  <rect x="620" y="424" width="530" height="212" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="9.5" font-family="ui-monospace, monospace">
+    <rect x="640" y="440" width="490" height="66" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="652" y="458" font-weight="700" fill="#b91c1c">before  3m52s</text>
+    <text x="652" y="476" fill="#475569">abandoned: <tspan fill="#b91c1c" font-weight="700">split 1</tspan>, graphs 0, eager 0</text>
+    <text x="652" y="492" fill="#b91c1c">FAIL  every compiled arm stayed compiled</text>
+
+    <rect x="640" y="516" width="490" height="66" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="652" y="534" font-weight="700" fill="#166534">after   1m22s</text>
+    <text x="652" y="552" fill="#475569">abandoned: split 0, graphs 0, eager 0</text>
+    <text x="652" y="568" fill="#166534">ok    every compiled arm stayed compiled</text>
+    <text x="652" y="604" fill="#64748b">split ITL p50 210 ms before, 200 ms after: the read is still</text>
+    <text x="652" y="620" fill="#64748b">tlsim and still slow. Only the compile around it was wasted.</text>
+  </g>
+</svg>
