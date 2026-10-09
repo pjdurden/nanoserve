@@ -43,6 +43,7 @@ from nanoserve.kernels.flash_decoding import paged_attention_split_kernel
 from nanoserve.kernels.paged_attention import paged_attention_batched_reference
 from nanoserve.kernels.tlsim import arange, launch, load, store
 from nanoserve.toyckpt import write_toy_checkpoint
+from nanoserve.toysmoke import SMOKE_LOAD, unexpected_failures
 
 REPO = Path(__file__).resolve().parent.parent
 HELD = "every compiled arm stayed compiled"
@@ -136,7 +137,7 @@ def three_arms(tmp_path_factory):
         "--arrivals", "burst",
         "--max-model-len", "1024", "--block-size", "16",
         "--max-batch-size", "4", "--num-blocks", "160",
-        "--requests", "6", "--max-tokens", "8",
+        *SMOKE_LOAD,
         "--compile", "dynamic", "--warm-rows", "4", "--split-read",
         "--csv", str(out),
     ]
@@ -166,3 +167,9 @@ def test_the_three_arm_csv_holds_the_claim(three_arms):
     with three_arms[1].open() as fh:
         (row,) = list(csv.DictReader(fh))
     assert HELD not in row["claims_failed"]
+
+
+def test_the_three_arm_run_printed_no_failure_it_was_not_allowed(three_arms):
+    """Day 79: at `SMOKE_LOAD` the comparability gate holds, so the only FAIL left
+    is the tail on a CPU, and only for its own reason."""
+    assert unexpected_failures(three_arms[0].stdout) == [], three_arms[0].stdout[-3000:]

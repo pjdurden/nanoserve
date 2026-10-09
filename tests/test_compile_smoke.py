@@ -51,6 +51,7 @@ from nanoserve.acceptance import AcceptanceFailure
 from nanoserve.compiled import dynamo_frames_abandoned
 from nanoserve.graphbench import ArmDelta, check_no_frame_abandoned, compile_claims
 from nanoserve.toyckpt import write_toy_checkpoint
+from nanoserve.toysmoke import SMOKE_LOAD, unexpected_failures
 
 REPO = Path(__file__).resolve().parent.parent
 ARGS = SimpleNamespace(min_samples=20, tolerance=0.10)
@@ -234,7 +235,7 @@ def compiled(tmp_path_factory):
         "--arrivals", "burst",
         "--max-model-len", "1024", "--block-size", "16",
         "--max-batch-size", "4", "--num-blocks", "160",
-        "--requests", "6", "--max-tokens", "8",
+        *SMOKE_LOAD,
         "--compile", "dynamic", "--warm-rows", "4",
         "--csv", str(out),
     ]
@@ -271,3 +272,9 @@ def test_the_compiled_csv_holds_the_claim(compiled):
         (row,) = list(csv.DictReader(fh))
     assert HELD not in row["claims_failed"]
     assert int(row["claims_ok"]) + len([x for x in row["claims_failed"].split("; ") if x]) == 9
+
+
+def test_the_compiled_run_printed_no_failure_it_was_not_allowed(compiled):
+    """Day 79: at `SMOKE_LOAD` the comparability gate holds, so the only FAIL left
+    is the tail on a CPU, and only for its own reason."""
+    assert unexpected_failures(compiled[0].stdout) == [], compiled[0].stdout[-3000:]

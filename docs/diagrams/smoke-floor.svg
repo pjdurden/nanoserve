@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">An always-red line hides the next red line.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Every toy smoke since Day 75 printed FAIL on "the arms are comparable": 11 frame gaps against a floor of 20.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today the smoke load clears the floor, and the one FAIL a CPU smoke may still print is pinned to its reason.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: --requests 6 --max-tokens 8</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10" font-family="ui-monospace, monospace">
+    <text x="70" y="170" fill="#334155">graphs  ITL p50 6.6 ms   (n=11)</text>
+    <text x="70" y="186" fill="#334155">eager   ITL p50 7.3 ms   (n=11)</text>
+    <text x="70" y="210" fill="#b91c1c">FAIL  the arms are comparable:</text>
+    <text x="70" y="226" fill="#b91c1c">      11 frame gap(s), this comparison wants 20</text>
+    <text x="70" y="250" fill="#475569">the same note also covers, checked first:</text>
+    <text x="70" y="268" fill="#9a3412">  different clients</text>
+    <text x="70" y="284" fill="#9a3412">  dropped requests</text>
+    <text x="70" y="300" fill="#9a3412">  different token counts</text>
+    <rect x="70" y="314" width="490" height="34" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="335" fill="#b91c1c">any of them would print the line every test already expected</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: why 8 tokens is 11 gaps ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">a frame is not a token on the toy</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="172">One id per byte, random bytes sampled.</text>
+    <text x="640" y="194">A lone byte is often half a UTF-8 character,</text>
+    <text x="640" y="216">and the server sends no empty frame.</text>
+    <text x="640" y="248" font-weight="700">tokens</text>
+    <text x="760" y="248" font-weight="700">frame gaps per arm</text>
+    <text x="960" y="248" font-weight="700">wall</text>
+  </g>
+  <g font-size="12" font-family="ui-monospace, monospace">
+    <text x="650" y="272" fill="#b91c1c">8</text><text x="770" y="272" fill="#b91c1c">11</text><text x="960" y="272" fill="#b91c1c">13 s</text>
+    <text x="650" y="294" fill="#15803d">16</text><text x="770" y="294" fill="#15803d">32</text><text x="960" y="294" fill="#15803d">16 s</text>
+  </g>
+  <g font-size="12" fill="#475569">
+    <text x="640" y="324">Same 32 every run: greedy decode, frames cut from text,</text>
+    <text x="640" y="344">not from the clock. Measured, not multiplied out.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: toysmoke ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">nanoserve.toysmoke</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#334155">SMOKE_LOAD = ("--requests", "6", "--max-tokens", "16")</text>
+    <text x="70" y="472" fill="#334155">WALL_CLOCK_FAILS = {</text>
+    <text x="70" y="488" fill="#334155">  "the tail did not get worse": "ITL p99 is",</text>
+    <text x="70" y="504" fill="#334155">}</text>
+    <text x="70" y="534" fill="#334155">unexpected_failures(stdout) -&gt; [note, ...]</text>
+    <text x="70" y="556" fill="#475569">  reads each FAIL and the reason line under it</text>
+    <text x="70" y="574" fill="#475569">  lets the tail through only as the slower-tail refusal</text>
+    <text x="70" y="592" fill="#475569">  returns everything else, once per rate it failed at</text>
+    <text x="70" y="620" fill="#15803d">all four process smokes now assert it is []</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: what is still allowed ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">what a CPU smoke may still print, and only why</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442">The tail gate compares two p99s over 32 samples</text>
+    <text x="640" y="464">on a CPU also running the recorder stand-in.</text>
+    <text x="640" y="494" font-family="ui-monospace, monospace" font-size="11.5">graphs p99 / eager p99:  2.43x at 8, 0.59x at 16</text>
+    <text x="640" y="526">A coin flip, so it may FAIL, as AcceptanceFailure.</text>
+    <text x="640" y="556" fill="#b91c1c">The same note as MeasurementUnsound (no gaps</text>
+    <text x="640" y="576" fill="#b91c1c">to compare) is a broken run, and is caught.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">no new FAIL hides behind an expected one</text>
+  </g>
+</svg>

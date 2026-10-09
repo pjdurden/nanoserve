@@ -37,7 +37,9 @@ import torch
 
 from nanoserve.config import ModelConfig
 from nanoserve.loader import EMBED, LM_HEAD, expected_keys, load_weights
+from nanoserve.graphbench import DEFAULT_MIN_SAMPLES
 from nanoserve.toyckpt import TOY_CONFIG, write_toy_checkpoint
+from nanoserve.toysmoke import SMOKE_LOAD, WALL_CLOCK_FAILS, unexpected_failures
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -147,7 +149,7 @@ def smoke(checkpoint, tmp_path_factory):
         "--split-read", "--arrivals", "burst",
         "--max-model-len", "1024", "--block-size", "16",
         "--max-batch-size", "4", "--num-blocks", "160",
-        "--requests", "6", "--max-tokens", "8",
+        *SMOKE_LOAD,
         "--no-compile", "--warm-rows", "4",
         "--csv", str(out),
     ]
@@ -192,6 +194,22 @@ def test_the_answers_matched_across_all_three_arms(smoke):
     assert "ok    same answers" in smoke[0].stdout
 
 
+def test_every_arm_cleared_the_sample_floor(smoke):
+    """Day 79: the load was picked so this holds. Three arms, three `(n=...)`."""
+    counts = [int(x.split("(n=")[1].split(")")[0])
+              for x in smoke[0].stdout.splitlines() if "(n=" in x]
+    assert len(counts) == 3
+    assert min(counts) >= DEFAULT_MIN_SAMPLES
+
+
+def test_the_arms_are_comparable_on_the_smoke(smoke):
+    assert "ok    the arms are comparable" in smoke[0].stdout, smoke[0].stdout[-3000:]
+
+
+def test_the_smoke_printed_no_failure_it_was_not_allowed(smoke):
+    assert unexpected_failures(smoke[0].stdout) == [], smoke[0].stdout[-3000:]
+
+
 def test_the_csv_carries_the_split_columns(smoke):
     _, path = smoke
     with path.open() as fh:
@@ -226,7 +244,7 @@ def sweep(checkpoint, tmp_path_factory):
         "--split-read", "--arrivals", "fixed", "--rates", ",".join(SWEEP_RATES),
         "--max-model-len", "1024", "--block-size", "16",
         "--max-batch-size", "4", "--num-blocks", "160",
-        "--requests", "6", "--max-tokens", "8",
+        *SMOKE_LOAD,
         "--no-compile", "--warm-rows", "4",
         "--csv", str(out),
     ]
@@ -301,14 +319,20 @@ def test_the_sweep_csv_header_is_the_burst_csv_header(smoke, sweep):
 
 
 def test_the_sweep_csv_names_the_gates_its_log_failed(sweep):
-    """Day 76. The six-request smoke fails the comparability gate on purpose (11 gaps
-    against 20). Before today the CSV row said nothing of it."""
+    """Day 76 wrote this against a smoke that failed the comparability gate on purpose
+    (11 gaps against 20). Day 79's load clears the floor, so the only note a row may
+    carry is one `WALL_CLOCK_FAILS` lets through, and the log must have printed it."""
     out = sweep[0].stdout
     for r in _sweep_rows(sweep):
-        failed = r["claims_failed"].split("; ")
-        assert "the arms are comparable" in failed
+        failed = [x for x in r["claims_failed"].split("; ") if x]
+        assert "the arms are comparable" not in failed
+        assert set(failed) <= set(WALL_CLOCK_FAILS)
         assert all(f"FAIL  {note}:" in out for note in failed)
         assert int(r["claims_ok"]) + len(failed) == 13
+
+
+def test_the_sweep_printed_no_failure_it_was_not_allowed(sweep):
+    assert unexpected_failures(sweep[0].stdout) == [], sweep[0].stdout[-3000:]
 
 
 def test_the_sweep_table_shows_each_row_held_over_total(sweep):
