@@ -116,7 +116,8 @@ def test_the_verdict_columns_count_and_name_the_failures(script):
 
 def test_a_clean_row_says_so_with_an_empty_cell(script):
     graded = [("a", None), ("b", None)]
-    assert script.verdict_columns(graded) == {"claims_ok": 2, "claims_failed": ""}
+    assert script.verdict_columns(graded) == {"claims_ok": 2, "claims_failed": "",
+                                              "claims_unsound": ""}
 
 
 def test_several_failures_are_joined_in_the_order_they_printed(script):

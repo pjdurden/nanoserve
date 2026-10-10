@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">A row that lost is not a row that could not measure.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">The log prints the reason under each FAIL, so it can tell the two apart. The CSV carried notes alone, so it could not.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today every row gets a third verdict column: the notes refused as MeasurementUnsound.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: two rows, one cell (illustrative)</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="170" fill="#475569">load      claims_ok  claims_failed</text>
+    <text x="70" y="192" fill="#334155">200 rps   12         the tail did not get worse</text>
+    <text x="70" y="212" fill="#334155">400 rps   12         the tail did not get worse</text>
+    <text x="70" y="244" fill="#475569">what the log said under each:</text>
+    <text x="70" y="264" fill="#15803d">  200: ITL p99 is 9.1 ms against 7.8 ms</text>
+    <text x="70" y="282" fill="#b91c1c">  400: no frame gaps to compare</text>
+    <rect x="70" y="304" width="490" height="40" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="329" fill="#b91c1c">same note, same cell, one is a result and one is noise</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: two refusals ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">the two refusals a gate raises</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="174" font-weight="700" fill="#9a3412">AcceptanceFailure</text>
+    <text x="640" y="196">The run measured what it set out to, and the</text>
+    <text x="640" y="216">answer was no. The numbers are good: they say</text>
+    <text x="640" y="236">the capture lost. Keep the row, read the verdict.</text>
+    <text x="640" y="272" font-weight="700" fill="#b91c1c">MeasurementUnsound</text>
+    <text x="640" y="294">The run could not measure it: too few gaps,</text>
+    <text x="640" y="314">a dropped request, arms that served other work.</text>
+    <text x="640" y="334">The numbers are not a result. Drop the row.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: verdict_columns ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">verdict_columns(graded)</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#334155">"claims_ok":      count of exc is None</text>
+    <text x="70" y="462" fill="#334155">"claims_failed":  "; ".join(note, exc is not None)</text>
+    <text x="70" y="482" fill="#15803d">"claims_unsound": "; ".join(note, MeasurementUnsound)</text>
+    <text x="70" y="514" fill="#475569">  a subset of claims_failed, in print order</text>
+    <text x="70" y="532" fill="#475569">  last, so Day 76's header is still a prefix</text>
+    <text x="70" y="550" fill="#475569">  the table still reads held/total, nothing counted twice</text>
+    <text x="70" y="584" fill="#334155">_delta at floor 20:    unsound ""</text>
+    <text x="70" y="602" fill="#334155">_delta at floor 1000:  unsound "the arms are comparable"</text>
+    <text x="70" y="622" fill="#15803d">toy sweep smoke: every row's unsound cell is empty</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: how the notebook reads it ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">how a card sweep's notebook reads it</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442" font-weight="700">1. drop what cannot be used</text>
+    <text x="640" y="464" font-family="ui-monospace, monospace" font-size="11.5">rows = rows[rows.claims_unsound == ""]</text>
+    <text x="640" y="500" font-weight="700">2. then read what is left</text>
+    <text x="640" y="522" font-family="ui-monospace, monospace" font-size="11.5">lost = rows[rows.claims_failed != ""]</text>
+    <text x="640" y="556">A plot that kept an unsound row would be plotting</text>
+    <text x="640" y="576">a run that never measured the thing on its axis.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">the CSV now says what the log says, reason included</text>
+  </g>
+</svg>

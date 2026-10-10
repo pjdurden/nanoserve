@@ -349,5 +349,12 @@ def test_the_sweep_table_shows_each_row_held_over_total(sweep):
 
 def test_the_verdict_columns_come_after_every_column_yesterday_had(sweep):
     header = list(_sweep_rows(sweep)[0])
-    assert header[-2:] == ["claims_ok", "claims_failed"]
+    assert header[-3:] == ["claims_ok", "claims_failed", "claims_unsound"]
     assert header.index("replay_share") < header.index("claims_ok")
+
+
+def test_no_sweep_row_is_unsound(sweep):
+    """Day 80: the one FAIL a toy smoke may print is an `AcceptanceFailure` (a slower
+    tail), so every row the smoke writes is a usable one. A note here means the run
+    could not measure what its row reports."""
+    assert [r["claims_unsound"] for r in _sweep_rows(sweep)] == [""] * len(SWEEP_RATES)

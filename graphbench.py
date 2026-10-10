@@ -459,10 +459,19 @@ def verdict_columns(graded) -> dict:
 
     At the end of the row, so a CSV written before Day 76 is a prefix of one after it.
     An empty `claims_failed` is a clean row; a reader filters on it.
+
+    Day 80: `claims_unsound` is the part of `claims_failed` refused as
+    `MeasurementUnsound`, the notes the run could not measure rather than the ones it
+    measured and lost. A row with it non-empty is not a result; a notebook drops it
+    first and reads `claims_failed` on the rows that are left. Last, for the same
+    prefix reason.
     """
     return {
         "claims_ok": sum(exc is None for _, exc in graded),
         "claims_failed": FAILED_SEP.join(note for note, exc in graded if exc is not None),
+        "claims_unsound": FAILED_SEP.join(
+            note for note, exc in graded if isinstance(exc, MeasurementUnsound)
+        ),
     }
 
 
