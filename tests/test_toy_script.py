@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from test_split_script import _script
 
 from nanoserve.config import ModelConfig
 from nanoserve.loader import EMBED, LM_HEAD, expected_keys, load_weights
@@ -358,3 +359,14 @@ def test_no_sweep_row_is_unsound(sweep):
     tail), so every row the smoke writes is a usable one. A note here means the run
     could not measure what its row reports."""
     assert [r["claims_unsound"] for r in _sweep_rows(sweep)] == [""] * len(SWEEP_RATES)
+
+
+def test_the_sweep_csv_reads_back_through_read_sweep(sweep):
+    """Day 81: the smoke's file goes through the parser a card notebook will use, and
+    comes back as the same verdict the raw reader saw."""
+    rows = _script().read_sweep(sweep[1])
+    assert [r["load"] for r in rows] == [r["load"] for r in _sweep_rows(sweep)]
+    for r in rows:
+        assert r["claims_unsound"] == []
+        assert set(r["claims_failed"]) <= set(WALL_CLOCK_FAILS)
+        assert r["claims_ok"] + len(r["claims_failed"]) == 13

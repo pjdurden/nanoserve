@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The CSV comes back through one parser, verdict typed.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Every reader of a sweep CSV so far was a test doing DictReader and split("; ") by hand.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today read_sweep(path) is the one place a file turns back into rows, and it refuses what it cannot grade.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: every reader splits by hand</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="170" fill="#475569">r = next(csv.DictReader(fh))</text>
+    <text x="70" y="192" fill="#334155">r["claims_ok"]                 "12"   (a string)</text>
+    <text x="70" y="212" fill="#334155">r["claims_failed"].split("; ") ["x"]</text>
+    <text x="70" y="232" fill="#b91c1c">"".split("; ")                 [""]   (one empty note)</text>
+    <text x="70" y="264" fill="#475569">a Day 76 file has no claims_unsound:</text>
+    <text x="70" y="284" fill="#b91c1c">r.get("claims_unsound", "")    ""     (looks clean)</text>
+    <rect x="70" y="304" width="490" height="40" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="329" fill="#b91c1c">"not recorded" reads the same as "nothing unsound"</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: read_sweep ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">read_sweep(path)</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="170" fill="#334155">claims_ok        int</text>
+    <text x="640" y="190" fill="#334155">claims_failed    list of notes, "" is []</text>
+    <text x="640" y="210" fill="#15803d">claims_unsound   list, or None on a Day 76 file</text>
+    <text x="640" y="230" fill="#475569">everything else  left as the file had it</text>
+  </g>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="266" font-weight="700" fill="#1e1b4b">VERDICT_COLUMNS</text>
+    <text x="640" y="288">("claims_ok", "claims_failed", "claims_unsound")</text>
+    <text x="640" y="314">Only ever appended to, so every file this code</text>
+    <text x="640" y="334">wrote ends in a prefix of it of length 2 or 3.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: refusals ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">what it refuses (ValueError)</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#334155">... graphs_itl_p50_ms                 no verdict</text>
+    <text x="70" y="462" fill="#334155">... claims_ok                         half a verdict</text>
+    <text x="70" y="482" fill="#334155">... claims_failed, claims_ok, ...     reordered</text>
+    <text x="70" y="502" fill="#334155">... claims_unsound, replay_share      a column after</text>
+    <text x="70" y="522" fill="#334155">... claims_ok, claims_unsound         one skipped</text>
+    <text x="70" y="542" fill="#334155">(empty file)                          no header</text>
+    <text x="70" y="574" fill="#9a3412">unsound "b", failed "a"   not a subset: edited,</text>
+    <text x="70" y="592" fill="#9a3412">                          or written by something else</text>
+    <text x="70" y="622" fill="#475569">a file whose rows cannot be filtered is not plotted</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: notebook ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">how a card sweep's notebook starts now</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442" font-weight="700">1. the same parser the tests use</text>
+    <text x="640" y="464" font-family="ui-monospace, monospace" font-size="11.5">rows = read_sweep("card.csv")</text>
+    <text x="640" y="500" font-weight="700">2. drop what could not measure</text>
+    <text x="640" y="522" font-family="ui-monospace, monospace" font-size="11.5">rows = [r for r in rows if r["claims_unsound"] == []]</text>
+    <text x="640" y="556">A Day 76 row has None there, so it is dropped too</text>
+    <text x="640" y="576">unless the reader decides on purpose to keep it.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">toy sweep smoke reads back through it, every row usable</text>
+  </g>
+</svg>

@@ -454,6 +454,12 @@ def grade(pairs) -> list[tuple[str, Exception | None]]:
 FAILED_SEP = "; "
 
 
+#: The verdict, in the order it was appended to the row. Day 76 wrote the first two and
+#: Day 80 the third, so every sweep CSV this file has written ends in a prefix of this
+#: of length two or three, and `read_sweep` refuses one that does not.
+VERDICT_COLUMNS = ("claims_ok", "claims_failed", "claims_unsound")
+
+
 def verdict_columns(graded) -> dict:
     """The row's own verdict: how many claims held, and which ones did not.
 
@@ -483,6 +489,65 @@ def write_csv(where: str, rows: list[dict]) -> None:
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nwrote {path}")
+
+
+def _notes(cell: str) -> list[str]:
+    """A note column back as a list. `""` is no notes, not one empty note."""
+    return cell.split(FAILED_SEP) if cell else []
+
+
+def read_sweep(path) -> list[dict]:
+    """A sweep CSV back as rows, with the verdict typed. Day 81.
+
+    The one parser for these files, so a card notebook and the tests read a row the
+    same way: `claims_ok` an int, `claims_failed` and `claims_unsound` lists of notes.
+    Every other column is left as the file had it; a notebook knows its own units.
+
+    Three refusals, all `ValueError`, because each is a file whose rows cannot be
+    filtered and a plot of it would be a plot of rows nobody graded:
+
+      - the header does not end in a prefix of `VERDICT_COLUMNS` of length two or
+        three: no verdict at all (a `--coverage` table, or a pre-Day-76 sweep), a
+        column moved, or something written after the verdict;
+      - the file has no header;
+      - an unsound note is not also a failed note. The writer cannot produce that, so
+        the file was edited or written by something else.
+
+    A Day 76 file reads, and its `claims_unsound` is `None`, not `[]`. It did not
+    record which failures were unmeasurable, and "not recorded" is a different
+    answer from "none": the reader has to choose what to do with it, so the parser
+    does not choose for them.
+    """
+    with Path(path).open(newline="") as fh:
+        reader = csv.DictReader(fh)
+        header = reader.fieldnames
+        if not header:
+            raise ValueError(f"{path}: no header, so no verdict to read")
+        tail = [c for c in header if c in VERDICT_COLUMNS]
+        k = len(tail)
+        if k < 2 or tuple(header[-k:]) != VERDICT_COLUMNS[:k]:
+            raise ValueError(
+                f"{path}: the header does not end in a known verdict "
+                f"({', '.join(VERDICT_COLUMNS[:2])}[, {VERDICT_COLUMNS[2]}]); "
+                f"it ends {header[-3:]}"
+            )
+        rows = []
+        for raw in reader:
+            row = dict(raw)
+            row["claims_ok"] = int(raw["claims_ok"])
+            row["claims_failed"] = _notes(raw["claims_failed"])
+            if k == 3:
+                row["claims_unsound"] = _notes(raw["claims_unsound"])
+                stray = set(row["claims_unsound"]) - set(row["claims_failed"])
+                if stray:
+                    raise ValueError(
+                        f"{path}: row {row.get('load')!r}: claims_unsound is not a "
+                        f"subset of claims_failed ({sorted(stray)} did not fail)"
+                    )
+            else:
+                row["claims_unsound"] = None
+            rows.append(row)
+    return rows
 
 
 def print_table(rows: list[dict]) -> None:
