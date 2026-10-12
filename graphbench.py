@@ -75,6 +75,7 @@ from nanoserve.acceptance import AcceptanceFailure, live_server
 from nanoserve.compiled import MODES, dynamo_frames_abandoned, reset_compile_cache
 from nanoserve.graphbench import (
     ArmDelta,
+    SplitBoot,
     check_arm_replayed,
     check_arm_replayed_every_step,
     check_arm_was_crowded,
@@ -496,12 +497,58 @@ def _notes(cell: str) -> list[str]:
     return cell.split(FAILED_SEP) if cell else []
 
 
+#: Day 82: the columns `ArmDelta.row()` writes as measurements. A suffix rule for the
+#: latency, ratio and throughput families, so a new `_ms` column is typed the day it
+#: is added, and the four that do not follow it by name.
+FLOAT_SUFFIXES = ("_ms", "_speedup", "_tok_s")
+FLOAT_COLUMNS = ("replay_share", "split_read_error", "split_predicted", "split_measured")
+
+#: Day 82: the columns that count something, so `12.5` in one is refused, not rounded.
+INT_COLUMNS = ("itl_samples", "graphs_held", "recorded_while_serving")
+
+#: Day 82: the only cells a sweep writes empty. They are the split boot's grade, `None`
+#: when the boot graded or timed nothing, so they are its own keys and nobody's list.
+NULLABLE_COLUMNS = tuple(SplitBoot().row())
+
+#: How `csv` writes a `bool`, and the only two words `split_pays` may hold.
+_BOOLS = {"True": True, "False": False}
+
+
+def _typed(name: str, cell: str, where: str):
+    """One cell as the type its column was written as. Day 82.
+
+    An empty cell is `None` in a nullable column and a refusal anywhere else: a
+    measured column with a hole in it is a row that did not measure, and `float("")`
+    deep in a notebook is a worse place to find that out. A column this file does not
+    know comes back as the string it was.
+    """
+    if cell == "" and name in NULLABLE_COLUMNS:
+        return None
+    try:
+        if name == "split_pays":
+            if cell not in _BOOLS:
+                raise ValueError(f"not one of {sorted(_BOOLS)}")
+            return _BOOLS[cell]
+        if name in INT_COLUMNS:
+            return int(cell)
+        if name in FLOAT_COLUMNS or name.endswith(FLOAT_SUFFIXES):
+            return float(cell)
+    except ValueError as exc:
+        raise ValueError(f"{where}: column {name} holds {cell!r}, which is not "
+                         f"what it was written as ({exc})") from None
+    return cell
+
+
 def read_sweep(path) -> list[dict]:
     """A sweep CSV back as rows, with the verdict typed. Day 81.
 
     The one parser for these files, so a card notebook and the tests read a row the
     same way: `claims_ok` an int, `claims_failed` and `claims_unsound` lists of notes.
-    Every other column is left as the file had it; a notebook knows its own units.
+
+    Day 82: the rest of the row is typed too, so a notebook's first cell is a plot
+    and not a cleaning step. Measurements are floats, counts are ints, `split_pays` is
+    a bool, and the split boot's empty cells are `None` (see `_typed`). A column this
+    code did not write is left as the file had it.
 
     Three refusals, all `ValueError`, because each is a file whose rows cannot be
     filtered and a plot of it would be a plot of rows nobody graded:
@@ -533,7 +580,12 @@ def read_sweep(path) -> list[dict]:
             )
         rows = []
         for raw in reader:
-            row = dict(raw)
+            where = f"{path}: row {raw.get('load')!r}"
+            row = {
+                name: _typed(name, cell, where)
+                for name, cell in raw.items()
+                if name not in VERDICT_COLUMNS
+            }
             row["claims_ok"] = int(raw["claims_ok"])
             row["claims_failed"] = _notes(raw["claims_failed"])
             if k == 3:
@@ -541,7 +593,7 @@ def read_sweep(path) -> list[dict]:
                 stray = set(row["claims_unsound"]) - set(row["claims_failed"])
                 if stray:
                     raise ValueError(
-                        f"{path}: row {row.get('load')!r}: claims_unsound is not a "
+                        f"{where}: claims_unsound is not a "
                         f"subset of claims_failed ({sorted(stray)} did not fail)"
                     )
             else:

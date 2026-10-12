@@ -78,12 +78,13 @@ def test_a_clean_row_reads_as_empty_lists_not_one_empty_note(script, tmp_path):
     assert row["claims_unsound"] == []
 
 
-def test_the_other_columns_are_left_as_the_file_had_them(script, tmp_path):
+def test_the_other_columns_keep_file_order(script, tmp_path):
+    """Day 82 types the numbers (`test_read_sweep_numbers.py`); the label stays text."""
     path = tmp_path / "s.csv"
     script.write_csv(str(path), [_row(script, [("a", None)], load="burst")])
     (row,) = script.read_sweep(path)
     assert row["load"] == "burst"
-    assert row["graphs_itl_p50_ms"] == "1.5"
+    assert row["graphs_itl_p50_ms"] == 1.5
     assert list(row) == ["load", "graphs_itl_p50_ms", *script.VERDICT_COLUMNS]
 
 

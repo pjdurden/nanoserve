@@ -370,3 +370,18 @@ def test_the_sweep_csv_reads_back_through_read_sweep(sweep):
         assert r["claims_unsound"] == []
         assert set(r["claims_failed"]) <= set(WALL_CLOCK_FAILS)
         assert r["claims_ok"] + len(r["claims_failed"]) == 13
+
+
+def test_the_sweep_csv_reads_back_as_numbers(sweep):
+    """Day 82: the smoke's real file, typed. Its numbers are numbers, and no split
+    boot cell comes back as the `""` `csv` wrote for a `None`."""
+    rows = _script().read_sweep(sweep[1])
+    for r in rows:
+        assert isinstance(r["graphs_itl_p50_ms"], float)
+        assert isinstance(r["itl_p50_speedup"], float)
+        assert 0.0 <= r["replay_share"] <= 1.0
+        assert type(r["itl_samples"]) is int and r["itl_samples"] > 0
+        assert type(r["recorded_while_serving"]) is int
+        assert isinstance(r["split_itl_p50_ms"], float)
+        assert all(r[k] != "" for k in _script().NULLABLE_COLUMNS)
+        assert r["split_pays"] in (True, False, None)

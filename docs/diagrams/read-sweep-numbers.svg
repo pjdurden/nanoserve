@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The sweep's numbers come back as numbers, its holes as None.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 81 typed the verdict and left every other column a string, so a notebook's first cell was cleaning.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today read_sweep knows the columns ArmDelta.row() writes, and which of them are allowed to be empty.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: every cell a string</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="170" fill="#475569">an ungraded split boot writes None, csv writes ""</text>
+    <text x="70" y="194" fill="#334155">r["graphs_itl_p50_ms"]          "20.0"   (a string)</text>
+    <text x="70" y="214" fill="#b91c1c">float(r["split_measured"])      ValueError, deep in a plot</text>
+    <text x="70" y="234" fill="#b91c1c">bool(r["split_pays"])           True, from the word "False"</text>
+    <text x="70" y="254" fill="#334155">int(float(r["itl_samples"]))    12.5 quietly becomes 12</text>
+    <rect x="70" y="284" width="490" height="60" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="308" fill="#b91c1c">every notebook guesses what "" means,</text>
+    <text x="82" y="328" fill="#b91c1c">and "did not pay" can plot as "paid"</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the types ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">read_sweep(path), every column typed</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="170" fill="#334155">*_ms  *_speedup  *_tok_s        float  (FLOAT_SUFFIXES)</text>
+    <text x="640" y="190" fill="#334155">replay_share  split_read_error  float  (FLOAT_COLUMNS)</text>
+    <text x="640" y="210" fill="#334155">split_predicted  split_measured</text>
+    <text x="640" y="230" fill="#334155">itl_samples  graphs_held  ...    int    (INT_COLUMNS)</text>
+    <text x="640" y="250" fill="#334155">split_pays                       "True" / "False" only</text>
+    <text x="640" y="270" fill="#475569">load, anything it did not write  left as text</text>
+  </g>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="304" font-weight="700">NULLABLE_COLUMNS = tuple(SplitBoot().row())</text>
+    <text x="640" y="326">The split boot's own keys: the only cells a sweep</text>
+    <text x="640" y="346">ever writes empty. "" there is None, nowhere else.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: refusals ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">what it refuses (ValueError, column and row named)</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#334155">graphs_itl_p50_ms = ""         a measurement with a hole</text>
+    <text x="70" y="462" fill="#334155">eager_tok_s = "fast"           a word in a number</text>
+    <text x="70" y="482" fill="#334155">itl_samples = "12.5"           a count that is not whole</text>
+    <text x="70" y="502" fill="#334155">split_pays = "yes"             a third word for a bool</text>
+    <text x="70" y="540" fill="#9a3412">an empty cell outside the split boot is a row</text>
+    <text x="70" y="558" fill="#9a3412">that did not measure, not a zero and not a None</text>
+    <text x="70" y="602" fill="#475569">plus Day 81's header and subset refusals, unchanged</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: notebook ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">how a card sweep's notebook starts now</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442" font-weight="700">1. read, filter, plot. No cleaning cell.</text>
+    <text x="640" y="464" font-family="ui-monospace, monospace" font-size="11.5">rows = read_sweep("card.csv")</text>
+    <text x="640" y="484" font-family="ui-monospace, monospace" font-size="11.5">rows = [r for r in rows if r["claims_unsound"] == []]</text>
+    <text x="640" y="504" font-family="ui-monospace, monospace" font-size="11.5">plot([r["itl_p50_speedup"] for r in rows])</text>
+    <text x="640" y="540" font-weight="700">2. a written row reads back equal, same type</text>
+    <text x="640" y="562">Two-arm and three-arm, every key, value and type.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">toy sweep smoke's real CSV reads back typed, no "" left</text>
+  </g>
+</svg>
