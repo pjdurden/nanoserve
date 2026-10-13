@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">One row shape, so the table reprints from the file.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 82 typed every column read_sweep gives back, and print_table still read the raw row main built.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today the live run and the CSV feed the table the same typed row, and --table reprints a sweep with nothing booted.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: two shapes for one row</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="170" fill="#475569">main builds:      claims_failed = "a; b"     (a string)</text>
+    <text x="70" y="190" fill="#475569">read_sweep gives: claims_failed = ["a", "b"] (a list)</text>
+    <text x="70" y="220" fill="#334155">print_table split the string by hand:</text>
+    <text x="70" y="240" fill="#334155">  len(r["claims_failed"].split("; "))</text>
+    <text x="70" y="260" fill="#b91c1c">  on a list: AttributeError, no .split</text>
+    <rect x="70" y="284" width="490" height="60" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="308" fill="#b91c1c">and the "fix", len(r["claims_failed"]) on the string,</text>
+    <text x="82" y="328" fill="#b91c1c">counts characters: 26 failures for one note</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: one shape ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">after: both paths meet at the typed row</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="172" fill="#334155">live run:  row  --as_read-->    typed row  --+</text>
+    <text x="640" y="196" fill="#334155">                                              +--> print_table</text>
+    <text x="640" y="220" fill="#334155">old file:  csv  --read_sweep--> typed row  --+</text>
+  </g>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="262" font-weight="700">as_read(row) == read_sweep(write_csv(row))</text>
+    <text x="640" y="284">Only the two note columns change, to lists. The rest</text>
+    <text x="640" y="304">is already the type it is written as. A copy, so the</text>
+    <text x="640" y="324">CSV main writes afterwards still gets the string.</text>
+    <text x="640" y="346" fill="#475569">Two-arm and three-arm rows, checked key for key.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: refusals ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">what it refuses</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#334155">print_table(raw row)       TypeError: pass it through as_read</text>
+    <text x="70" y="474" fill="#334155">--table coverage.csv       the parser: "not a known verdict"</text>
+    <text x="70" y="494" fill="#334155">--table header-only.csv    a header and no rows, no table</text>
+    <text x="70" y="514" fill="#334155">--table nope.csv           the path, named</text>
+    <text x="70" y="552" fill="#9a3412">each one a sentence and a non-zero exit,</text>
+    <text x="70" y="570" fill="#9a3412">never a traceback</text>
+    <text x="70" y="610" fill="#475569">a Day 76 file (claims_unsound None) still prints</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: the run ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">looking at a card run again, for free</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442" font-weight="700">1. no weights, no device, nothing booted</text>
+    <text x="640" y="464" font-family="ui-monospace, monospace" font-size="11.5">python graphbench.py --table card.csv</text>
+    <text x="640" y="504" font-weight="700">2. the reprint is the run's own table</text>
+    <text x="640" y="526">Same rows into the same print_table, so the lines</text>
+    <text x="640" y="546">match the log the sweep printed, byte for byte.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">toy sweep smoke: --table on its CSV == its live table</text>
+  </g>
+</svg>

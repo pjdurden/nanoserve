@@ -53,6 +53,14 @@ list, and its boot grades print under its row and land in the CSV.
         --device cuda --rates 1,2,4,8 --requests 32 --max-tokens 128 --split-read \
         --csv docs/daily/data/day-74-graphbench.csv
 
+**`--table` reprints a finished sweep, and Day 83 is what added it.** No weights, no
+device, nothing booted: the CSV goes through `read_sweep` and its rows into the same
+`print_table` the run used, so a card run can be looked at again without paying for
+it again.
+
+    cd ~/nanoserve && .venv/bin/python graphbench.py \
+        --table docs/daily/data/day-74-graphbench.csv
+
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
 speed, so the "recorded" arm is a forward plus a copy. `--allow-cpu` is there for
@@ -602,7 +610,27 @@ def read_sweep(path) -> list[dict]:
     return rows
 
 
+def as_read(row: dict) -> dict:
+    """A row `main` just built, as `read_sweep` would give it back from the CSV. Day 83.
+
+    Only the two note columns change: they become lists, `""` the empty one. The rest
+    of the row is already the type `_typed` reads it as, because it is the value that
+    gets written. A copy, because `main` writes the CSV from the row it built.
+    """
+    return {
+        **row,
+        "claims_failed": _notes(row["claims_failed"]),
+        "claims_unsound": _notes(row["claims_unsound"]),
+    }
+
+
 def print_table(rows: list[dict]) -> None:
+    """The sweep's table, from rows in the shape `read_sweep` returns.
+
+    Day 83: one shape, so a live run (through `as_read`) and `--table <csv>` print
+    the same lines from the same row. `claims_failed` is a list here, and a string is
+    refused: `len` on it would count characters and print a wrong total quietly.
+    """
     header = (
         f"{'load':>10} {'ITL p50 graphs':>15} {'eager':>8} {'x':>6} "
         f"{'ITL p99 graphs':>15} {'eager':>8} {'x':>6} {'replayed':>9}"
@@ -615,6 +643,11 @@ def print_table(rows: list[dict]) -> None:
     print(header)
     print("-" * len(header))
     for r in rows:
+        if isinstance(r["claims_failed"], str):
+            raise TypeError(
+                f"row {r['load']!r}: claims_failed is the string the CSV holds; "
+                "pass the row through as_read (or read it with read_sweep) first"
+            )
         line = (
             f"{r['load']:>10} {r['graphs_itl_p50_ms']:>14.2f}m {r['eager_itl_p50_ms']:>7.2f}m "
             f"{r['itl_p50_speedup']:>5.2f}x {r['graphs_itl_p99_ms']:>14.2f}m "
@@ -623,10 +656,26 @@ def print_table(rows: list[dict]) -> None:
         )
         if split:
             line += f" {r['split_itl_p50_ms']:>13.2f}m {r['split_itl_p50_speedup']:>9.2f}x"
-        failed = len(r["claims_failed"].split(FAILED_SEP)) if r["claims_failed"] else 0
-        total = r["claims_ok"] + failed
+        total = r["claims_ok"] + len(r["claims_failed"])
         line += f" {r['claims_ok']:>3}/{total:<3}"
         print(line)
+
+
+def reprint(path: Path) -> None:
+    """`--table`: an old sweep's table from its file, with nothing booted. Day 83.
+
+    Through `read_sweep`, so the table is printed from the same row a notebook gets.
+    Every refusal is a sentence on stderr and a non-zero exit, not a traceback: a
+    file that is missing, one the parser will not read (a `--coverage` table, a sweep
+    from before Day 76), and one with a header and no rows, which has no table.
+    """
+    try:
+        rows = read_sweep(path)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--table: {exc}") from None
+    if not rows:
+        raise SystemExit(f"--table: {path} has a header and no rows, so no table")
+    print_table(rows)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -637,6 +686,13 @@ def make_parser() -> argparse.ArgumentParser:
         "--coverage",
         action="store_true",
         help="skip the servers: how much of a decode loop can replay at all, by workload",
+    )
+    target.add_argument(
+        "--table",
+        type=Path,
+        default=None,
+        metavar="CSV",
+        help="skip the servers: reprint an old sweep's table from its CSV",
     )
     target.add_argument("--device", default="auto", help="auto | cuda | cpu")
     target.add_argument("--dtype", default="auto", help="auto | bfloat16 | float16 | float32")
@@ -696,6 +752,9 @@ def make_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = make_parser().parse_args()
 
+    if args.table is not None:
+        reprint(args.table)
+        return
     if args.coverage:
         rows = run_coverage(args)
         if args.csv:
@@ -740,7 +799,7 @@ def main() -> None:
 
     if len(rows) > 1:
         print()
-        print_table(rows)
+        print_table([as_read(r) for r in rows])
     if args.csv:
         write_csv(args.csv, rows)
 

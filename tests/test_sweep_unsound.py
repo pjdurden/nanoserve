@@ -103,5 +103,5 @@ def test_the_table_still_counts_held_over_total(script, capsys):
     graded = script.grade(script.claims(_delta(), STARVED))
     row = {"load": "1 rps", **_delta().row(), "replay_share": 1.0,
            **script.verdict_columns(graded)}
-    script.print_table([row])
+    script.print_table([script.as_read(row)])
     assert capsys.readouterr().out.splitlines()[-1].rstrip().endswith("9/13")

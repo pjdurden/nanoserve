@@ -385,3 +385,18 @@ def test_the_sweep_csv_reads_back_as_numbers(sweep):
         assert isinstance(r["split_itl_p50_ms"], float)
         assert all(r[k] != "" for k in _script().NULLABLE_COLUMNS)
         assert r["split_pays"] in (True, False, None)
+
+
+def test_the_sweep_table_reprints_from_its_csv(sweep):
+    """Day 83: `--table` on the smoke's real file prints the lines the run printed.
+    The live table goes through `as_read` and the reprint through `read_sweep`, so
+    any column the two shapes disagree on would show up here as a changed line."""
+    lines = sweep[0].stdout.splitlines()
+    start = next(i for i, x in enumerate(lines) if "ITL p50 graphs" in x)
+    live = lines[start:start + 2 + len(SWEEP_RATES)]
+    done = subprocess.run(
+        [sys.executable, str(REPO / "graphbench.py"), "--table", str(sweep[1])],
+        cwd=REPO, capture_output=True, text=True, timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == live

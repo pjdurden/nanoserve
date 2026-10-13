@@ -136,8 +136,10 @@ def test_a_note_never_holds_the_separator(script):
 
 def _row(script, delta, load="1 rps"):
     graded = script.grade(script.claims(delta, ARGS))
-    return {"load": load, **delta.row(), "replay_share": 1.0,
-            **script.verdict_columns(graded)}
+    # Day 83: the table takes the row `read_sweep` gives back, so the built row goes
+    # through `as_read` first, as `main` sends it.
+    return script.as_read({"load": load, **delta.row(), "replay_share": 1.0,
+                           **script.verdict_columns(graded)})
 
 
 def test_the_table_has_a_claims_column_out_of_the_total(script, capsys):
