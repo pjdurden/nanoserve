@@ -111,7 +111,8 @@ def test_a_day_76_row_prints_without_an_unsound_column(script, capsys):
     row = script.as_read(_built(script, _delta(split=False), graded=SOME_FAIL))
     row["claims_unsound"] = None
     script.print_table([row])
-    assert capsys.readouterr().out.splitlines()[-1].rstrip().endswith("2/3")
+    # Day 84: it prints, as `?`, with a line under the table saying why.
+    assert capsys.readouterr().out.splitlines()[2].rstrip().endswith("?   2/3")
 
 
 def test_the_table_from_the_file_is_the_table_from_the_run(script, tmp_path, capsys):

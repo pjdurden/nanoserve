@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 675" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">Each row is marked: a result, or a run to do again.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 80 put claims_unsound on the row, and the table still printed one count for both kinds of FAIL.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Today a row column says clean, lost, rerun or ?, and the reruns are listed under the table with their reasons.</text>
+
+  <!-- ===================== LEFT TOP: before ===================== -->
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">before: one count, two meanings</text>
+  <rect x="50" y="144" width="530" height="220" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="172" fill="#475569">     load  ...  replayed  claims</text>
+    <text x="70" y="194" fill="#334155">    2 rps  ...      88%    9/13</text>
+    <text x="70" y="214" fill="#334155">    4 rps  ...      88%    9/13</text>
+    <text x="70" y="250" fill="#475569">2 rps: four claims measured, and the capture lost</text>
+    <text x="70" y="270" fill="#475569">4 rps: the arms served different work</text>
+    <rect x="70" y="290" width="490" height="54" rx="5" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+    <text x="82" y="312" fill="#b91c1c">the same 9/13, and only one of them is a result:</text>
+    <text x="82" y="330" fill="#b91c1c">plot both and noise reads as a regression</text>
+  </g>
+
+  <!-- ===================== RIGHT TOP: the marks ===================== -->
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">row_mark reads the two note columns</text>
+  <rect x="620" y="144" width="530" height="220" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="172" fill="#334155">claims_failed  claims_unsound   mark</text>
+    <text x="640" y="196" fill="#15803d">[]             anything         clean</text>
+    <text x="640" y="218" fill="#334155">["b"]          []               lost    a result, compare it</text>
+    <text x="640" y="240" fill="#b91c1c">["a","b","c"]  ["a","c"]        rerun   not a result</text>
+    <text x="640" y="262" fill="#9a3412">["b"]          None (Day 76)    ?       cannot say</text>
+  </g>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="300">No failure means no unsound failure, so a Day 76 row</text>
+    <text x="640" y="320">with none is clean in any file.</text>
+    <text x="640" y="346" fill="#475569">A string in either note column: TypeError, use as_read.</text>
+  </g>
+
+  <!-- ===================== LEFT BOTTOM: after ===================== -->
+  <text x="50" y="402" font-size="13.5" font-weight="700" fill="#334155">after: the table and what is under it</text>
+  <rect x="50" y="414" width="530" height="220" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="70" y="442" fill="#475569">     load  ...  replayed    row  claims</text>
+    <text x="70" y="464" fill="#15803d">    1 rps  ...       88%  clean   13/13</text>
+    <text x="70" y="484" fill="#334155">    2 rps  ...       88%   lost    9/13</text>
+    <text x="70" y="504" fill="#b91c1c">    4 rps  ...       88%  rerun    9/13</text>
+    <text x="70" y="540" fill="#9a3412">rerun, not a result: these claims could not be</text>
+    <text x="70" y="558" fill="#9a3412">measured</text>
+    <text x="70" y="578" fill="#9a3412">    4 rps: the arms are comparable</text>
+    <text x="70" y="614" fill="#475569">only the unsound notes, not the ones it lost</text>
+  </g>
+
+  <!-- ===================== RIGHT BOTTOM: why ===================== -->
+  <text x="620" y="402" font-size="13.5" font-weight="700" fill="#334155">reading a card sweep</text>
+  <rect x="620" y="414" width="530" height="220" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="640" y="442" font-weight="700">1. a table of results prints nothing under it</text>
+    <text x="640" y="464">A clean sweep reads as it always did.</text>
+    <text x="640" y="500" font-weight="700">2. reruns in table order, with their reasons</text>
+    <text x="640" y="522">That list is which claims to look at first.</text>
+    <text x="640" y="558" font-weight="700">3. the alignment test found an old off-by-one</text>
+    <text x="640" y="580">replayed was 9 wide in the header and 8 in the row.</text>
+    <text x="640" y="614" fill="#15803d" font-weight="700">--table card.csv marks the rows with nothing booted</text>
+  </g>
+</svg>

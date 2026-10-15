@@ -61,6 +61,10 @@ it again.
     cd ~/nanoserve && .venv/bin/python graphbench.py \
         --table docs/daily/data/day-74-graphbench.csv
 
+Day 84 marks each row of the table `clean`, `lost`, `rerun` or `?` (see `row_mark`),
+and lists the reruns under it with the claims they could not measure, so a reprinted
+card sweep says which rows can be compared before anyone compares them.
+
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
 speed, so the "recorded" arm is a forward plus a copy. `--allow-cpu` is there for
@@ -624,12 +628,50 @@ def as_read(row: dict) -> dict:
     }
 
 
+#: Day 84: what a row is, read off its two note columns, in the order a reader acts on
+#: them. `rerun` and `?` are listed again under the table, so the table says which
+#: rows can be compared before anyone compares them.
+MARKS = ("clean", "lost", "rerun", "?")
+
+
+def row_mark(row: dict) -> str:
+    """What one row is: a result to compare, or a run to do again. Day 84.
+
+    `clean` held every claim. `lost` failed some and measured every failure, so its
+    numbers are a result that says no. `rerun` could not measure at least one claim,
+    so its numbers are not a comparison at all. `?` is a Day 76 row, whose file did
+    not record which failures were unmeasurable, with failures to ask about; a Day 76
+    row with none is `clean`, because no failure means no unsound one.
+
+    A string in either note column is refused as `print_table` refuses it: `"a; c"`
+    is truthy, so it would read as a rerun, and its notes would list as letters.
+    """
+    failed, unsound = row["claims_failed"], row["claims_unsound"]
+    if isinstance(failed, str) or isinstance(unsound, str):
+        raise TypeError(
+            f"row {row['load']!r}: a note column is the string the CSV holds; "
+            "pass the row through as_read (or read it with read_sweep) first"
+        )
+    if not failed:
+        return "clean"
+    if unsound is None:
+        return "?"
+    return "rerun" if unsound else "lost"
+
+
 def print_table(rows: list[dict]) -> None:
     """The sweep's table, from rows in the shape `read_sweep` returns.
 
     Day 83: one shape, so a live run (through `as_read`) and `--table <csv>` print
     the same lines from the same row. `claims_failed` is a list here, and a string is
     refused: `len` on it would count characters and print a wrong total quietly.
+
+    Day 84: a `row` column before `claims` holds `row_mark`, so `9/13` on a row that
+    lost and `9/13` on a row that could not measure no longer read the same. Under
+    the table, each `rerun` row again with the notes that made it one (its unsound
+    notes, not the ones it lost), in table order, which is the order to look at them
+    in; then one line for `?` if any row has it. A table of results prints nothing
+    under it, so a clean sweep reads as it always did.
     """
     header = (
         f"{'load':>10} {'ITL p50 graphs':>15} {'eager':>8} {'x':>6} "
@@ -639,26 +681,35 @@ def print_table(rows: list[dict]) -> None:
     if split:
         header += f" {'ITL p50 split':>14} {'vs graphs':>10}"
     # Day 76: held over total, so a row its own gates refused cannot pass for clean.
-    header += f" {'claims':>7}"
+    header += f" {'row':>6} {'claims':>7}"
     print(header)
     print("-" * len(header))
+    marks = []
     for r in rows:
-        if isinstance(r["claims_failed"], str):
-            raise TypeError(
-                f"row {r['load']!r}: claims_failed is the string the CSV holds; "
-                "pass the row through as_read (or read it with read_sweep) first"
-            )
+        # Day 84: `row_mark` refuses a string in either note column, which is the
+        # Day 83 refusal of a string `claims_failed`, and checks it before `len`.
+        marks.append(row_mark(r))
         line = (
             f"{r['load']:>10} {r['graphs_itl_p50_ms']:>14.2f}m {r['eager_itl_p50_ms']:>7.2f}m "
             f"{r['itl_p50_speedup']:>5.2f}x {r['graphs_itl_p99_ms']:>14.2f}m "
             f"{r['eager_itl_p99_ms']:>7.2f}m {r['itl_p99_speedup']:>5.2f}x "
-            f"{r['replay_share']:>8.0%}"
+            f"{r['replay_share']:>9.0%}"
         )
         if split:
             line += f" {r['split_itl_p50_ms']:>13.2f}m {r['split_itl_p50_speedup']:>9.2f}x"
         total = r["claims_ok"] + len(r["claims_failed"])
-        line += f" {r['claims_ok']:>3}/{total:<3}"
+        line += f" {marks[-1]:>6} {r['claims_ok']:>3}/{total:<3}"
         print(line)
+    reruns = [r for r, m in zip(rows, marks) if m == "rerun"]
+    if reruns or "?" in marks:
+        print()
+    if reruns:
+        print("rerun, not a result: these claims could not be measured")
+        for r in reruns:
+            print(f"    {r['load']}: {FAILED_SEP.join(r['claims_unsound'])}")
+    if "?" in marks:
+        print("? written before Day 80: the file did not record which failures "
+              "could not be measured")
 
 
 def reprint(path: Path) -> None:

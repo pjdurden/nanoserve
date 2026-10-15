@@ -104,4 +104,6 @@ def test_the_table_still_counts_held_over_total(script, capsys):
     row = {"load": "1 rps", **_delta().row(), "replay_share": 1.0,
            **script.verdict_columns(graded)}
     script.print_table([script.as_read(row)])
-    assert capsys.readouterr().out.splitlines()[-1].rstrip().endswith("9/13")
+    # Day 84: the row is a rerun, so its unsound note is listed under the table; the
+    # count is still on the row's own line, the third.
+    assert capsys.readouterr().out.splitlines()[2].rstrip().endswith("9/13")
