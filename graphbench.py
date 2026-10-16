@@ -65,6 +65,9 @@ Day 84 marks each row of the table `clean`, `lost`, `rerun` or `?` (see `row_mar
 and lists the reruns under it with the claims they could not measure, so a reprinted
 card sweep says which rows can be compared before anyone compares them.
 
+Day 85 adds `--strict` to `--table`: the table still prints, then the exit code is 1 if
+any row is a `rerun` or `?`, so `--table s.csv --strict && plot` needs no stdout parsing.
+
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
 speed, so the "recorded" arm is a forward plus a copy. `--allow-cpu` is there for
@@ -712,8 +715,13 @@ def print_table(rows: list[dict]) -> None:
               "could not be measured")
 
 
-def reprint(path: Path) -> None:
+def reprint(path: Path, strict: bool = False) -> list[str]:
     """`--table`: an old sweep's table from its file, with nothing booted. Day 83.
+
+    Day 85: returns each row's `row_mark`, in table order. With `strict`, a sweep with
+    any `rerun` or `?` row has its whole table printed first and then exits 1 with one
+    sentence on stderr naming those rows, so `--table s.csv --strict && plot` refuses a
+    sweep that is not all results. `lost` is a result and does not trip it.
 
     Through `read_sweep`, so the table is printed from the same row a notebook gets.
     Every refusal is a sentence on stderr and a non-zero exit, not a traceback: a
@@ -727,6 +735,11 @@ def reprint(path: Path) -> None:
     if not rows:
         raise SystemExit(f"--table: {path} has a header and no rows, so no table")
     print_table(rows)
+    marks = [row_mark(r) for r in rows]
+    bad = [r["load"] for r, m in zip(rows, marks) if m in ("rerun", "?")]
+    if strict and bad:
+        raise SystemExit(f"--strict: not results (rerun or ?): {', '.join(bad)}")
+    return marks
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -744,6 +757,11 @@ def make_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CSV",
         help="skip the servers: reprint an old sweep's table from its CSV",
+    )
+    target.add_argument(
+        "--strict",
+        action="store_true",
+        help="with --table: exit 1 if any row is a rerun or ?, after printing the table",
     )
     target.add_argument("--device", default="auto", help="auto | cuda | cpu")
     target.add_argument("--dtype", default="auto", help="auto | bfloat16 | float16 | float32")
@@ -801,10 +819,13 @@ def make_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = make_parser().parse_args()
+    parser = make_parser()
+    args = parser.parse_args()
 
+    if args.strict and args.table is None:
+        parser.error("--strict checks a sweep's marks, so it needs --table <csv>")
     if args.table is not None:
-        reprint(args.table)
+        reprint(args.table, strict=args.strict)
         return
     if args.coverage:
         rows = run_coverage(args)

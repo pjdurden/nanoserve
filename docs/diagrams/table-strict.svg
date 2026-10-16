@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 520" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="520" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">The exit code says what the marks say.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">Day 84 marked the rows, and a sweep full of reruns still exited 0.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">With --strict, the table prints and a rerun or ? row makes the exit code 1.</text>
+
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">which marks fail --strict</text>
+  <rect x="50" y="144" width="530" height="330" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="12" font-family="ui-monospace, monospace">
+    <text x="70" y="176" fill="#15803d">clean   every claim held        exit 0</text>
+    <text x="70" y="206" fill="#15803d">lost    failed, all measured    exit 0</text>
+    <text x="70" y="236" fill="#b91c1c">rerun   could not measure       exit 1</text>
+    <text x="70" y="266" fill="#b91c1c">?       Day 76 file, failures   exit 1</text>
+  </g>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="70" y="316">lost is a result: plot it and explain it.</text>
+    <text x="70" y="340">? is not guessed in the permissive direction.</text>
+    <text x="70" y="380" font-weight="700">same function as the column</text>
+    <text x="70" y="402">row_mark decides both, so the table and</text>
+    <text x="70" y="422">the exit code cannot disagree.</text>
+    <text x="70" y="454" fill="#475569">--strict without --table: refused.</text>
+  </g>
+
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">print first, then fail</text>
+  <rect x="620" y="144" width="530" height="330" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="172" fill="#475569">$ graphbench.py --table s.csv --strict &amp;&amp; plot</text>
+    <text x="640" y="200" fill="#475569">     load  ...  replayed    row  claims</text>
+    <text x="640" y="220" fill="#15803d">    1 rps  ...       88%  clean   13/13</text>
+    <text x="640" y="240" fill="#334155">    2 rps  ...       88%   lost    9/13</text>
+    <text x="640" y="260" fill="#b91c1c">    4 rps  ...       88%  rerun    9/13</text>
+    <text x="640" y="296" fill="#9a3412">rerun, not a result: these claims could not be</text>
+    <text x="640" y="314" fill="#9a3412">measured</text>
+    <text x="640" y="344" fill="#b91c1c">stderr: --strict: not results (rerun or ?): 4 rps</text>
+  </g>
+  <rect x="640" y="372" width="490" height="78" rx="6" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#b91c1c">
+    <text x="654" y="398" font-weight="700">exit 1, so plot never runs</text>
+    <text x="654" y="420">the person who sees the red step still gets</text>
+    <text x="654" y="438">the whole table and the rows to rerun</text>
+  </g>
+</svg>
