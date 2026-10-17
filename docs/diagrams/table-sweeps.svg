@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 520" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <rect width="1200" height="520" fill="#ffffff"/>
+  <text x="50" y="46" font-size="24" font-weight="700" fill="#1e1b4b">A booking's worth of sweeps, one exit code.</text>
+  <text x="50" y="72" font-size="14.5" fill="#64748b">A card booking leaves one CSV per day, and --table read one of them.</text>
+  <text x="50" y="92" font-size="14.5" fill="#64748b">Now it takes all of them, prints each table under its path, and fails once.</text>
+
+  <text x="50" y="132" font-size="13.5" font-weight="700" fill="#334155">one command per file</text>
+  <rect x="50" y="144" width="530" height="146" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <g font-size="11" font-family="ui-monospace, monospace">
+    <text x="70" y="172" fill="#475569">$ gb --table d74.csv --strict &amp;&amp; \</text>
+    <text x="70" y="190" fill="#475569">  gb --table d77.csv --strict &amp;&amp; \</text>
+    <text x="70" y="208" fill="#475569">  gb --table d79.csv --strict &amp;&amp; plot</text>
+  </g>
+  <g font-size="12.5" fill="#b91c1c">
+    <text x="70" y="240">the first failure hides the other two tables,</text>
+    <text x="70" y="260">and the &amp;&amp; chain is written once per file</text>
+  </g>
+
+  <text x="50" y="330" font-size="13.5" font-weight="700" fill="#334155">nargs="+", and two rules that follow</text>
+  <rect x="50" y="342" width="530" height="132" rx="10" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#1e1b4b">
+    <text x="70" y="370" font-weight="700">every file is parsed before any table prints</text>
+    <text x="70" y="390">a typo in the third path prints no tables at all</text>
+    <text x="70" y="420" font-weight="700">one path prints no heading</text>
+    <text x="70" y="440">the heading tells tables apart, and one table</text>
+    <text x="70" y="458">has nothing to be told apart from</text>
+  </g>
+
+  <text x="620" y="132" font-size="13.5" font-weight="700" fill="#334155">every table, then one verdict</text>
+  <rect x="620" y="144" width="530" height="330" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <g font-size="10.5" font-family="ui-monospace, monospace">
+    <text x="640" y="172" fill="#475569">$ gb --table d74.csv d77.csv --strict &amp;&amp; plot</text>
+    <text x="640" y="198" fill="#1e1b4b">d74.csv:</text>
+    <text x="640" y="216" fill="#475569">     load  ...  replayed    row  claims</text>
+    <text x="640" y="234" fill="#15803d">    1 rps  ...       88%  clean   13/13</text>
+    <text x="640" y="252" fill="#334155">    2 rps  ...       88%   lost    9/13</text>
+    <text x="640" y="280" fill="#1e1b4b">d77.csv:</text>
+    <text x="640" y="298" fill="#475569">     load  ...  replayed    row  claims</text>
+    <text x="640" y="316" fill="#b91c1c">    4 rps  ...       88%  rerun    9/13</text>
+    <text x="640" y="348" fill="#b91c1c">stderr: --strict: not results (rerun or ?):</text>
+    <text x="640" y="364" fill="#b91c1c">        d77.csv: 4 rps</text>
+  </g>
+  <rect x="640" y="382" width="490" height="76" rx="6" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#b91c1c">
+    <text x="654" y="404" font-weight="700">exit 1, and both tables are on the screen</text>
+    <text x="654" y="426">the sentence names the path, because with</text>
+    <text x="654" y="444">several files "which one" is the question</text>
+  </g>
+</svg>

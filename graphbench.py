@@ -67,6 +67,12 @@ card sweep says which rows can be compared before anyone compares them.
 
 Day 85 adds `--strict` to `--table`: the table still prints, then the exit code is 1 if
 any row is a `rerun` or `?`, so `--table s.csv --strict && plot` needs no stdout parsing.
+Day 86 takes more than one CSV, which is what a card booking leaves behind:
+
+        --table day-74.csv day-77.csv day-79.csv --strict
+
+prints each sweep's table under its path and fails once if any row of any of them is a
+rerun, instead of one command and one exit code per file.
 
 On CPU this script will still run and it will not report a speedup worth reading: the
 recorder is `eager_recorder`, a stand-in with a capture's semantics and none of its
@@ -715,31 +721,86 @@ def print_table(rows: list[dict]) -> None:
               "could not be measured")
 
 
-def reprint(path: Path, strict: bool = False) -> list[str]:
-    """`--table`: an old sweep's table from its file, with nothing booted. Day 83.
+def read_sweeps(paths: list[Path]) -> list[tuple[Path, list[dict]]]:
+    """Every `--table` file parsed, before any of their tables prints. Day 86.
 
-    Day 85: returns each row's `row_mark`, in table order. With `strict`, a sweep with
-    any `rerun` or `?` row has its whole table printed first and then exits 1 with one
-    sentence on stderr naming those rows, so `--table s.csv --strict && plot` refuses a
-    sweep that is not all results. `lost` is a result and does not trip it.
+    All of the reading first, on purpose. A typo in the third of five paths would
+    otherwise print two tables and then the real message, under them and off the
+    screen, and the shell would have been handed output that looks like a partial
+    answer. Nothing printed means nothing to mistake for one.
 
-    Through `read_sweep`, so the table is printed from the same row a notebook gets.
-    Every refusal is a sentence on stderr and a non-zero exit, not a traceback: a
-    file that is missing, one the parser will not read (a `--coverage` table, a sweep
-    from before Day 76), and one with a header and no rows, which has no table.
+    The same path twice is refused here too. It would print its table twice under one
+    heading and `--strict` would name it twice, and neither says anything the path
+    said once.
+
+    Every refusal is a sentence on stderr and a non-zero exit, not a traceback: a file
+    that is missing, one the parser will not read (a `--coverage` table, a sweep from
+    before Day 76), and one with a header and no rows, which has no table. The
+    sentence carries the path, because with several files "which one" is the question.
     """
-    try:
-        rows = read_sweep(path)
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"--table: {exc}") from None
-    if not rows:
-        raise SystemExit(f"--table: {path} has a header and no rows, so no table")
-    print_table(rows)
-    marks = [row_mark(r) for r in rows]
-    bad = [r["load"] for r, m in zip(rows, marks) if m in ("rerun", "?")]
+    seen = set()
+    for path in paths:
+        if path in seen:
+            raise SystemExit(f"--table: {path} given twice; each sweep prints once")
+        seen.add(path)
+    sweeps = []
+    for path in paths:
+        try:
+            rows = read_sweep(path)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"--table: {exc}") from None
+        if not rows:
+            raise SystemExit(f"--table: {path} has a header and no rows, so no table")
+        sweeps.append((path, rows))
+    return sweeps
+
+
+def reprint_sweeps(paths: list[Path], strict: bool = False) -> dict[Path, list[str]]:
+    """`--table`: finished sweeps' tables from their files, with nothing booted.
+
+    Day 83 reprinted one. A card booking produces several, one per day or per card,
+    and `nargs="+"` is what makes the five of them one command with one exit code
+    instead of five commands whose first failure hides the other four tables.
+
+    Each sweep's table prints under its path, in the order the paths were given, with
+    a blank line between them. One path prints no heading: the heading is there to
+    tell the tables apart, so Day 83's output for a single file is unchanged, down to
+    the line.
+
+    Day 85's `strict` becomes one verdict over all of them. Every table prints first,
+    then the exit is 1 if any row in any sweep is a `rerun` or `?`, and the sentence
+    names each offending path with its own loads. `lost` is a result and does not trip
+    it, in one file or in five.
+
+    Returns each sweep's `row_mark` list, keyed by path, in the order given, so a
+    notebook that opens a booking's worth of files does not re-derive the marks.
+    """
+    sweeps = read_sweeps(paths)
+    named = len(sweeps) > 1
+    marks: dict[Path, list[str]] = {}
+    bad: list[str] = []
+    for i, (path, rows) in enumerate(sweeps):
+        if named:
+            if i:
+                print()
+            print(f"{path}:")
+        print_table(rows)
+        marks[path] = [row_mark(r) for r in rows]
+        loads = [r["load"] for r, m in zip(rows, marks[path]) if m in ("rerun", "?")]
+        if loads:
+            bad.append(f"{path}: {', '.join(loads)}" if named else ", ".join(loads))
     if strict and bad:
-        raise SystemExit(f"--strict: not results (rerun or ?): {', '.join(bad)}")
+        raise SystemExit(f"--strict: not results (rerun or ?): {'; '.join(bad)}")
     return marks
+
+
+def reprint(path: Path, strict: bool = False) -> list[str]:
+    """One sweep's table, and its marks in table order. Day 83, Day 85's `strict`.
+
+    The one-file case of `reprint_sweeps`, kept because one file is what a reader
+    usually has and `marks[path]` is a layer they should not have to unwrap for it.
+    """
+    return reprint_sweeps([Path(path)], strict=strict)[Path(path)]
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -755,13 +816,15 @@ def make_parser() -> argparse.ArgumentParser:
         "--table",
         type=Path,
         default=None,
+        nargs="+",
         metavar="CSV",
-        help="skip the servers: reprint an old sweep's table from its CSV",
+        help="skip the servers: reprint finished sweeps' tables from their CSVs",
     )
     target.add_argument(
         "--strict",
         action="store_true",
-        help="with --table: exit 1 if any row is a rerun or ?, after printing the table",
+        help="with --table: exit 1 if any row of any sweep is a rerun or ?, after "
+        "printing the tables",
     )
     target.add_argument("--device", default="auto", help="auto | cuda | cpu")
     target.add_argument("--dtype", default="auto", help="auto | bfloat16 | float16 | float32")
@@ -823,9 +886,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.strict and args.table is None:
-        parser.error("--strict checks a sweep's marks, so it needs --table <csv>")
+        parser.error("--strict checks the sweeps' marks, so it needs --table <csv> ...")
     if args.table is not None:
-        reprint(args.table, strict=args.strict)
+        reprint_sweeps(args.table, strict=args.strict)
         return
     if args.coverage:
         rows = run_coverage(args)
